@@ -1,0 +1,14 @@
+aiogram>=3.2.0
+aiohttp
+apscheduler
+beautifulsoup4
+lxml
+bleach
+cachetools
+python-dotenv
+feedparser
+fuzzywuzzy
+python-Levenshtein
+matplotlib
+openai
+python-json-logger
