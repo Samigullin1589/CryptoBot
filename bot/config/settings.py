@@ -1,4 +1,3 @@
-# bot/config/settings.py
 from typing import List, Dict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -166,8 +165,8 @@ class AppSettings(BaseSettings):
     ]
 
     # --- Настройки виртуального майнинга ---
-    MINING_DURATION_SECONDS: int = 8 * 3600  # 8 часов
-    MINING_RATE_PER_HOUR: float = 10.0      # 10 виртуальных монет в час
+    MINING_DURATION_SECONDS: int = 8 * 3600
+    MINING_RATE_PER_HOUR: float = 10.0
 
     # --- Настройки для .env файла ---
     model_config = SettingsConfigDict(
