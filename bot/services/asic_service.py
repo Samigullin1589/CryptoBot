@@ -93,7 +93,10 @@ class AsicService:
 
     async def _fetch_whattomine_asics(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
-        headers = {'Accept': 'application/json'}
+        # ИСПРАВЛЕНИЕ: Добавляем User-Agent, чтобы избежать ошибки 406
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
         data = await make_request(session, settings.whattomine_asics_url, headers=headers)
         if not data or 'asics' not in data:
             if data is not None:
