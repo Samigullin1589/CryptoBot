@@ -7,7 +7,7 @@ from typing import List, Dict, Optional
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
-from cachetools import TTLCache, cached
+from cachetools import cached, TTLCache
 from fuzzywuzzy import process, fuzz
 
 from config import config
@@ -53,10 +53,12 @@ class ApiClient:
 
     async def _fetch_whattomine_asics(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
-        # ИЗМЕНЕНИЕ: Добавлен правильный заголовок 'Accept' для WhatToMine
         headers = {'Accept': 'application/json'}
         data = await make_request(session, config.WHATTOOMINE_ASICS_URL, headers=headers)
-        if not data or 'asics' not in data: return miners
+        if not data or 'asics' not in data:
+            if data is not None:
+                 logger.warning(f"WhatToMine API returned unexpected data: {str(data)[:200]}")
+            return miners
         
         for name, asic_data in data['asics'].items():
             if asic_data.get('status') == 'Active' and 'revenue' in asic_data:
@@ -77,9 +79,15 @@ class ApiClient:
             tasks = [self._scrape_asicminervalue(session), self._fetch_whattomine_asics(session)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        all_miners = [miner for res in results if isinstance(res, list) for miner in res]
+        all_miners = []
+        for res in results:
+            if isinstance(res, list):
+                all_miners.extend(res)
+            elif isinstance(res, Exception):
+                logger.error(f"Error fetching ASIC data: {res}")
+
         if not all_miners:
-            logger.warning("Using fallback ASIC list.")
+            logger.warning("Using fallback ASIC list because all sources failed.")
             return [AsicMiner(**asic) for asic in config.FALLBACK_ASICS]
 
         final_miners: Dict[str, AsicMiner] = {}
@@ -119,6 +127,11 @@ class ApiClient:
         async with aiohttp.ClientSession() as session:
             logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
             cg_search_data = await make_request(session, f"{config.COINGECKO_API_BASE}/search?query={query_norm}")
+            
+            # ИЗМЕНЕНИЕ: Добавляем паузу при ошибке 429
+            if cg_search_data is None: # Проверяем на ошибку (включая 429)
+                 await asyncio.sleep(2)
+
             if cg_search_data and cg_search_data.get('coins'):
                 coin_id = cg_search_data['coins'][0].get('id')
                 market_data_list = await make_request(session, f"{config.COINGECKO_API_BASE}/coins/markets?vs_currency=usd&ids={coin_id}")
