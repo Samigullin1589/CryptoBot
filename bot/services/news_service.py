@@ -1,20 +1,18 @@
-# bot/services/news_service.py
 import asyncio
 import logging
 from typing import List, Dict
 
 import aiohttp
 import feedparser
-from async_cache import cached
-from cachetools import TTLCache # или LRUCache
+from cachetools import TTLCache
 
+from bot.utils.async_cache_local import cached
 from bot.config.settings import settings
 from bot.utils.helpers import make_request, sanitize_html
 
 logger = logging.getLogger(__name__)
 
 class NewsService:
-    # Кэш, как атрибут класса
     cache = TTLCache(maxsize=1, ttl=1800)
 
     async def _parse_feed(self, session: aiohttp.ClientSession, url: str) -> List[Dict]:

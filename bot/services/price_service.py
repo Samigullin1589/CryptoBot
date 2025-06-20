@@ -1,12 +1,10 @@
-# bot/services/price_service.py
-import asyncio
 import logging
 from typing import Optional
 
 import aiohttp
-from async_cache import cached
-from cachetools import TTLCache # или LRUCache
+from cachetools import TTLCache
 
+from bot.utils.async_cache_local import cached
 from bot.config.settings import settings
 from bot.utils.models import CryptoCoin
 from bot.utils.helpers import make_request
@@ -15,7 +13,6 @@ from bot.services.coin_list_service import CoinListService
 logger = logging.getLogger(__name__)
 
 class PriceService:
-    # Кэш, как атрибут класса
     cache = TTLCache(maxsize=100, ttl=300)
 
     def __init__(self, coin_list_service: CoinListService):
@@ -23,23 +20,16 @@ class PriceService:
 
     @cached(cache)
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
-        """
-        Получает цену криптовалюты, используя несколько источников данных.
-        """
         query_norm = settings.ticker_aliases.get(query.strip().lower(), query.strip().lower())
         
         async with aiohttp.ClientSession() as session:
-            # --- Попытка 1: CoinGecko (основной источник) ---
-            logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
+            logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.", extra={'query': query})
             cg_search_data = await make_request(session, f"{settings.coingecko_api_base}/search?query={query_norm}")
             
-            if cg_search_data is None: 
-                 await asyncio.sleep(2)
-
             if cg_search_data and cg_search_data.get('coins'):
                 coin_id = cg_search_data['coins'][0].get('id')
                 market_data_list = await make_request(session, f"{settings.coingecko_api_base}/coins/markets?vs_currency=usd&ids={coin_id}")
-                if market_data_list:
+                if market_data_list and isinstance(market_data_list, list) and len(market_data_list) > 0:
                     md = market_data_list[0]
                     symbol = md.get('symbol', '').upper()
                     coin_list = await self.coin_list_service.get_coin_list()
@@ -49,7 +39,6 @@ class PriceService:
                         price_change_24h=md.get('price_change_percentage_24h'), algorithm=coin_list.get(symbol)
                     )
             
-            # --- Попытка 2: CoinPaprika (резервный источник) ---
             logger.warning(f"Failed to get price from CoinGecko for '{query_norm}'. Falling back to CoinPaprika.")
             cp_search_data = await make_request(session, f"{settings.coinpaprika_api_base}/search?q={query_norm}&c=currencies")
             if cp_search_data and cp_search_data.get('currencies'):

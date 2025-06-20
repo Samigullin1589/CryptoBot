@@ -5,13 +5,11 @@ beautifulsoup4
 lxml
 bleach
 cachetools
-async-cache
 python-dotenv
 feedparser
 fuzzywuzzy
 python-Levenshtein
 matplotlib
 openai
-python-json-logger
 pydantic-settings
 pydantic

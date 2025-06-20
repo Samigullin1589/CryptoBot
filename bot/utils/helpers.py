@@ -1,5 +1,3 @@
-# Файл: bot/utils/helpers.py
-
 import logging
 import sys
 import re
@@ -11,13 +9,16 @@ import bleach
 logger = logging.getLogger(__name__)
 
 def setup_logging():
+    """Настраивает простое, надежное логирование в консоль."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         stream=sys.stdout,
     )
+    # Уменьшаем "шум" от системных библиотек
     logging.getLogger("aiogram.dispatcher").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 async def make_request(
     session: aiohttp.ClientSession,
@@ -25,8 +26,9 @@ async def make_request(
     response_type: Literal['json', 'text'] = 'json',
     headers: Optional[dict] = None
 ) -> Optional[Any]:
+    """Выполняет HTTP-запрос с обработкой ошибок и таймаутами."""
     try:
-        timeout = aiohttp.ClientTimeout(total=15) # Увеличим таймаут на всякий случай
+        timeout = aiohttp.ClientTimeout(total=15)
         async with session.get(url, headers=headers, timeout=timeout) as response:
             response.raise_for_status()
             if response_type == 'json':
@@ -43,15 +45,21 @@ async def make_request(
     return None
 
 def sanitize_html(text: str) -> str:
-    if not text: return ""
+    """Очищает HTML-теги, оставляя только разрешенные для Telegram."""
+    if not text:
+        return ""
     return bleach.clean(text, tags=['b', 'i', 'u', 's', 'code', 'pre', 'a'], attributes={'a': ['href']}, strip=True)
 
 def parse_profitability(s: str) -> float:
-    if not isinstance(s, str): s = str(s)
+    """Извлекает числовое значение доходности из строки."""
+    if not isinstance(s, str):
+        s = str(s)
     match = re.search(r'[\d.]+', s.replace(',', '.'))
     return float(match.group(0)) if match else 0.0
 
 def parse_power(s: str) -> Optional[int]:
-    if not isinstance(s, str): s = str(s)
+    """Извлекает числовое значение мощности из строки."""
+    if not isinstance(s, str):
+        s = str(s)
     match = re.search(r'[\d]+', s)
     return int(match.group(0)) if match else None
