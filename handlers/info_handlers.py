@@ -1,6 +1,7 @@
 # handlers/info_handlers.py
 import io
 import logging
+import re  # <--- ВАЖНО: Добавлен необходимый импорт
 import matplotlib.pyplot as plt
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, ForceReply, Message
@@ -13,27 +14,21 @@ from utils.keyboards import (get_main_menu_keyboard, get_price_keyboard,
 router = Router()
 logger = logging.getLogger(__name__)
 
-# ИЗМЕНЕНИЕ: Список текстов кнопок, которые нужно игнорировать
 MENU_BUTTON_TEXTS = [
     "💹 Курс", "⚙️ Топ ASIC", "⛏️ Калькулятор", "📰 Новости",
-    "😱 Индекс Страха", "⏳ Халвинг", "📡 Статус BTC", "🧠 Викторина"
+    "😱 Индекс Страха", "⏳ Халвинг", "📡 Статус BTC", "🧠 Викторина",
+    "🎓 Слово дня", "🕹️ Виртуальный Майнинг"
 ]
 
 async def show_main_menu(message: Message):
-    # Эта функция была в предыдущих версиях, но для полноты картины оставим ее здесь.
-    # Она может быть вызвана из других модулей.
+    """Отправляет сообщение с главным меню."""
     await message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
-
 
 @router.callback_query(F.data == "menu_asics")
 async def handle_asics_menu(call: CallbackQuery, api_client: ApiClient):
+    """Обрабатывает кнопку 'Топ ASIC'."""
     await call.message.edit_text("⏳ Загружаю актуальный список...")
     asics = await api_client.get_profitable_asics()
-    if not asics:
-        await call.message.edit_text("❌ Не удалось загрузить список ASIC. Попробуйте позже.", reply_markup=get_main_menu_keyboard())
-        await call.answer()
-        return
-        
     text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
     for miner in asics[:10]:
         text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
@@ -44,10 +39,12 @@ async def handle_asics_menu(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data == "menu_price")
 async def handle_price_menu(call: CallbackQuery):
+    """Обрабатывает кнопку 'Курс'."""
     await call.message.edit_text("Курс какой монеты вас интересует?", reply_markup=get_price_keyboard())
     await call.answer()
 
 async def send_price_info(message: Message, query: str, api_client: ApiClient):
+    """Получает и отправляет информацию о курсе монеты и оборудовании."""
     coin = await api_client.get_crypto_price(query)
     if not coin:
         await message.answer(f"❌ Не удалось найти информацию по '{query}'.")
@@ -75,6 +72,7 @@ async def send_price_info(message: Message, query: str, api_client: ApiClient):
 
 @router.callback_query(F.data.startswith("price_"))
 async def handle_price_callback(call: CallbackQuery, api_client: ApiClient):
+    """Обрабатывает колбэки от кнопок с тикерами."""
     action = call.data.split('_')[1]
     await call.message.delete()
     if action == "other":
@@ -84,9 +82,9 @@ async def handle_price_callback(call: CallbackQuery, api_client: ApiClient):
         await show_main_menu(call.message)
     await call.answer()
 
-
 @router.callback_query(F.data == "menu_news")
 async def handle_news_menu(call: CallbackQuery, api_client: ApiClient):
+    """Обрабатывает кнопку 'Новости'."""
     await call.message.edit_text("⏳ Загружаю новости...")
     news = await api_client.fetch_latest_news()
     if not news:
@@ -99,6 +97,7 @@ async def handle_news_menu(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data == "menu_fear_greed")
 async def handle_fear_greed_menu(call: CallbackQuery, api_client: ApiClient):
+    """Обрабатывает кнопку 'Индекс Страха'."""
     await call.message.edit_text("⏳ Получаю индекс...")
     index = await api_client.get_fear_and_greed_index()
     if not index:
@@ -125,6 +124,7 @@ async def handle_fear_greed_menu(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data.in_({"menu_halving", "menu_btc_status", "menu_calculator"}))
 async def handle_info_callbacks(call: CallbackQuery, api_client: ApiClient):
+    """Обрабатывает информационные кнопки."""
     await call.message.edit_text("⏳ Обрабатываю запрос...")
     text = "❌ Ошибка."
     if call.data == "menu_halving": text = await api_client.get_halving_info()
@@ -138,6 +138,7 @@ async def handle_info_callbacks(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data == "menu_quiz")
 async def handle_quiz_menu(call: CallbackQuery, api_client: ApiClient):
+    """Обрабатывает кнопку 'Викторина'."""
     await call.message.edit_text("⏳ Генерирую вопрос...")
     quiz = await api_client.generate_quiz_question()
     if not quiz:
@@ -151,14 +152,15 @@ async def handle_quiz_menu(call: CallbackQuery, api_client: ApiClient):
     )
     await call.answer()
 
-
 @router.message(F.text)
 async def handle_text_message(message: Message, api_client: ApiClient):
-    # ИЗМЕНЕНИЕ: Добавлена проверка, чтобы игнорировать текст кнопок
+    """Обрабатывает текстовые сообщения (ответы на ForceReply, личные сообщения и упоминания)."""
+    # Игнорируем нажатия на старые Reply-кнопки
     if message.text and message.text.strip() in MENU_BUTTON_TEXTS:
         logger.info(f"Ignoring menu button text: {message.text}")
         return
 
+    # 1. Обработка ответов на сообщения бота (для ForceReply)
     if message.reply_to_message and message.reply_to_message.from_user.id == message.bot.id:
         if "Введите тикер" in message.reply_to_message.text:
             await message.reply_to_message.delete()
@@ -180,6 +182,21 @@ async def handle_text_message(message: Message, api_client: ApiClient):
                 await show_main_menu(message)
             except (ValueError, TypeError):
                 await message.answer("❌ Неверный формат. Введите число (напр. 4.5).")
-    else:
-        # Если это не ответ, считаем, что пользователь хочет узнать курс
-        await send_price_info(message, message.text, api_client)
+        return
+
+    # 2. Обработка сообщений в личных чатах и упоминаний в группах
+    bot_info = await message.bot.get_me()
+    is_private = message.chat.type == 'private'
+    # Проверяем, что текст существует перед использованием .lower()
+    message_text = message.text or ""
+    is_mentioned = bot_info.username and f"@{bot_info.username.lower()}" in message_text.lower()
+    
+    if is_private or is_mentioned:
+        text_to_process = message_text
+        if is_mentioned:
+            # Очищаем текст от упоминания, чтобы обработать чистый запрос
+            # Используем re.sub для регистронезависимой замены
+            text_to_process = re.sub(f'@{bot_info.username}', '', text_to_process, flags=re.IGNORECASE).strip()
+        
+        if text_to_process:
+            await send_price_info(message, text_to_process, api_client)
