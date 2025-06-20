@@ -7,7 +7,8 @@ from typing import List, Dict, Optional
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
-from cachetools import TTLCache, AIOK, async_cached
+# ИЗМЕНЕНИЕ: Убран импорт AIOK, так как он вызывает ошибку в окружении Render
+from cachetools import TTLCache, async_cached
 from fuzzywuzzy import process, fuzz
 
 from config import config
@@ -110,7 +111,8 @@ class ApiClient:
         logger.info(f"Coin list cache updated with {len(coin_algo_map)} coins.")
         return coin_algo_map
 
-    @async_cached(price_cache, key=AIOK.REPR)
+    # ИЗМЕНЕНИЕ: Убран аргумент key=AIOK.REPR, чтобы избежать ошибки импорта
+    @async_cached(cache=price_cache)
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
         query_norm = config.TICKER_ALIASES.get(query.strip().lower(), query.strip().lower())
         
