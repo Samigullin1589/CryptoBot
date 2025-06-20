@@ -1,11 +1,12 @@
 import asyncio
 import logging
-import redis.asyncio as redis  # Импортируем Redis
+import redis.asyncio as redis
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.redis import RedisStorage  # Импортируем RedisStorage
+from aiogram.fsm.storage.redis import RedisStorage
 from openai import AsyncOpenAI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.config.settings import settings
 from bot.utils.helpers import setup_logging
@@ -16,8 +17,8 @@ from bot.services.news_service import NewsService
 from bot.services.market_data_service import MarketDataService
 from bot.services.quiz_service import QuizService
 from bot.services.scheduler import setup_scheduler
-from bot.handlers import common_handlers, info_handlers
-from bot.middlewares.throttling import ThrottlingMiddleware  # Импортируем Middleware
+from bot.handlers import common_handlers, info_handlers, mining_handlers
+from bot.middlewares.throttling import ThrottlingMiddleware
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -27,18 +28,14 @@ async def main():
         logger.critical("Bot token or Redis URL not found.")
         return
 
-    # === НАСТРОЙКА REDIS ===
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     storage = RedisStorage(redis=redis_client)
 
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
 
-    # === ПОДКЛЮЧЕНИЕ MIDDLEWARE (АНТИСПАМ) ===
-    # Применяем ограничение в 1 секунду ко всем обработчикам сообщений
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, default_rate_limit=1.0))
 
-    # --- Остальная инициализация ---
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
     coin_list_service = CoinListService()
@@ -50,21 +47,24 @@ async def main():
 
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
-
-    workflow_data = {
-        "asic_service": asic_service,
-        "price_service": price_service,
-        "news_service": news_service,
-        "market_data_service": market_data_service,
-        "quiz_service": quiz_service,
-        "redis": redis_client,  # Передаем клиент Redis, может понадобиться в будущем
-    }
+    dp.include_router(mining_handlers.router)
 
     scheduler = setup_scheduler(
         bot=bot, 
         news_service=news_service, 
         asic_service=asic_service
     )
+
+    workflow_data = {
+        "bot": bot,
+        "scheduler": scheduler,
+        "asic_service": asic_service,
+        "price_service": price_service,
+        "news_service": news_service,
+        "market_data_service": market_data_service,
+        "quiz_service": quiz_service,
+        "redis_client": redis_client,
+    }
 
     try:
         scheduler.start()
@@ -78,13 +78,12 @@ async def main():
         )
         logger.info("Caches are warm.")
 
-        # Пропускаем старые обновления при запуске
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
         await dp.start_polling(bot, **workflow_data)
     finally:
         scheduler.shutdown()
-        await dp.storage.close()  # Корректно закрываем соединение с Redis
+        await dp.storage.close()
         await bot.session.close()
         logger.info("Bot stopped.")
 

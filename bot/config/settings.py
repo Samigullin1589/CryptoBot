@@ -3,19 +3,13 @@ from typing import List, Dict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseSettings):
-    from typing import List, Dict
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-class AppSettings(BaseSettings):
-    bot_token: str
-    redis_url: str  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
-    openai_api_key: str = ""
     """
     Класс для хранения всех настроек и констант,
     загружаемых из переменных окружения.
     """
     # --- Ключи API и токены (обязательно укажите в .env) ---
     bot_token: str
+    redis_url: str
     openai_api_key: str = ""
     admin_chat_id: int
     news_chat_id: int
@@ -171,6 +165,9 @@ class AppSettings(BaseSettings):
         {'name': 'Fluminer L1 5.3 Gh/s', 'profitability': 25.94, 'algorithm': 'Scrypt'},
     ]
 
+    # --- Настройки виртуального майнинга ---
+    MINING_DURATION_SECONDS: int = 8 * 3600  # 8 часов
+    MINING_RATE_PER_HOUR: float = 10.0      # 10 виртуальных монет в час
 
     # --- Настройки для .env файла ---
     model_config = SettingsConfigDict(
@@ -179,5 +176,4 @@ class AppSettings(BaseSettings):
         case_sensitive=False
     )
 
-# Создаем единственный экземпляр настроек для всего приложения
 settings = AppSettings()
