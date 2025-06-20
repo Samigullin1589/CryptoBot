@@ -2,7 +2,9 @@
 import asyncio
 import logging
 
+# ИЗМЕНЕНИЕ: Добавлен необходимый импорт
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from openai import AsyncOpenAI
 
 from config import config
@@ -21,8 +23,8 @@ async def main():
         logger.critical("Bot token not found. Please set BOT_TOKEN in your .env file.")
         return
 
-    # Инициализация основных компонентов
-    bot = Bot(token=config.BOT_TOKEN, parse_mode='HTML')
+    # ИЗМЕНЕНИЕ: Инициализация бота обновлена для aiogram 3.7+
+    bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher()
     
     # Инициализация клиента OpenAI, если ключ предоставлен
@@ -34,7 +36,6 @@ async def main():
     dp.include_router(info_handlers.router)
     
     # Передаем api_client во все обработчики через аргументы kwargs
-    # Это предпочтительный способ в aiogram 3.x
     workflow_data = {"api_client": api_client}
 
     # Настройка и запуск планировщика
