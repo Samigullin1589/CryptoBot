@@ -12,3 +12,4 @@ python-Levenshtein
 matplotlib
 openai
 python-json-logger
+pydantic-settings
