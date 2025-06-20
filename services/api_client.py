@@ -7,8 +7,8 @@ from typing import List, Dict, Optional
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
-# ИЗМЕНЕНИЕ: Убран импорт AIOK, так как он вызывает ошибку в окружении Render
-from cachetools import TTLCache, async_cached
+# Возвращаем импорт AIOK
+from cachetools import TTLCache, AIOK, async_cached
 from fuzzywuzzy import process, fuzz
 
 from config import config
@@ -33,11 +33,11 @@ class ApiClient:
         miners = []
         html = await make_request(session, config.ASICMINERVALUE_URL, 'text')
         if not html: return miners
-        
+
         soup = BeautifulSoup(html, 'lxml')
         table = soup.find('table', {'id': 'datatable'})
         if not table or not table.tbody: return miners
-        
+
         for row in table.tbody.find_all('tr', limit=50):
             cols = row.find_all('td')
             if len(cols) > 4:
@@ -56,7 +56,7 @@ class ApiClient:
         miners = []
         data = await make_request(session, config.WHATTOOMINE_ASICS_URL)
         if not data or 'asics' not in data: return miners
-        
+
         for name, asic_data in data['asics'].items():
             if asic_data.get('status') == 'Active' and 'revenue' in asic_data:
                 profit = parse_profitability(asic_data['revenue'])
@@ -84,7 +84,7 @@ class ApiClient:
         final_miners: Dict[str, AsicMiner] = {}
         for miner in sorted(all_miners, key=lambda m: m.name):
             best_match, score = process.extractOne(miner.name, final_miners.keys(), scorer=fuzz.token_set_ratio) if final_miners else (None, 0)
-            
+
             if score > 90 and best_match:
                 existing = final_miners[best_match]
                 if miner.profitability > existing.profitability: existing.profitability = miner.profitability
@@ -93,7 +93,7 @@ class ApiClient:
                 existing.power = existing.power or miner.power
             else:
                 final_miners[miner.name] = miner
-        
+
         sorted_list = sorted(final_miners.values(), key=lambda m: m.profitability, reverse=True)
         logger.info(f"ASIC cache updated with {len(sorted_list)} unique devices.")
         return sorted_list
@@ -111,11 +111,11 @@ class ApiClient:
         logger.info(f"Coin list cache updated with {len(coin_algo_map)} coins.")
         return coin_algo_map
 
-    # ИЗМЕНЕНИЕ: Убран аргумент key=AIOK.REPR, чтобы избежать ошибки импорта
-    @async_cached(cache=price_cache)
+    # Возвращаем key=AIOK.REPR для явного указания генерации ключа кэша
+    @async_cached(cache=price_cache, key=AIOK.REPR)
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
         query_norm = config.TICKER_ALIASES.get(query.strip().lower(), query.strip().lower())
-        
+
         async with aiohttp.ClientSession() as session:
             # --- Попытка 1: CoinGecko (основной источник) ---
             logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
@@ -132,7 +132,7 @@ class ApiClient:
                         id=md.get('id'), symbol=symbol, name=md.get('name'), price=md.get('current_price', 0.0),
                         price_change_24h=md.get('price_change_percentage_24h'), algorithm=coin_list.get(symbol)
                     )
-            
+
             logger.warning(f"Failed to get price from CoinGecko for '{query_norm}'. Falling back to CoinPaprika.")
 
             # --- Попытка 2: CoinPaprika (резервный источник) ---
@@ -140,7 +140,7 @@ class ApiClient:
             if cp_search_data and cp_search_data.get('currencies'):
                 target_coin = next((c for c in cp_search_data['currencies'] if c['symbol'].lower() == query_norm), cp_search_data['currencies'][0])
                 coin_id = target_coin.get('id')
-                
+
                 ticker_data = await make_request(session, f"{config.COINPAPRIKA_API_BASE}/tickers/{coin_id}")
                 if ticker_data:
                     quotes = ticker_data.get('quotes', {}).get('USD', {})
@@ -158,8 +158,7 @@ class ApiClient:
 
         logger.error(f"Failed to get price for '{query_norm}' from all sources.")
         return None
-    
-    @async_cached(cache=rub_rate_cache)
+
     async def get_usd_rub_rate(self) -> float:
         logger.info("Fetching USD/RUB exchange rate.")
         async with aiohttp.ClientSession() as session:
@@ -202,7 +201,7 @@ class ApiClient:
                             all_news.append({'title': sanitize_html(entry.title), 'link': entry.link, 'published': getattr(entry, 'published_parsed', None)})
             except Exception as e:
                 logger.warning(f"Failed to parse RSS feed {url}", extra={'error': str(e)})
-        
+
         await asyncio.gather(*(parse_feed(url) for url in config.NEWS_RSS_FEEDS))
         all_news.sort(key=lambda x: x['published'] or (0,), reverse=True)
         return list({item['title'].lower(): item for item in all_news}.values())[:5]
