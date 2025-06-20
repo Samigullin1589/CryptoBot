@@ -1,7 +1,9 @@
-# utils/keyboards.py
+# bot/utils/keyboards.py
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from config import config
+
+# Обновленный импорт для работы с новой структурой
+from bot.config.settings import settings
 
 def get_main_menu_keyboard():
     builder = InlineKeyboardBuilder()
@@ -18,9 +20,10 @@ def get_main_menu_keyboard():
 
 def get_price_keyboard():
     builder = InlineKeyboardBuilder()
-    for ticker in config.POPULAR_TICKERS:
+    # Используем settings вместо config
+    for ticker in settings.popular_tickers:
         builder.button(text=ticker, callback_data=f"price_{ticker}")
-    builder.adjust(len(config.POPULAR_TICKERS))
+    builder.adjust(len(settings.popular_tickers))
     builder.row(InlineKeyboardButton(text="➡️ Другая монета", callback_data="price_other"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main_menu"))
     return builder.as_markup()

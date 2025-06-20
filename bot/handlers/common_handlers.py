@@ -1,8 +1,10 @@
-# handlers/common_handlers.py
+# bot/handlers/common_handlers.py
 from aiogram import Router, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, CallbackQuery
-from utils.keyboards import get_main_menu_keyboard
+
+# Обновленный импорт для работы с новой структурой
+from bot.utils.keyboards import get_main_menu_keyboard
 
 router = Router()
 
