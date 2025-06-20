@@ -7,8 +7,8 @@ from typing import List, Dict, Optional
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
-# Возвращаем импорт AIOK
-from cachetools import TTLCache, AIOK, async_cached
+# ИЗМЕНЕНИЕ: Заменяем импорты на более универсальные
+from cachetools import TTLCache, cached
 from fuzzywuzzy import process, fuzz
 
 from config import config
@@ -69,7 +69,8 @@ class ApiClient:
         logger.info(f"Fetched {len(miners)} miners from WhatToMine")
         return miners
 
-    @async_cached(cache=asic_cache)
+    # ИЗМЕНЕНИЕ: Используем стандартный декоратор @cached
+    @cached(cache=asic_cache)
     async def get_profitable_asics(self) -> List[AsicMiner]:
         logger.info("Updating ASIC miners cache...")
         async with aiohttp.ClientSession() as session:
@@ -98,7 +99,7 @@ class ApiClient:
         logger.info(f"ASIC cache updated with {len(sorted_list)} unique devices.")
         return sorted_list
 
-    @async_cached(cache=coin_list_cache)
+    @cached(cache=coin_list_cache)
     async def get_coin_list(self) -> Dict[str, str]:
         logger.info("Updating coin list cache...")
         coin_algo_map = {}
@@ -111,13 +112,11 @@ class ApiClient:
         logger.info(f"Coin list cache updated with {len(coin_algo_map)} coins.")
         return coin_algo_map
 
-    # Возвращаем key=AIOK.REPR для явного указания генерации ключа кэша
-    @async_cached(cache=price_cache, key=AIOK.REPR)
+    @cached(cache=price_cache)
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
         query_norm = config.TICKER_ALIASES.get(query.strip().lower(), query.strip().lower())
         
         async with aiohttp.ClientSession() as session:
-            # --- Попытка 1: CoinGecko (основной источник) ---
             logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
             cg_search_data = await make_request(session, f"{config.COINGECKO_API_BASE}/search?query={query_norm}")
             if cg_search_data and cg_search_data.get('coins'):
@@ -134,8 +133,6 @@ class ApiClient:
                     )
             
             logger.warning(f"Failed to get price from CoinGecko for '{query_norm}'. Falling back to CoinPaprika.")
-
-            # --- Попытка 2: CoinPaprika (резервный источник) ---
             cp_search_data = await make_request(session, f"{config.COINPAPRIKA_API_BASE}/search?q={query_norm}&c=currencies")
             if cp_search_data and cp_search_data.get('currencies'):
                 target_coin = next((c for c in cp_search_data['currencies'] if c['symbol'].lower() == query_norm), cp_search_data['currencies'][0])
@@ -148,18 +145,14 @@ class ApiClient:
                     coin_list = await self.get_coin_list()
                     logger.info(f"Successfully fetched price for '{query_norm}' from CoinPaprika.")
                     return CryptoCoin(
-                        id=ticker_data.get('id'),
-                        symbol=symbol,
-                        name=ticker_data.get('name'),
-                        price=quotes.get('price', 0.0),
-                        price_change_24h=quotes.get('percent_change_24h'),
+                        id=ticker_data.get('id'), symbol=symbol, name=ticker_data.get('name'),
+                        price=quotes.get('price', 0.0), price_change_24h=quotes.get('percent_change_24h'),
                         algorithm=coin_list.get(symbol)
                     )
-
         logger.error(f"Failed to get price for '{query_norm}' from all sources.")
         return None
     
-    @async_cached(cache=rub_rate_cache)
+    @cached(cache=rub_rate_cache)
     async def get_usd_rub_rate(self) -> float:
         logger.info("Fetching USD/RUB exchange rate.")
         async with aiohttp.ClientSession() as session:
@@ -171,7 +164,7 @@ class ApiClient:
         logger.warning("Using fallback USD/RUB rate.")
         return 90.0
 
-    @async_cached(cache=fear_greed_cache)
+    @cached(cache=fear_greed_cache)
     async def get_fear_and_greed_index(self) -> Optional[Dict]:
         async with aiohttp.ClientSession() as session:
             if config.CMC_API_KEY:
@@ -181,7 +174,6 @@ class ApiClient:
                     logger.info("Fetched F&G index from CoinMarketCap")
                     return data['data'][0]
                 logger.warning("Failed to fetch from CMC, falling back to Alternative.me")
-
             data = await make_request(session, config.FEAR_AND_GREED_API_URL)
             if data and 'data' in data and data['data']:
                 logger.info("Fetched F&G index from Alternative.me")
@@ -189,7 +181,7 @@ class ApiClient:
         logger.error("Failed to fetch F&G index from all sources.")
         return None
 
-    @async_cached(cache=news_cache)
+    @cached(cache=news_cache)
     async def fetch_latest_news(self) -> List[Dict]:
         all_news = []
         async def parse_feed(url):
@@ -202,7 +194,6 @@ class ApiClient:
                             all_news.append({'title': sanitize_html(entry.title), 'link': entry.link, 'published': getattr(entry, 'published_parsed', None)})
             except Exception as e:
                 logger.warning(f"Failed to parse RSS feed {url}", extra={'error': str(e)})
-        
         await asyncio.gather(*(parse_feed(url) for url in config.NEWS_RSS_FEEDS))
         all_news.sort(key=lambda x: x['published'] or (0,), reverse=True)
         return list({item['title'].lower(): item for item in all_news}.values())[:5]
@@ -210,8 +201,7 @@ class ApiClient:
     async def get_halving_info(self) -> str:
         async with aiohttp.ClientSession() as s:
             height_str = await make_request(s, "https://mempool.space/api/blocks/tip/height", 'text')
-            if not height_str or not height_str.isdigit():
-                return "❌ Не удалось получить данные о халвинге."
+            if not height_str or not height_str.isdigit(): return "❌ Не удалось получить данные о халвинге."
             current_block, interval = int(height_str), 210000
             blocks_left = interval - (current_block % interval)
             days = blocks_left / 144
