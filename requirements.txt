@@ -13,3 +13,4 @@ matplotlib
 openai
 pydantic-settings
 pydantic
+redis>=5.0.0

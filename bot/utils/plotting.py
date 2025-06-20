@@ -2,10 +2,6 @@ import io
 import matplotlib.pyplot as plt
 
 def generate_fng_image(value: int, classification: str) -> bytes:
-    """
-    Создает изображение для Индекса страха и жадности.
-    Эта функция является синхронной и блокирующей.
-    """
     plt.style.use('dark_background')
     fig, ax = plt.subplots(figsize=(8, 4.5), subplot_kw={'projection': 'polar'})
     ax.set_yticklabels([])

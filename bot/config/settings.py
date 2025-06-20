@@ -3,6 +3,13 @@ from typing import List, Dict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseSettings):
+    from typing import List, Dict
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class AppSettings(BaseSettings):
+    bot_token: str
+    redis_url: str  # <--- ДОБАВЬТЕ ЭТУ СТРОКУ
+    openai_api_key: str = ""
     """
     Класс для хранения всех настроек и констант,
     загружаемых из переменных окружения.

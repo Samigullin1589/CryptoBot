@@ -38,13 +38,13 @@ class NewsService:
         async with aiohttp.ClientSession() as session:
             tasks = [self._parse_feed(session, url) for url in settings.news_rss_feeds]
             results = await asyncio.gather(*tasks)
-        
+
         for news_list in results:
             all_news.extend(news_list)
-            
+
         all_news.sort(key=lambda x: x['published'] or (0,), reverse=True)
-        
+
         unique_news = list({item['title'].lower(): item for item in all_news}.values())
-        
+
         logger.info(f"Fetched {len(unique_news)} unique news items.")
         return unique_news[:5]
