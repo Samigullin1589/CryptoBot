@@ -5,10 +5,9 @@ from typing import List, Dict
 
 import aiohttp
 from bs4 import BeautifulSoup
-from cachetools import cached, TTLCache
+from cachetools import cached, TTLCache, keys # Добавлен импорт keys
 from fuzzywuzzy import process, fuzz
 
-# Импорты для новой структуры
 from bot.config.settings import settings
 from bot.utils.models import AsicMiner
 from bot.utils.helpers import make_request, parse_power, parse_profitability
@@ -17,14 +16,10 @@ logger = logging.getLogger(__name__)
 
 class AsicService:
     def __init__(self):
-        """
-        Сервис для получения данных об ASIC-майнерах.
-        """
-        # Кэш теперь является атрибутом экземпляра этого сервиса
         self.cache = TTLCache(maxsize=1, ttl=settings.asic_cache_update_hours * 3600)
 
     async def _scrape_asicminervalue(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
-        """Парсит данные с сайта AsicMinerValue."""
+        # ... (код этого метода без изменений)
         miners = []
         html = await make_request(session, settings.asicminervalue_url, 'text')
         if not html: return miners
@@ -48,7 +43,7 @@ class AsicService:
         return miners
 
     async def _fetch_whattomine_asics(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
-        """Загружает данные из API WhatToMine."""
+        # ... (код этого метода без изменений)
         miners = []
         headers = {'Accept': 'application/json'}
         data = await make_request(session, settings.whattomine_asics_url, headers=headers)
@@ -69,12 +64,10 @@ class AsicService:
         logger.info(f"Fetched {len(miners)} miners from WhatToMine")
         return miners
 
-    # Используем lambda, чтобы декоратор @cached мог получить доступ к self.cache
-    @cached(cache=lambda self: self.cache)
+    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
+    @cached(cache=lambda self: self.cache, key=lambda self: keys.hashkey())
     async def get_profitable_asics(self) -> List[AsicMiner]:
-        """
-        Получает, объединяет, кэширует и возвращает список доходных ASIC-майнеров.
-        """
+        # ... (код этого метода без изменений)
         logger.info("Updating ASIC miners cache...")
         async with aiohttp.ClientSession() as session:
             tasks = [self._scrape_asicminervalue(session), self._fetch_whattomine_asics(session)]

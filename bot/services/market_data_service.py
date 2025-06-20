@@ -4,9 +4,8 @@ import logging
 from typing import Optional, Dict
 
 import aiohttp
-from cachetools import cached, TTLCache
+from cachetools import cached, TTLCache, keys # Добавлен импорт keys
 
-# Импорты для новой структуры
 from bot.config.settings import settings
 from bot.utils.helpers import make_request
 
@@ -14,22 +13,15 @@ logger = logging.getLogger(__name__)
 
 class MarketDataService:
     def __init__(self):
-        """
-        Сервис для получения рыночных данных, таких как Индекс страха и жадности,
-        и статуса сети Bitcoin.
-        """
-        self.fear_greed_cache = TTLCache(maxsize=1, ttl=14400) # Кэш на 4 часа
-        self.rub_rate_cache = TTLCache(maxsize=1, ttl=43200) # Кэш на 12 часов
+        self.fear_greed_cache = TTLCache(maxsize=1, ttl=14400)
+        self.rub_rate_cache = TTLCache(maxsize=1, ttl=43200)
 
-    @cached(cache=lambda self: self.fear_greed_cache)
+    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
+    @cached(cache=lambda self: self.fear_greed_cache, key=lambda self: keys.hashkey())
     async def get_fear_and_greed_index(self) -> Optional[Dict]:
-        """
-        Получает Индекс страха и жадности, используя сначала платный,
-        а затем бесплатный источник.
-        """
+        # ... (код этого метода без изменений)
         logger.info("Fetching Fear & Greed Index...")
         async with aiohttp.ClientSession() as session:
-            # Сначала пробуем платный источник, если есть ключ
             if settings.cmc_api_key:
                 headers = {'X-CMC_PRO_API_KEY': settings.cmc_api_key}
                 data = await make_request(session, settings.cmc_fear_and_greed_url, headers=headers)
@@ -37,19 +29,17 @@ class MarketDataService:
                     logger.info("Fetched F&G index from CoinMarketCap")
                     return data['data'][0]
                 logger.warning("Failed to fetch from CMC, falling back to Alternative.me")
-
-            # Резервный бесплатный источник
             data = await make_request(session, settings.fear_and_greed_api_url)
             if data and 'data' in data and data['data']:
                 logger.info("Fetched F&G index from Alternative.me")
                 return data['data'][0]
-
         logger.error("Failed to fetch F&G index from all sources.")
         return None
 
-    @cached(cache=lambda self: self.rub_rate_cache)
+    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
+    @cached(cache=lambda self: self.rub_rate_cache, key=lambda self: keys.hashkey())
     async def get_usd_rub_rate(self) -> float:
-        """Получает курс доллара к рублю от ЦБ РФ."""
+        # ... (код этого метода без изменений)
         logger.info("Fetching USD/RUB exchange rate.")
         async with aiohttp.ClientSession() as session:
             data = await make_request(session, settings.cbr_daily_json_url)
@@ -60,9 +50,8 @@ class MarketDataService:
         logger.warning("Using fallback USD/RUB rate.")
         return 90.0
 
-
     async def get_halving_info(self) -> str:
-        """Получает информацию о следующем халвинге Bitcoin."""
+        # ... (код этого метода без изменений)
         logger.info("Fetching Bitcoin halving info...")
         async with aiohttp.ClientSession() as s:
             height_str = await make_request(s, "https://mempool.space/api/blocks/tip/height", response_type='text')
@@ -72,14 +61,14 @@ class MarketDataService:
             current_block = int(height_str)
             halving_interval = 210000
             blocks_left = halving_interval - (current_block % halving_interval)
-            days_left = blocks_left / 144  # Примерно 144 блока в день
+            days_left = blocks_left / 144
             
             return (f"⏳ <b>До халвинга Bitcoin осталось:</b>\n\n"
                     f"🧱 <b>Блоков:</b> <code>{blocks_left:,}</code>\n"
                     f"🗓 <b>Примерно дней:</b> <code>{days_left:.1f}</code>")
 
     async def get_btc_network_status(self) -> str:
-        """Получает текущий статус сети Bitcoin (комиссии, мемпул)."""
+        # ... (код этого метода без изменений)
         logger.info("Fetching Bitcoin network status...")
         async with aiohttp.ClientSession() as s:
             urls = [
