@@ -5,7 +5,8 @@ from typing import List, Dict
 
 import aiohttp
 import feedparser
-from cachetools import cached, TTLCache
+from async_cache import cached
+from cachetools import TTLCache # или LRUCache
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request, sanitize_html

@@ -4,7 +4,8 @@ import logging
 from typing import Optional
 
 import aiohttp
-from cachetools import cached, TTLCache
+from async_cache import cached
+from cachetools import TTLCache # или LRUCache
 
 from bot.config.settings import settings
 from bot.utils.models import CryptoCoin

@@ -5,7 +5,8 @@ from typing import List, Dict
 
 import aiohttp
 from bs4 import BeautifulSoup
-from cachetools import cached, TTLCache, keys # Добавлен импорт keys
+from async_cache import cached
+from cachetools import TTLCache # или LRUCache
 from fuzzywuzzy import process, fuzz
 
 from bot.config.settings import settings

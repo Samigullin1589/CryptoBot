@@ -4,7 +4,8 @@ apscheduler
 beautifulsoup4
 lxml
 bleach
-cachetools>=5.0.0
+cachetools
+async-cache
 python-dotenv
 feedparser
 fuzzywuzzy
@@ -13,3 +14,4 @@ matplotlib
 openai
 python-json-logger
 pydantic-settings
+pydantic
