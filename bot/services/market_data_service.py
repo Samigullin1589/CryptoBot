@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict
 
 import aiohttp
-from cachetools import cached, TTLCache, keys # Добавлен импорт keys
+from cachetools import cached, TTLCache
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request
@@ -12,14 +12,12 @@ from bot.utils.helpers import make_request
 logger = logging.getLogger(__name__)
 
 class MarketDataService:
-    def __init__(self):
-        self.fear_greed_cache = TTLCache(maxsize=1, ttl=14400)
-        self.rub_rate_cache = TTLCache(maxsize=1, ttl=43200)
+    # Кэши, как атрибуты класса
+    fear_greed_cache = TTLCache(maxsize=1, ttl=14400)
+    rub_rate_cache = TTLCache(maxsize=1, ttl=43200)
 
-    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
-    @cached(cache=lambda self: self.fear_greed_cache, key=lambda self: keys.hashkey())
+    @cached(fear_greed_cache)
     async def get_fear_and_greed_index(self) -> Optional[Dict]:
-        # ... (код этого метода без изменений)
         logger.info("Fetching Fear & Greed Index...")
         async with aiohttp.ClientSession() as session:
             if settings.cmc_api_key:
@@ -36,10 +34,8 @@ class MarketDataService:
         logger.error("Failed to fetch F&G index from all sources.")
         return None
 
-    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
-    @cached(cache=lambda self: self.rub_rate_cache, key=lambda self: keys.hashkey())
+    @cached(rub_rate_cache)
     async def get_usd_rub_rate(self) -> float:
-        # ... (код этого метода без изменений)
         logger.info("Fetching USD/RUB exchange rate.")
         async with aiohttp.ClientSession() as session:
             data = await make_request(session, settings.cbr_daily_json_url)
@@ -51,7 +47,6 @@ class MarketDataService:
         return 90.0
 
     async def get_halving_info(self) -> str:
-        # ... (код этого метода без изменений)
         logger.info("Fetching Bitcoin halving info...")
         async with aiohttp.ClientSession() as s:
             height_str = await make_request(s, "https://mempool.space/api/blocks/tip/height", response_type='text')
@@ -68,7 +63,6 @@ class MarketDataService:
                     f"🗓 <b>Примерно дней:</b> <code>{days_left:.1f}</code>")
 
     async def get_btc_network_status(self) -> str:
-        # ... (код этого метода без изменений)
         logger.info("Fetching Bitcoin network status...")
         async with aiohttp.ClientSession() as s:
             urls = [

@@ -5,7 +5,7 @@ from typing import List, Dict
 
 import aiohttp
 import feedparser
-from cachetools import cached, TTLCache, keys # Добавлен импорт keys
+from cachetools import cached, TTLCache
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request, sanitize_html
@@ -13,11 +13,10 @@ from bot.utils.helpers import make_request, sanitize_html
 logger = logging.getLogger(__name__)
 
 class NewsService:
-    def __init__(self):
-        self.cache = TTLCache(maxsize=1, ttl=1800)
+    # Кэш, как атрибут класса
+    cache = TTLCache(maxsize=1, ttl=1800)
 
     async def _parse_feed(self, session: aiohttp.ClientSession, url: str) -> List[Dict]:
-        # ... (код этого метода без изменений)
         news_from_feed = []
         try:
             text = await make_request(session, url, response_type='text')
@@ -33,10 +32,8 @@ class NewsService:
             logger.warning(f"Failed to parse RSS feed {url}", extra={'error': str(e)})
         return news_from_feed
 
-    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
-    @cached(cache=lambda self: self.cache, key=lambda self: keys.hashkey())
+    @cached(cache)
     async def fetch_latest_news(self) -> List[Dict]:
-        # ... (код этого метода без изменений)
         logger.info("Fetching latest news from all RSS feeds...")
         all_news = []
         async with aiohttp.ClientSession() as session:

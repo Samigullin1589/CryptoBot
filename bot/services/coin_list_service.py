@@ -3,7 +3,7 @@ import logging
 from typing import Dict
 
 import aiohttp
-from cachetools import cached, LRUCache, keys # Добавлен импорт keys
+from cachetools import cached, LRUCache
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request
@@ -11,13 +11,15 @@ from bot.utils.helpers import make_request
 logger = logging.getLogger(__name__)
 
 class CoinListService:
-    def __init__(self):
-        self.cache = LRUCache(maxsize=1)
+    # Кэш, как атрибут класса
+    cache = LRUCache(maxsize=1)
 
-    # ИЗМЕНЕНИЕ: Добавлен явный 'key', чтобы избежать TypeError
-    @cached(cache=lambda self: self.cache, key=lambda self: keys.hashkey())
+    @cached(cache)
     async def get_coin_list(self) -> Dict[str, str]:
-        # ... (код этого метода без изменений)
+        """
+        Загружает и возвращает словарь, где ключ - тикер монеты, 
+        а значение - ее алгоритм.
+        """
         logger.info("Updating coin list cache from Minerstat...")
         coin_algo_map = {}
         async with aiohttp.ClientSession() as session:

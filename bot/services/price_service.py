@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 
 import aiohttp
-from cachetools import cached, TTLCache, keys # Добавлен импорт keys
+from cachetools import cached, TTLCache
 
 from bot.config.settings import settings
 from bot.utils.models import CryptoCoin
@@ -14,17 +14,21 @@ from bot.services.coin_list_service import CoinListService
 logger = logging.getLogger(__name__)
 
 class PriceService:
+    # Кэш, как атрибут класса
+    cache = TTLCache(maxsize=100, ttl=300)
+
     def __init__(self, coin_list_service: CoinListService):
         self.coin_list_service = coin_list_service
-        self.cache = TTLCache(maxsize=100, ttl=300)
 
-    # ИЗМЕНЕНИЕ: Улучшен 'key', чтобы он был более стандартным
-    @cached(cache=lambda self: self.cache, key=lambda self, query: keys.hashkey(query))
+    @cached(cache)
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
-        # ... (код этого метода без изменений)
+        """
+        Получает цену криптовалюты, используя несколько источников данных.
+        """
         query_norm = settings.ticker_aliases.get(query.strip().lower(), query.strip().lower())
         
         async with aiohttp.ClientSession() as session:
+            # --- Попытка 1: CoinGecko (основной источник) ---
             logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
             cg_search_data = await make_request(session, f"{settings.coingecko_api_base}/search?query={query_norm}")
             
@@ -44,6 +48,7 @@ class PriceService:
                         price_change_24h=md.get('price_change_percentage_24h'), algorithm=coin_list.get(symbol)
                     )
             
+            # --- Попытка 2: CoinPaprika (резервный источник) ---
             logger.warning(f"Failed to get price from CoinGecko for '{query_norm}'. Falling back to CoinPaprika.")
             cp_search_data = await make_request(session, f"{settings.coinpaprika_api_base}/search?q={query_norm}&c=currencies")
             if cp_search_data and cp_search_data.get('currencies'):
