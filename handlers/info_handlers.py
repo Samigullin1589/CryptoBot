@@ -13,15 +13,27 @@ from utils.keyboards import (get_main_menu_keyboard, get_price_keyboard,
 router = Router()
 logger = logging.getLogger(__name__)
 
+# ИЗМЕНЕНИЕ: Список текстов кнопок, которые нужно игнорировать
+MENU_BUTTON_TEXTS = [
+    "💹 Курс", "⚙️ Топ ASIC", "⛏️ Калькулятор", "📰 Новости",
+    "😱 Индекс Страха", "⏳ Халвинг", "📡 Статус BTC", "🧠 Викторина"
+]
+
 async def show_main_menu(message: Message):
-    """Отправляет сообщение с главным меню."""
+    # Эта функция была в предыдущих версиях, но для полноты картины оставим ее здесь.
+    # Она может быть вызвана из других модулей.
     await message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+
 
 @router.callback_query(F.data == "menu_asics")
 async def handle_asics_menu(call: CallbackQuery, api_client: ApiClient):
-    """Обрабатывает кнопку 'Топ ASIC'."""
     await call.message.edit_text("⏳ Загружаю актуальный список...")
     asics = await api_client.get_profitable_asics()
+    if not asics:
+        await call.message.edit_text("❌ Не удалось загрузить список ASIC. Попробуйте позже.", reply_markup=get_main_menu_keyboard())
+        await call.answer()
+        return
+        
     text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
     for miner in asics[:10]:
         text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
@@ -32,51 +44,37 @@ async def handle_asics_menu(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data == "menu_price")
 async def handle_price_menu(call: CallbackQuery):
-    """Обрабатывает кнопку 'Курс'."""
     await call.message.edit_text("Курс какой монеты вас интересует?", reply_markup=get_price_keyboard())
     await call.answer()
 
 async def send_price_info(message: Message, query: str, api_client: ApiClient):
-    """Получает и отправляет информацию о курсе монеты и оборудовании."""
     coin = await api_client.get_crypto_price(query)
     if not coin:
         await message.answer(f"❌ Не удалось найти информацию по '{query}'.")
         return
-
     change = coin.price_change_24h or 0
     emoji = "📈" if change >= 0 else "📉"
     text = (f"<b>{coin.name} ({coin.symbol})</b>\n"
             f"💹 Курс: <b>${coin.price:,.4f}</b>\n"
             f"{emoji} 24ч: <b>{change:.2f}%</b>\n")
-
-    # --- НОВАЯ ЛОГИКА РЕКОМЕНДАЦИИ ОБОРУДОВАНИЯ ---
     if coin.algorithm:
         text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>\n"
         logger.info(f"Searching for ASICs with algorithm: {coin.algorithm}")
-
         all_asics = await api_client.get_profitable_asics()
-
-        # Гибкое сравнение названий алгоритмов
         normalized_coin_algo = coin.algorithm.lower().replace('-', '').replace('_', '')
         relevant_asics = [
             asic for asic in all_asics 
             if asic.algorithm and normalized_coin_algo in asic.algorithm.lower().replace('-', '').replace('_', '')
         ]
-
         if relevant_asics:
             sorted_relevant_asics = sorted(relevant_asics, key=lambda x: x.profitability, reverse=True)
             text += f"\n⚙️ <b>Рекомендуемое оборудование под {coin.algorithm}:</b>\n"
-            for asic in sorted_relevant_asics[:3]: # Показать топ 3
+            for asic in sorted_relevant_asics[:3]:
                 text += f"  • <b>{sanitize_html(asic.name)}</b>: ${asic.profitability:.2f}/день\n"
-        else:
-            text += "\n⛏️ Подходящее ASIC-оборудование не найдено в нашей базе."
-    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
-
     await message.answer(text)
 
 @router.callback_query(F.data.startswith("price_"))
 async def handle_price_callback(call: CallbackQuery, api_client: ApiClient):
-    """Обрабатывает колбэки от кнопок с тикерами."""
     action = call.data.split('_')[1]
     await call.message.delete()
     if action == "other":
@@ -86,9 +84,9 @@ async def handle_price_callback(call: CallbackQuery, api_client: ApiClient):
         await show_main_menu(call.message)
     await call.answer()
 
+
 @router.callback_query(F.data == "menu_news")
 async def handle_news_menu(call: CallbackQuery, api_client: ApiClient):
-    """Обрабатывает кнопку 'Новости'."""
     await call.message.edit_text("⏳ Загружаю новости...")
     news = await api_client.fetch_latest_news()
     if not news:
@@ -101,7 +99,6 @@ async def handle_news_menu(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data == "menu_fear_greed")
 async def handle_fear_greed_menu(call: CallbackQuery, api_client: ApiClient):
-    """Обрабатывает кнопку 'Индекс Страха'."""
     await call.message.edit_text("⏳ Получаю индекс...")
     index = await api_client.get_fear_and_greed_index()
     if not index:
@@ -117,10 +114,10 @@ async def handle_fear_greed_menu(call: CallbackQuery, api_client: ApiClient):
     ax.annotate('', xy=(angle, 1), xytext=(0,0), arrowprops=dict(facecolor='white', shrink=0.05, width=4, headwidth=10))
     fig.text(0.5,0.5,f"{value}",ha='center',va='center',fontsize=48,color='white',weight='bold')
     fig.text(0.5,0.35,classification,ha='center',va='center',fontsize=20,color='white')
-
+    
     buf = io.BytesIO(); plt.savefig(buf, format='png', dpi=150, transparent=True); buf.seek(0); plt.close(fig)
     caption = f"😱 <b>Индекс страха и жадности: {value} - {classification}</b>"
-
+    
     await call.message.delete()
     await call.message.answer_photo(BufferedInputFile(buf.read(), "fng.png"), caption=caption)
     await show_main_menu(call.message)
@@ -128,7 +125,6 @@ async def handle_fear_greed_menu(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data.in_({"menu_halving", "menu_btc_status", "menu_calculator"}))
 async def handle_info_callbacks(call: CallbackQuery, api_client: ApiClient):
-    """Обрабатывает информационные кнопки."""
     await call.message.edit_text("⏳ Обрабатываю запрос...")
     text = "❌ Ошибка."
     if call.data == "menu_halving": text = await api_client.get_halving_info()
@@ -142,7 +138,6 @@ async def handle_info_callbacks(call: CallbackQuery, api_client: ApiClient):
 
 @router.callback_query(F.data == "menu_quiz")
 async def handle_quiz_menu(call: CallbackQuery, api_client: ApiClient):
-    """Обрабатывает кнопку 'Викторина'."""
     await call.message.edit_text("⏳ Генерирую вопрос...")
     quiz = await api_client.generate_quiz_question()
     if not quiz:
@@ -156,9 +151,14 @@ async def handle_quiz_menu(call: CallbackQuery, api_client: ApiClient):
     )
     await call.answer()
 
+
 @router.message(F.text)
 async def handle_text_message(message: Message, api_client: ApiClient):
-    """Обрабатывает текстовые сообщения (ответы на ForceReply и запросы курса)."""
+    # ИЗМЕНЕНИЕ: Добавлена проверка, чтобы игнорировать текст кнопок
+    if message.text and message.text.strip() in MENU_BUTTON_TEXTS:
+        logger.info(f"Ignoring menu button text: {message.text}")
+        return
+
     if message.reply_to_message and message.reply_to_message.from_user.id == message.bot.id:
         if "Введите тикер" in message.reply_to_message.text:
             await message.reply_to_message.delete()

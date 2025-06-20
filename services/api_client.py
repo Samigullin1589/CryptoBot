@@ -7,7 +7,6 @@ from typing import List, Dict, Optional
 import aiohttp
 import feedparser
 from bs4 import BeautifulSoup
-# ИЗМЕНЕНИЕ: Заменяем импорты на более универсальные
 from cachetools import TTLCache, cached
 from fuzzywuzzy import process, fuzz
 
@@ -54,7 +53,9 @@ class ApiClient:
 
     async def _fetch_whattomine_asics(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
-        data = await make_request(session, config.WHATTOOMINE_ASICS_URL)
+        # ИЗМЕНЕНИЕ: Добавлен правильный заголовок 'Accept' для WhatToMine
+        headers = {'Accept': 'application/json'}
+        data = await make_request(session, config.WHATTOOMINE_ASICS_URL, headers=headers)
         if not data or 'asics' not in data: return miners
         
         for name, asic_data in data['asics'].items():
@@ -69,7 +70,6 @@ class ApiClient:
         logger.info(f"Fetched {len(miners)} miners from WhatToMine")
         return miners
 
-    # ИЗМЕНЕНИЕ: Используем стандартный декоратор @cached
     @cached(cache=asic_cache)
     async def get_profitable_asics(self) -> List[AsicMiner]:
         logger.info("Updating ASIC miners cache...")
