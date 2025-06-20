@@ -5,25 +5,47 @@ import asyncio
 from typing import Literal, Optional, Any
 import aiohttp
 import bleach
-from python_json_logger import jsonlogger
 
+# Пытаемся импортировать jsonlogger, но не падаем, если его нет
+try:
+    from python_json_logger import jsonlogger
+    JSON_LOGGER_AVAILABLE = True
+except ImportError:
+    JSON_LOGGER_AVAILABLE = False
+    
 logger = logging.getLogger(__name__)
 
 def setup_logging():
-    """Настраивает структурированное JSON-логирование."""
-    log_handler = logging.StreamHandler(sys.stdout)
-    formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(name)s %(levelname)s %(message)s %(module)s %(funcName)s %(lineno)d'
-    )
-    log_handler.setFormatter(formatter)
+    """
+    Настраивает логирование.
+    Пытается использовать JSON-формат, если библиотека доступна.
+    В противном случае, использует стандартный текстовый формат.
+    """
+    if JSON_LOGGER_AVAILABLE:
+        # Конфигурация для JSON-логгера
+        log_handler = logging.StreamHandler(sys.stdout)
+        formatter = jsonlogger.JsonFormatter(
+            '%(asctime)s %(name)s %(levelname)s %(message)s %(module)s %(funcName)s %(lineno)d'
+        )
+        log_handler.setFormatter(formatter)
+        logging.basicConfig(
+            level=logging.INFO,
+            handlers=[log_handler]
+        )
+        logging.info("Structured JSON logging is enabled.")
+    else:
+        # Резервная конфигурация, если jsonlogger не найден
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(name)s - (Fallback) %(message)s",
+            stream=sys.stdout,
+        )
+        logging.warning("python-json-logger not found. Falling back to standard text logging.")
 
-    logging.basicConfig(
-        level=logging.INFO,
-        handlers=[log_handler]
-    )
-
+    # Уменьшаем "шум" от некоторых библиотек
     logging.getLogger("aiogram.dispatcher").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
 
 async def make_request(
     session: aiohttp.ClientSession,
@@ -40,13 +62,13 @@ async def make_request(
                 return await response.json()
             return await response.text()
     except aiohttp.ClientResponseError as e:
-        logger.error(f"HTTP Error: {e.status}", extra={'url': url, 'message': e.message})
+        logger.error(f"HTTP Error: {e.status} for URL: {url}", extra={'url': url, 'message': e.message})
     except asyncio.TimeoutError:
-        logger.error("Request Timeout", extra={'url': url})
+        logger.error(f"Request Timeout for URL: {url}", extra={'url': url})
     except aiohttp.ClientError as e:
-        logger.error(f"ClientError: {e.__class__.__name__}", extra={'url': url})
-    except Exception as e:
-        logger.exception("Unexpected error in make_request")
+        logger.error(f"ClientError: {e.__class__.__name__} for URL: {url}")
+    except Exception:
+        logger.exception("Unexpected error in make_request for URL: %s", url)
     return None
 
 def sanitize_html(text: str) -> str:
