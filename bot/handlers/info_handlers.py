@@ -13,7 +13,7 @@ from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
 from bot.utils.helpers import sanitize_html, get_message_and_chat_id, show_main_menu
-from bot.keyboards.keyboards import (get_main_menu_keyboard, get_price_keyboard, # <-- ИСПРАВЛЕННЫЙ ПУТЬ
+from bot.keyboards.keyboards import (get_main_menu_keyboard, get_price_keyboard,
                                      get_quiz_keyboard)
 from bot.utils.plotting import generate_fng_image
 from bot.utils.states import PriceInquiry, ProfitCalculator
@@ -158,12 +158,20 @@ async def process_electricity_cost(message: Message, state: FSMContext, market_d
 @router.message(F.text == "🧠 Викторина")
 async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: QuizService):
     message, _ = await get_message_and_chat_id(update)
-    await message.edit_text("⏳ Генерирую вопрос...")
+    
+    if isinstance(update, CallbackQuery):
+        await message.delete()
+        message_to_process = await message.answer("⏳ Генерирую вопрос...")
+    else:
+        await message.edit_text("⏳ Генерирую вопрос...")
+        message_to_process = message
+
     quiz = await quiz_service.generate_quiz_question()
     if not quiz:
-        await message.edit_text("😕 Не удалось сгенерировать вопрос.", reply_markup=get_main_menu_keyboard())
+        await message_to_process.edit_text("😕 Не удалось сгенерировать вопрос.", reply_markup=get_main_menu_keyboard())
         return
-    await message.delete()
+    
+    await message_to_process.delete()
     await message.answer_poll(
         question=quiz['question'], options=quiz['options'], type='quiz',
         correct_option_id=quiz['correct_option_index'], is_anonymous=False,
@@ -172,6 +180,9 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
 
 @router.message(F.text)
 async def handle_arbitrary_text(message: Message, price_service: PriceService, asic_service: AsicService, bot: Bot):
+    if message.text and message.text.startswith('/'):
+        return
+
     if message.chat.type == "private":
         logger.info(f"User sent text '{message.text}' in private, processing as price request.")
         await send_price_info(message, message.text, price_service, asic_service)

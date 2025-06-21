@@ -35,7 +35,7 @@ async def make_request(
             async with session.get(url, headers=headers, timeout=timeout) as response:
                 response.raise_for_status()
                 if response_type == 'json':
-                    return await response.json()
+                    return await response.json(content_type=None)
                 return await response.text()
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             if attempt < retries - 1:
