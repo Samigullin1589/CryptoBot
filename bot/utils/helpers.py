@@ -8,7 +8,7 @@ import aiohttp
 import bleach
 from aiogram.types import Message, CallbackQuery
 
-from bot.utils.keyboards import get_main_menu_keyboard
+from bot.keyboards.keyboards import get_main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 

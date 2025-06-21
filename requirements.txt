@@ -4,7 +4,6 @@ apscheduler
 beautifulsoup4
 lxml
 bleach
-cachetools
 python-dotenv
 feedparser
 fuzzywuzzy
