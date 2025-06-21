@@ -18,7 +18,7 @@ from bot.services.quiz_service import QuizService
 from bot.services.scheduler import setup_scheduler
 from bot.handlers import common_handlers, info_handlers, mining_handlers
 from bot.middlewares.throttling import ThrottlingMiddleware
-from bot.utils import dependencies # <-- ВАЖНЫЙ ИМПОРТ
+from bot.utils import dependencies
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
     
-    # --- ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНЫХ ЗАВИСИМОСТЕЙ ---
+    # Инициализация глобальных зависимостей для планировщика
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
@@ -55,12 +55,12 @@ async def main():
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # Настраиваем планировщик (теперь он ничего не принимает)
+    # Настраиваем планировщик
     scheduler = setup_scheduler()
     
-    # Данные для обработчиков (хендлеров) остаются как были
+    # Данные для ОБРАБОТЧИКОВ (хендлеров)
     workflow_data = {
-        "bot": bot,
+        # "bot": bot, <-- ЭТА СТРОКА БЫЛА ОШИБКОЙ И ТЕПЕРЬ УДАЛЕНА
         "scheduler": scheduler,
         "asic_service": asic_service,
         "price_service": price_service,
@@ -84,6 +84,8 @@ async def main():
         
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
+        # Теперь вызов корректен: bot передается как первый аргумент,
+        # а остальные зависимости - как именованные.
         await dp.start_polling(bot, **workflow_data)
     finally:
         scheduler.shutdown()
