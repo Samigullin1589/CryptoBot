@@ -1,29 +1,29 @@
-    import asyncio
-    import logging
-    import redis.asyncio as redis
+import asyncio
+import logging
+import redis.asyncio as redis
 
-    from aiogram import Bot, Dispatcher
-    from aiogram.client.default import DefaultBotProperties
-    from aiogram.fsm.storage.redis import RedisStorage
-    from openai import AsyncOpenAI
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.redis import RedisStorage
+from openai import AsyncOpenAI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    from bot.config.settings import settings
-    from bot.utils.helpers import setup_logging
-    from bot.services.asic_service import AsicService
-    from bot.services.coin_list_service import CoinListService
-    from bot.services.price_service import PriceService
-    from bot.services.news_service import NewsService
-    from bot.services.market_data_service import MarketDataService
-    from bot.services.quiz_service import QuizService
-    from bot.services.scheduler import setup_scheduler
-    from bot.handlers import common_handlers, info_handlers, mining_handlers
-    from bot.middlewares.throttling import ThrottlingMiddleware
+from bot.config.settings import settings
+from bot.utils.helpers import setup_logging
+from bot.services.asic_service import AsicService
+from bot.services.coin_list_service import CoinListService
+from bot.services.price_service import PriceService
+from bot.services.news_service import NewsService
+from bot.services.market_data_service import MarketDataService
+from bot.services.quiz_service import QuizService
+from bot.services.scheduler import setup_scheduler
+from bot.handlers import common_handlers, info_handlers, mining_handlers
+from bot.middlewares.throttling import ThrottlingMiddleware
 
-    setup_logging()
-    logger = logging.getLogger(__name__)
+setup_logging()
+logger = logging.getLogger(__name__)
 
-    async def main():
+async def main():
         if not settings.bot_token or not settings.redis_url:
             logger.critical("Bot token or Redis URL not found.")
             return
@@ -55,8 +55,6 @@
             asic_service=asic_service
         )
         
-        # ИСПРАВЛЕНИЕ: Мы больше не передаем 'bot' в этом словаре.
-        # aiogram предоставляет его автоматически.
         workflow_data = {
             "scheduler": scheduler,
             "asic_service": asic_service,
@@ -81,7 +79,6 @@
             
             await bot.delete_webhook(drop_pending_updates=True)
             logger.info("Starting bot in polling mode.")
-            # ИСПРАВЛЕНИЕ: Вызываем start_polling правильно.
             await dp.start_polling(bot, **workflow_data)
         finally:
             scheduler.shutdown()
@@ -89,9 +86,8 @@
             await bot.session.close()
             logger.info("Bot stopped.")
 
-    if __name__ == '__main__':
-        try:
-            asyncio.run(main())
-        except (KeyboardInterrupt, SystemExit):
-            logger.info("Bot stopped by user.")
-    
+if __name__ == '__main__':
+    try:  # <-- Отступ есть (1 уровень)
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):  # <-- Добавлен отступ, теперь тоже 1 уровень
+        logger.info("Bot stopped by user.")
