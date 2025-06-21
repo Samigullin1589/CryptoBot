@@ -18,6 +18,7 @@ from bot.services.quiz_service import QuizService
 from bot.services.scheduler import setup_scheduler
 from bot.handlers import common_handlers, info_handlers, mining_handlers
 from bot.middlewares.throttling import ThrottlingMiddleware
+from bot.utils import dependencies # <-- ВАЖНЫЙ ИМПОРТ
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -45,28 +46,29 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
     
-    # Включаем роутеры
+    # --- ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНЫХ ЗАВИСИМОСТЕЙ ---
+    dependencies.bot = bot
+    dependencies.asic_service = asic_service
+    dependencies.news_service = news_service
+    
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # Собираем словарь зависимостей для передачи в планировщик и обработчики
-    context_data = {
+    # Настраиваем планировщик (теперь он ничего не принимает)
+    scheduler = setup_scheduler()
+    
+    # Данные для обработчиков (хендлеров) остаются как были
+    workflow_data = {
         "bot": bot,
+        "scheduler": scheduler,
         "asic_service": asic_service,
-        "news_service": news_service,
-        # Добавляем остальные сервисы, которые могут понадобиться в будущем
         "price_service": price_service,
+        "news_service": news_service,
         "market_data_service": market_data_service,
         "quiz_service": quiz_service,
         "redis_client": redis_client,
     }
-
-    # Настраиваем планировщик, передавая ему словарь с зависимостями
-    scheduler = setup_scheduler(context_data)
-    
-    # Добавляем планировщик в общий словарь для доступа из хендлеров
-    context_data["scheduler"] = scheduler
     
     try:
         scheduler.start()
@@ -82,7 +84,7 @@ async def main():
         
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
-        await dp.start_polling(bot, **context_data)
+        await dp.start_polling(bot, **workflow_data)
     finally:
         scheduler.shutdown()
         await dp.storage.close()

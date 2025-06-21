@@ -1,23 +1,27 @@
 import logging
-from apscheduler import current_scheduler
-from aiogram import Bot
+from bot.utils import dependencies
 from bot.config.settings import settings
-from bot.services.news_service import NewsService
-from bot.services.asic_service import AsicService
 
 logger = logging.getLogger(__name__)
 
-# Задачи больше не принимают аргументов!
+# Задачи теперь не принимают никаких аргументов.
+# Они сами знают, где взять все необходимое.
+
 async def send_news_job():
-    # Мы получаем доступ к зависимостям через current_scheduler
-    context = current_scheduler.context
-    bot: Bot = context['bot']
-    news_service: NewsService = context['news_service']
-    
-    if not settings.news_chat_id:
-        return
+    """Задача для отправки новостей."""
     logger.info("Executing scheduled news job...")
     try:
+        # Получаем зависимости из общего модуля
+        bot = dependencies.bot
+        news_service = dependencies.news_service
+
+        if not bot or not news_service:
+            logger.warning("send_news_job skipped: dependencies not initialized.")
+            return
+
+        if not settings.news_chat_id:
+            return
+            
         news = await news_service.fetch_latest_news()
         if not news:
             return
@@ -31,12 +35,15 @@ async def send_news_job():
 
 
 async def update_asics_cache_job():
-    # Точно так же получаем доступ к зависимостям здесь
-    context = current_scheduler.context
-    asic_service: AsicService = context['asic_service']
-    
+    """Задача для обновления кэша ASIC."""
     logger.info("Executing scheduled ASIC cache update job...")
     try:
+        # Получаем зависимость из общего модуля
+        asic_service = dependencies.asic_service
+        if not asic_service:
+            logger.warning("update_asics_cache_job skipped: asic_service not initialized.")
+            return
+
         await asic_service.get_profitable_asics()
     except Exception as e:
         logger.error("Error in update_asics_cache_job", extra={'error': str(e)})

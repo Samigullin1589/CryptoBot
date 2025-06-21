@@ -7,7 +7,7 @@ from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-def setup_scheduler(context: dict) -> AsyncIOScheduler:
+def setup_scheduler() -> AsyncIOScheduler:
     parsed_url = urlparse(settings.redis_url)
     
     jobstores = {
@@ -19,18 +19,15 @@ def setup_scheduler(context: dict) -> AsyncIOScheduler:
         )
     }
     
-    # Передаем словарь с зависимостями в контекст планировщика
     scheduler = AsyncIOScheduler(
         jobstores=jobstores, 
         timezone="UTC",
-        job_defaults={'misfire_grace_time': 300}, # Доп. настройка на случай сбоев
-        context=context # <-- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
+        job_defaults={'misfire_grace_time': 300}
     )
 
-    # Добавляем задачи, используя их текстовые "адреса"
     if settings.news_chat_id:
         scheduler.add_job(
-            'bot.services.tasks:send_news_job', # <-- Текстовая ссылка
+            'bot.services.tasks:send_news_job',
             'interval',
             hours=settings.news_interval_hours,
             id='news_sending_job',
@@ -38,12 +35,12 @@ def setup_scheduler(context: dict) -> AsyncIOScheduler:
         )
     
     scheduler.add_job(
-        'bot.services.tasks:update_asics_cache_job', # <-- Текстовая ссылка
+        'bot.services.tasks:update_asics_cache_job',
         'interval',
         hours=settings.asic_cache_update_hours,
         id='asic_cache_update_job',
         replace_existing=True
     )
     
-    logger.info("Scheduler configured with RedisJobStore and textual job references.")
+    logger.info("Scheduler configured with RedisJobStore and dependency module.")
     return scheduler
