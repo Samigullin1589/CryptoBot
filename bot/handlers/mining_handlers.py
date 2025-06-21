@@ -31,7 +31,7 @@ async def handle_mining_menu(update: Union[CallbackQuery, Message]):
         await message.answer(text, reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("start_mining"))
-async def start_mining(message: Message, redis_client: redis.Redis, scheduler: AsyncIOScheduler):
+async def start_mining(message: Message, redis_client: redis.Redis, scheduler: AsyncIOScheduler, bot: Bot):
     user_id = message.from_user.id
 
     if await redis_client.exists(f"mining:session:{user_id}"):
@@ -44,7 +44,7 @@ async def start_mining(message: Message, redis_client: redis.Redis, scheduler: A
 
     run_date = datetime.now() + timedelta(seconds=settings.MINING_DURATION_SECONDS)
     
-    # ИСПРАВЛЕНИЕ: Передаем в задачу ТОЛЬКО простые типы данных (user_id) и используем текстовый путь
+    # Эта логика остается верной - используем текстовый путь и передаем только user_id
     job = scheduler.add_job(
         'bot.services.mining_tasks:end_mining_session',
         'date',
