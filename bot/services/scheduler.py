@@ -2,12 +2,14 @@ import logging
 from urllib.parse import urlparse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.redis import RedisJobStore
-
 from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-def setup_scheduler() -> AsyncIOScheduler:
+def setup_scheduler(context: dict) -> AsyncIOScheduler:
+    """
+    Настраивает и возвращает экземпляр планировщика APScheduler.
+    """
     parsed_url = urlparse(settings.redis_url)
     
     jobstores = {
@@ -19,12 +21,15 @@ def setup_scheduler() -> AsyncIOScheduler:
         )
     }
     
+    # Передаем context в планировщик, чтобы он был доступен в задачах
     scheduler = AsyncIOScheduler(
         jobstores=jobstores, 
         timezone="UTC",
-        job_defaults={'misfire_grace_time': 300}
+        job_defaults={'misfire_grace_time': 300},
+        context=context
     )
 
+    # Добавляем задачу отправки новостей, если указан ID чата
     if settings.news_chat_id:
         scheduler.add_job(
             'bot.services.tasks:send_news_job',
@@ -34,6 +39,7 @@ def setup_scheduler() -> AsyncIOScheduler:
             replace_existing=True
         )
     
+    # Добавляем задачу обновления кэша ASIC-майнеров
     scheduler.add_job(
         'bot.services.tasks:update_asics_cache_job',
         'interval',
@@ -42,5 +48,5 @@ def setup_scheduler() -> AsyncIOScheduler:
         replace_existing=True
     )
     
-    logger.info("Scheduler configured with RedisJobStore and dependency module.")
+    logger.info("Scheduler configured with RedisJobStore and context.")
     return scheduler
