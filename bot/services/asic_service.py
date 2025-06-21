@@ -1,20 +1,20 @@
-    import asyncio
-    import logging
-    from typing import List, Dict
+import asyncio
+import logging
+from typing import List, Dict
 
-    import aiohttp
-    from bs4 import BeautifulSoup
-    from cachetools import TTLCache
-    from fuzzywuzzy import process, fuzz
+import aiohttp
+from bs4 import BeautifulSoup
+from cachetools import TTLCache
+from fuzzywuzzy import process, fuzz
 
-    from bot.utils.async_cache_local import cached 
-    from bot.config.settings import settings
-    from bot.utils.models import AsicMiner
-    from bot.utils.helpers import make_request, parse_power, parse_profitability
+from bot.utils.async_cache_local import cached 
+from bot.config.settings import settings
+from bot.utils.models import AsicMiner
+from bot.utils.helpers import make_request, parse_power, parse_profitability
 
-    logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
-    class AsicService:
+class AsicService:
         cache = TTLCache(maxsize=1, ttl=settings.asic_cache_update_hours * 3600)
 
         @cached(cache)
@@ -117,4 +117,3 @@
                         logger.warning(f"Failed to parse ASIC data from WhatToMine for '{name}'")
             logger.info(f"Fetched {len(miners)} miners from WhatToMine")
             return miners
-    
