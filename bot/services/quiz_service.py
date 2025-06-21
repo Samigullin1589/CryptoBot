@@ -20,11 +20,23 @@ class QuizService:
         if not self.openai_client:
             logger.warning("OpenAI client is not configured.")
             return None
-
+            
         logger.info("Generating quiz question with OpenAI...")
-        # ... (ваш промпт остается здесь без изменений) ...
         prompt_messages = [
-            # ...
+            {
+                "role": "system",
+                "content": (
+                    "You are a helpful assistant designed to create quiz questions about cryptocurrency in Russian. "
+                    "You must respond only with a single, valid JSON object. "
+                    "The JSON object must have three keys: 'question' (a string), "
+                    "'options' (an array of 4 unique strings), and 'correct_option_index' "
+                    "(an integer from 0 to 3)."
+                )
+            },
+            {
+                "role": "user",
+                "content": "Создай интересный вопрос о криптовалютах."
+            }
         ]
         try:
             response = await self.openai_client.chat.completions.create(
@@ -37,7 +49,7 @@ class QuizService:
             validated_data = QuizResponse.model_validate(raw_data)
             return validated_data.model_dump()
         except (ValidationError, json.JSONDecodeError) as e:
-            logger.error("Invalid JSON from OpenAI", extra={'data': raw_data, 'error': str(e)})
+            logger.error("Invalid JSON from OpenAI", extra={'error': str(e)})
         except Exception as e:
-            logger.exception("Failed to get quiz from OpenAI")
+            logger.exception("Failed to get quiz from OpenAI. Error: %s", str(e))
         return None

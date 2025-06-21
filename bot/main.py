@@ -24,70 +24,71 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 async def main():
-        if not settings.bot_token or not settings.redis_url:
-            logger.critical("Bot token or Redis URL not found.")
-            return
+    if not settings.bot_token or not settings.redis_url:
+        logger.critical("Bot token or Redis URL not found in environment variables.")
+        return
 
-        redis_client = redis.from_url(settings.redis_url, decode_responses=True)
-        storage = RedisStorage(redis=redis_client)
-        
-        bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
-        dp = Dispatcher(storage=storage)
-        
-        dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, default_rate_limit=1.0))
-        
-        openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
+    redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+    storage = RedisStorage(redis=redis_client)
+    
+    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
+    dp = Dispatcher(storage=storage)
+    
+    dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, default_rate_limit=1.0))
+    
+    openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
-        coin_list_service = CoinListService()
-        price_service = PriceService(coin_list_service=coin_list_service)
-        asic_service = AsicService()
-        news_service = NewsService()
-        market_data_service = MarketDataService()
-        quiz_service = QuizService(openai_client=openai_client)
-        
-        dp.include_router(common_handlers.router)
-        dp.include_router(info_handlers.router)
-        dp.include_router(mining_handlers.router)
+    coin_list_service = CoinListService()
+    price_service = PriceService(coin_list_service=coin_list_service)
+    asic_service = AsicService()
+    news_service = NewsService()
+    market_data_service = MarketDataService()
+    quiz_service = QuizService(openai_client=openai_client)
+    
+    dp.include_router(common_handlers.router)
+    dp.include_router(info_handlers.router)
+    dp.include_router(mining_handlers.router)
 
-        scheduler = setup_scheduler(
-            bot=bot, 
-            news_service=news_service, 
-            asic_service=asic_service
+    scheduler = setup_scheduler(
+        bot=bot, 
+        news_service=news_service, 
+        asic_service=asic_service
+    )
+    
+    workflow_data = {
+        "bot": bot, # Передаем bot для использования в обработчиках
+        "scheduler": scheduler,
+        "asic_service": asic_service,
+        "price_service": price_service,
+        "news_service": news_service,
+        "market_data_service": market_data_service,
+        "quiz_service": quiz_service,
+        "redis_client": redis_client,
+    }
+    
+    try:
+        scheduler.start()
+        logger.info("Scheduler started.")
+        
+        logger.info("Pre-warming caches...")
+        await asyncio.gather(
+            asic_service.get_profitable_asics(), 
+            coin_list_service.get_coin_list(), 
+            return_exceptions=True
         )
+        logger.info("Caches are warm.")
         
-        workflow_data = {
-            "scheduler": scheduler,
-            "asic_service": asic_service,
-            "price_service": price_service,
-            "news_service": news_service,
-            "market_data_service": market_data_service,
-            "quiz_service": quiz_service,
-            "redis_client": redis_client,
-        }
-        
-        try:
-            scheduler.start()
-            logger.info("Scheduler started.")
-            
-            logger.info("Pre-warming caches...")
-            await asyncio.gather(
-                asic_service.get_profitable_asics(), 
-                coin_list_service.get_coin_list(), 
-                return_exceptions=True
-            )
-            logger.info("Caches are warm.")
-            
-            await bot.delete_webhook(drop_pending_updates=True)
-            logger.info("Starting bot in polling mode.")
-            await dp.start_polling(bot, **workflow_data)
-        finally:
-            scheduler.shutdown()
-            await dp.storage.close()
-            await bot.session.close()
-            logger.info("Bot stopped.")
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Starting bot in polling mode.")
+        await dp.start_polling(bot, **workflow_data)
+    finally:
+        scheduler.shutdown()
+        await dp.storage.close()
+        await bot.session.close()
+        logger.info("Bot stopped.")
 
 if __name__ == '__main__':
-    try:  # <-- Отступ есть (1 уровень)
+    try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):  # <-- Добавлен отступ, теперь тоже 1 уровень
+    except (KeyboardInterrupt, SystemExit):
         logger.info("Bot stopped by user.")

@@ -1,10 +1,9 @@
-# bot/services/market_data_service.py
 import asyncio
 import logging
 from typing import Optional, Dict
 
 import aiohttp
-from cachetools import cached, TTLCache
+from async_lru import alru_cache
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request
@@ -12,11 +11,7 @@ from bot.utils.helpers import make_request
 logger = logging.getLogger(__name__)
 
 class MarketDataService:
-    # Кэши, как атрибуты класса
-    fear_greed_cache = TTLCache(maxsize=1, ttl=14400)
-    rub_rate_cache = TTLCache(maxsize=1, ttl=43200)
-
-    @cached(fear_greed_cache)
+    @alru_cache(maxsize=1, ttl=14400)
     async def get_fear_and_greed_index(self) -> Optional[Dict]:
         logger.info("Fetching Fear & Greed Index...")
         async with aiohttp.ClientSession() as session:
@@ -25,7 +20,11 @@ class MarketDataService:
                 data = await make_request(session, settings.cmc_fear_and_greed_url, headers=headers)
                 if data and 'data' in data:
                     logger.info("Fetched F&G index from CoinMarketCap")
-                    return data['data'][0]
+                    fng_data = data['data']['fear_greed_historical'][-1]
+                    return {
+                        'value': fng_data['score'],
+                        'value_classification': fng_data['rating']
+                    }
                 logger.warning("Failed to fetch from CMC, falling back to Alternative.me")
             data = await make_request(session, settings.fear_and_greed_api_url)
             if data and 'data' in data and data['data']:
@@ -34,7 +33,7 @@ class MarketDataService:
         logger.error("Failed to fetch F&G index from all sources.")
         return None
 
-    @cached(rub_rate_cache)
+    @alru_cache(maxsize=1, ttl=43200)
     async def get_usd_rub_rate(self) -> float:
         logger.info("Fetching USD/RUB exchange rate.")
         async with aiohttp.ClientSession() as session:
@@ -69,7 +68,9 @@ class MarketDataService:
                 "https://mempool.space/api/v1/fees/recommended",
                 "https://mempool.space/api/mempool"
             ]
-            fees_data, mempool_data = await asyncio.gather(*(make_request(s, url) for url in urls))
+            tasks = [make_request(s, url) for url in urls]
+            results = await asyncio.gather(*tasks)
+            fees_data, mempool_data = results
 
             if not fees_data or not mempool_data:
                 return "❌ Не удалось получить статус сети BTC."
