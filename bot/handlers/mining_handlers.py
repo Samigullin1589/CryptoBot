@@ -11,18 +11,16 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.config.settings import settings
 from bot.services.mining_tasks import end_mining_session
-from bot.utils.keyboards import get_main_menu_keyboard
-# get_message_and_chat_id больше не нужен в этом файле
-# from bot.utils.helpers import get_message_and_chat_id
+from bot.keyboards.keyboards import get_main_menu_keyboard # <-- ИСПРАВЛЕННЫЙ ПУТЬ
+from bot.utils.helpers import get_message_and_chat_id
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-
-# --- ИСПРАВЛЕННЫЙ ХЭНДЛЕР ---
 @router.callback_query(F.data == "menu_mining")
 @router.message(F.text == "💎 Виртуальный Майнинг")
 async def handle_mining_menu(update: Union[CallbackQuery, Message]):
+    message, _ = await get_message_and_chat_id(update)
     text = (
         "<b>💎 Виртуальный майнинг</b>\n\n"
         "Эта функция находится в разработке.\n\n"
@@ -30,15 +28,10 @@ async def handle_mining_menu(update: Union[CallbackQuery, Message]):
         "получать пассивный доход и обменивать его на реальные призы!\n\n"
         "Используйте команду /start_mining для начала."
     )
-    
-    # Правильная проверка типа update
-    if isinstance(update, CallbackQuery):
-        # Если это нажатие на кнопку, редактируем сообщение
-        await update.message.edit_text(text, reply_markup=get_main_menu_keyboard())
-    elif isinstance(update, Message):
-        # Если это текстовая команда, отправляем новый ответ
-        await update.answer(text, reply_markup=get_main_menu_keyboard())
-
+    try:
+        await message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    except:
+        await message.answer(text, reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("start_mining"))
 async def start_mining(message: Message, redis_client: redis.Redis, scheduler: AsyncIOScheduler, bot: Bot):
@@ -69,7 +62,6 @@ async def start_mining(message: Message, redis_client: redis.Redis, scheduler: A
 
     await message.answer(f"✅ Виртуальный майнинг запущен на {settings.MINING_DURATION_SECONDS / 3600:.0f} часов!")
     logger.info(f"Started mining session for user {user_id}")
-
 
 @router.message(Command("claim_rewards"))
 async def claim_rewards(message: Message, redis_client: redis.Redis):
