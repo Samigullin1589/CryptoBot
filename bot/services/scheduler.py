@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse # <-- ДОБАВЛЕН ЭТОТ ИМПОРТ
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.redis import RedisJobStore
@@ -29,9 +30,17 @@ async def update_asics_cache_job(asic_service: AsicService):
         logger.error("Error in update_asics_cache_job", extra={'error': str(e)})
 
 def setup_scheduler(bot: Bot, news_service: NewsService, asic_service: AsicService) -> AsyncIOScheduler:
+    # Разбираем URL Redis на компоненты
+    parsed_url = urlparse(settings.redis_url)
+
     # Создаем хранилище задач в Redis для отказоустойчивости
     jobstores = {
-        'default': RedisJobStore(url=settings.redis_url)
+        'default': RedisJobStore(
+            host=parsed_url.hostname,
+            port=parsed_url.port,
+            password=parsed_url.password,
+            db=0 # Обычно база 0 по умолчанию, если не указана в URL
+        )
     }
     
     # Инициализируем планировщик с указанием хранилища
@@ -43,7 +52,7 @@ def setup_scheduler(bot: Bot, news_service: NewsService, asic_service: AsicServi
             'interval', 
             hours=settings.news_interval_hours, 
             args=(bot, news_service),
-            id='news_sending_job', # Добавляем ID для избежания дублирования
+            id='news_sending_job',
             replace_existing=True
         )
     
@@ -52,7 +61,7 @@ def setup_scheduler(bot: Bot, news_service: NewsService, asic_service: AsicServi
         'interval', 
         hours=settings.asic_cache_update_hours, 
         args=(asic_service,),
-        id='asic_cache_update_job', # Добавляем ID для избежания дублирования
+        id='asic_cache_update_job',
         replace_existing=True
     )
     
