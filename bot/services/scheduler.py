@@ -1,6 +1,7 @@
 import logging
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.redis import RedisJobStore
 
 from bot.config.settings import settings
 from bot.services.news_service import NewsService
@@ -28,22 +29,32 @@ async def update_asics_cache_job(asic_service: AsicService):
         logger.error("Error in update_asics_cache_job", extra={'error': str(e)})
 
 def setup_scheduler(bot: Bot, news_service: NewsService, asic_service: AsicService) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone="UTC")
+    # Создаем хранилище задач в Redis для отказоустойчивости
+    jobstores = {
+        'default': RedisJobStore(url=settings.redis_url)
+    }
+    
+    # Инициализируем планировщик с указанием хранилища
+    scheduler = AsyncIOScheduler(jobstores=jobstores, timezone="UTC")
     
     if settings.news_chat_id:
         scheduler.add_job(
             send_news_job, 
             'interval', 
             hours=settings.news_interval_hours, 
-            args=(bot, news_service)
+            args=(bot, news_service),
+            id='news_sending_job', # Добавляем ID для избежания дублирования
+            replace_existing=True
         )
     
     scheduler.add_job(
         update_asics_cache_job, 
         'interval', 
         hours=settings.asic_cache_update_hours, 
-        args=(asic_service,)
+        args=(asic_service,),
+        id='asic_cache_update_job', # Добавляем ID для избежания дублирования
+        replace_existing=True
     )
     
-    logger.info("Scheduler configured.")
+    logger.info("Scheduler configured with RedisJobStore.")
     return scheduler
