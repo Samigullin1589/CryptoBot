@@ -1,12 +1,13 @@
 import logging
-import redis.asyncio as redis
-from aiogram import Bot
-
+from bot.utils import dependencies
 from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-async def end_mining_session(user_id: int, bot: Bot, redis_client: redis.Redis):
+async def end_mining_session(user_id: int):
+    bot = dependencies.bot
+    redis_client = dependencies.redis_client
+    
     logger.info(f"Ending mining session for user {user_id}")
 
     total_reward = (settings.MINING_RATE_PER_HOUR / 3600) * settings.MINING_DURATION_SECONDS

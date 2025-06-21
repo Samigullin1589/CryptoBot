@@ -50,6 +50,8 @@ async def main():
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
+    # ИСПРАВЛЕНИЕ: Добавляем redis_client в глобальные зависимости
+    dependencies.redis_client = redis_client
       
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
@@ -87,7 +89,6 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
 
-        # ИСПРАВЛЕНИЕ: Определяем и передаем разрешенные обновления
         allowed_updates = dp.resolve_used_update_types(skip_events=['poll_answer'])
 
         await dp.start_polling(bot, **workflow_data, allowed_updates=allowed_updates)

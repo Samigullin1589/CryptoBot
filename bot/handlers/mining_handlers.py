@@ -2,16 +2,13 @@ import time
 import logging
 from datetime import datetime, timedelta
 from typing import Union
-
 import redis.asyncio as redis
 from aiogram import F, Router, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-
 from bot.config.settings import settings
-from bot.services.mining_tasks import end_mining_session
-from bot.keyboards.keyboards import get_main_menu_keyboard # <-- ИСПРАВЛЕННЫЙ ПУТЬ
+from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.utils.helpers import get_message_and_chat_id
 
 router = Router()
@@ -34,7 +31,7 @@ async def handle_mining_menu(update: Union[CallbackQuery, Message]):
         await message.answer(text, reply_markup=get_main_menu_keyboard())
 
 @router.message(Command("start_mining"))
-async def start_mining(message: Message, redis_client: redis.Redis, scheduler: AsyncIOScheduler, bot: Bot):
+async def start_mining(message: Message, redis_client: redis.Redis, scheduler: AsyncIOScheduler):
     user_id = message.from_user.id
 
     if await redis_client.exists(f"mining:session:{user_id}"):
@@ -46,11 +43,13 @@ async def start_mining(message: Message, redis_client: redis.Redis, scheduler: A
         return
 
     run_date = datetime.now() + timedelta(seconds=settings.MINING_DURATION_SECONDS)
+    
+    # ИСПРАВЛЕНИЕ: Передаем в задачу ТОЛЬКО простые типы данных (user_id) и используем текстовый путь
     job = scheduler.add_job(
-        end_mining_session,
+        'bot.services.mining_tasks:end_mining_session',
         'date',
         run_date=run_date,
-        args=[user_id, bot, redis_client],
+        args=[user_id],
         id=f"mining_job_{user_id}",
         replace_existing=True
     )

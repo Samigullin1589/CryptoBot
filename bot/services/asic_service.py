@@ -38,7 +38,10 @@ class AsicService:
     async def get_profitable_asics(self) -> List[AsicMiner]:
         logger.info("Updating ASIC miners cache...")
         async with aiohttp.ClientSession() as session:
-            tasks = [self._scrape_asicminervalue(session), self._fetch_whattomine_asics(session)]
+            tasks = [
+                self._scrape_asicminervalue(session), 
+                self._fetch_whattomine_asics(session)
+            ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
         all_miners = []
@@ -61,22 +64,19 @@ class AsicService:
     async def find_asics_by_algorithm(self, algorithm: str) -> List[AsicMiner]:
         if not algorithm:
             return []
-              
         all_asics = await self.get_profitable_asics()
         normalized_algo = algorithm.lower().replace('-', '').replace('_', '')
-          
         relevant_asics = [
             asic for asic in all_asics 
             if asic.algorithm and normalized_algo in asic.algorithm.lower().replace('-', '').replace('_', '')
         ]
-          
         return sorted(relevant_asics, key=lambda x: x.profitability, reverse=True)
 
     async def _scrape_asicminervalue(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
         html = await make_request(session, settings.asicminervalue_url, 'text')
         if not html: return miners
-          
+        
         soup = BeautifulSoup(html, 'lxml')
         table = soup.find('table', {'id': 'datatable'})
         if not table or not table.tbody: return miners
@@ -98,13 +98,8 @@ class AsicService:
 
     async def _fetch_whattomine_asics(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
-        # ИСПРАВЛЕНИЕ: Добавляем больше заголовков для имитации браузера
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
-        }
-        data = await make_request(session, settings.whattomine_asics_url, 'json', headers=headers)
+        # Теперь используем стандартный make_request, так как URL рабочий
+        data = await make_request(session, settings.whattomine_asics_url)
         if not data or 'asics' not in data:
             if data is not None:
                 logger.warning(f"WhatToMine API returned unexpected data: {str(data)[:200]}")
@@ -122,5 +117,5 @@ class AsicService:
                         ))
                 except (ValueError, TypeError):
                     logger.warning(f"Failed to parse ASIC data from WhatToMine for '{name}'")
-        logger.info(f"Fetched {len(miners)} miners from WhatToMine")
+        logger.info(f"Successfully fetched {len(miners)} miners from WhatToMine.")
         return miners
