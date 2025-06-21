@@ -30,12 +30,12 @@ async def main():
 
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     storage = RedisStorage(redis=redis_client)
-    
+      
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
-    
+      
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, default_rate_limit=1.0))
-    
+      
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
     # Создаем сервисы
@@ -45,35 +45,37 @@ async def main():
     news_service = NewsService()
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
-    
-    # Инициализация глобальных зависимостей для планировщика
+      
+    # --- ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНЫХ ЗАВИСИМОСТЕЙ ---
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
-    
+      
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # Настраиваем планировщик
-    scheduler = setup_scheduler()
-    
-    # Данные для ОБРАБОТЧИКОВ (хендлеров)
-    workflow_data = {
-        # "bot": bot, <-- ЭТА СТРОКА БЫЛА ОШИБКОЙ И ТЕПЕРЬ УДАЛЕНА
-        "scheduler": scheduler,
+    # Собираем словарь зависимостей для передачи в планировщик и обработчики
+    context_data = {
         "asic_service": asic_service,
-        "price_service": price_service,
         "news_service": news_service,
+        "price_service": price_service,
         "market_data_service": market_data_service,
         "quiz_service": quiz_service,
         "redis_client": redis_client,
     }
-    
+
+    # Настраиваем планировщик, передавая ему словарь с зависимостями
+    scheduler = setup_scheduler(context_data)
+      
+    # Добавляем планировщик в общий словарь для доступа из хендлеров
+    workflow_data = context_data.copy()
+    workflow_data["scheduler"] = scheduler
+      
     try:
         scheduler.start()
         logger.info("Scheduler started.")
-        
+          
         logger.info("Pre-warming caches...")
         await asyncio.gather(
             asic_service.get_profitable_asics(), 
@@ -81,12 +83,14 @@ async def main():
             return_exceptions=True
         )
         logger.info("Caches are warm.")
-        
+          
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
-        # Теперь вызов корректен: bot передается как первый аргумент,
-        # а остальные зависимости - как именованные.
-        await dp.start_polling(bot, **workflow_data)
+
+        # ИСПРАВЛЕНИЕ: Определяем и передаем разрешенные обновления
+        allowed_updates = dp.resolve_used_update_types(skip_events=['poll_answer'])
+
+        await dp.start_polling(bot, **workflow_data, allowed_updates=allowed_updates)
     finally:
         scheduler.shutdown()
         await dp.storage.close()

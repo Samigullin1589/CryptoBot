@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from typing import List, Dict
-
 import aiohttp
 from async_lru import alru_cache
 from bs4 import BeautifulSoup
@@ -17,11 +16,11 @@ def _process_and_merge_miners(all_miners_raw: List[AsicMiner]) -> List[AsicMiner
     """Синхронная функция для обработки и слияния списков майнеров."""
     if not all_miners_raw:
         return []
-    
+      
     final_miners: Dict[str, AsicMiner] = {}
     for miner in sorted(all_miners_raw, key=lambda m: m.name):
         best_match, score = process.extractOne(miner.name, final_miners.keys(), scorer=fuzz.token_set_ratio) if final_miners else (None, 0)
-        
+          
         if score > 90 and best_match:
             existing = final_miners[best_match]
             if miner.profitability > existing.profitability:
@@ -31,9 +30,8 @@ def _process_and_merge_miners(all_miners_raw: List[AsicMiner]) -> List[AsicMiner
             existing.power = existing.power or miner.power
         else:
             final_miners[miner.name] = miner
-    
+      
     return sorted(final_miners.values(), key=lambda m: m.profitability, reverse=True)
-
 
 class AsicService:
     @alru_cache(maxsize=1, ttl=settings.asic_cache_update_hours * 3600)
@@ -56,33 +54,33 @@ class AsicService:
 
         loop = asyncio.get_running_loop()
         processed_list = await loop.run_in_executor(None, _process_and_merge_miners, all_miners)
-        
+          
         logger.info(f"ASIC cache updated with {len(processed_list)} unique devices.")
         return processed_list
 
     async def find_asics_by_algorithm(self, algorithm: str) -> List[AsicMiner]:
         if not algorithm:
             return []
-            
+              
         all_asics = await self.get_profitable_asics()
         normalized_algo = algorithm.lower().replace('-', '').replace('_', '')
-        
+          
         relevant_asics = [
             asic for asic in all_asics 
             if asic.algorithm and normalized_algo in asic.algorithm.lower().replace('-', '').replace('_', '')
         ]
-        
+          
         return sorted(relevant_asics, key=lambda x: x.profitability, reverse=True)
 
     async def _scrape_asicminervalue(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
         html = await make_request(session, settings.asicminervalue_url, 'text')
         if not html: return miners
-        
+          
         soup = BeautifulSoup(html, 'lxml')
         table = soup.find('table', {'id': 'datatable'})
         if not table or not table.tbody: return miners
-        
+          
         for row in table.tbody.find_all('tr', limit=50):
             cols = row.find_all('td')
             if len(cols) > 4:
@@ -100,15 +98,18 @@ class AsicService:
 
     async def _fetch_whattomine_asics(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         miners = []
+        # ИСПРАВЛЕНИЕ: Добавляем больше заголовков для имитации браузера
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8'
         }
-        data = await make_request(session, settings.whattomine_asics_url, headers=headers)
+        data = await make_request(session, settings.whattomine_asics_url, 'json', headers=headers)
         if not data or 'asics' not in data:
             if data is not None:
                 logger.warning(f"WhatToMine API returned unexpected data: {str(data)[:200]}")
             return miners
-        
+          
         for name, asic_data in data['asics'].items():
             if asic_data.get('status') == 'Active' and 'revenue' in asic_data:
                 try:
