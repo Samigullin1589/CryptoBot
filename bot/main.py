@@ -6,7 +6,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from openai import AsyncOpenAI
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.config.settings import settings
 from bot.utils.helpers import setup_logging
@@ -38,6 +37,7 @@ async def main():
     
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
+    # Создаем сервисы
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
     asic_service = AsicService()
@@ -45,26 +45,28 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
     
+    # Включаем роутеры
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    scheduler = setup_scheduler(
-        bot=bot, 
-        news_service=news_service, 
-        asic_service=asic_service
-    )
-    
-    workflow_data = {
-        "bot": bot, # Передаем bot для использования в обработчиках
-        "scheduler": scheduler,
+    # Собираем словарь зависимостей для передачи в планировщик и обработчики
+    context_data = {
+        "bot": bot,
         "asic_service": asic_service,
-        "price_service": price_service,
         "news_service": news_service,
+        # Добавляем остальные сервисы, которые могут понадобиться в будущем
+        "price_service": price_service,
         "market_data_service": market_data_service,
         "quiz_service": quiz_service,
         "redis_client": redis_client,
     }
+
+    # Настраиваем планировщик, передавая ему словарь с зависимостями
+    scheduler = setup_scheduler(context_data)
+    
+    # Добавляем планировщик в общий словарь для доступа из хендлеров
+    context_data["scheduler"] = scheduler
     
     try:
         scheduler.start()
@@ -80,7 +82,7 @@ async def main():
         
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
-        await dp.start_polling(bot, **workflow_data)
+        await dp.start_polling(bot, **context_data)
     finally:
         scheduler.shutdown()
         await dp.storage.close()
