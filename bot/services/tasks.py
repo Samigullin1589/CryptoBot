@@ -1,4 +1,5 @@
 import logging
+from apscheduler import current_scheduler
 from aiogram import Bot
 from bot.config.settings import settings
 from bot.services.news_service import NewsService
@@ -6,10 +7,10 @@ from bot.services.asic_service import AsicService
 
 logger = logging.getLogger(__name__)
 
-# Эти функции теперь живут в своем файле и имеют постоянный "адрес".
-# Они принимают словарь `context` с нужными им зависимостями.
-
-async def send_news_job(context: dict):
+# Задачи больше не принимают аргументов!
+async def send_news_job():
+    # Мы получаем доступ к зависимостям через current_scheduler
+    context = current_scheduler.context
     bot: Bot = context['bot']
     news_service: NewsService = context['news_service']
     
@@ -29,7 +30,9 @@ async def send_news_job(context: dict):
         logger.error("Error in send_news_job", extra={'error': str(e)})
 
 
-async def update_asics_cache_job(context: dict):
+async def update_asics_cache_job():
+    # Точно так же получаем доступ к зависимостям здесь
+    context = current_scheduler.context
     asic_service: AsicService = context['asic_service']
     
     logger.info("Executing scheduled ASIC cache update job...")
