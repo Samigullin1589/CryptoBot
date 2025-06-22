@@ -1,27 +1,63 @@
 services:
+  # Этот сервис будет нашим ботом
   - type: worker
     name: cryptobot
     env: python
-    # ИСПРАВЛЕНИЕ: Указываем платный тариф, соответствующий вашему Pro-плану
-    plan: pro 
+    plan: pro
     
-    buildCommand: "pip install -r requirements.txt && playwright install"
+    # --- НОВЫЙ РАЗДЕЛ ---
+    # Просим Render установить системные пакеты, необходимые для Playwright
+    packages:
+      - name: libnss3
+      - name: libnspr4
+      - name: libdbus-1-3
+      - name: libatk-bridge2.0-0
+      - name: libcups2
+      - name: libatspi2.0-0
+      - name: libdrm2
+      - name: libgbm1
+      - name: libasound2
+      - name: libx11-6
+      - name: libxext6
+      - name: libx11-xcb1
+      - name: libxcb1
+      - name: libxcomposite1
+      - name: libxcursor1
+      - name: libxdamage1
+      - name: libxfixes3
+      - name: libxi6
+      - name: libxrandr2
+      - name: libxrender1
+      - name: libxss1
+      - name: libxtst6
+      - name: libglib2.0-0
+    
+    # Команда сборки остается прежней
+    buildCommand: "pip install -r requirements.txt && python -m playwright install chromium"
+    
     startCommand: "python -m bot.main"
     
+    # Переменные окружения остаются без изменений
     envVars:
       - key: PYTHON_VERSION
         value: '3.11.5'
-      # Объявляем ключи для секретов и задаем пустые значения-заглушки.
-      # Реальные значения будут подставлены из панели Environment в Render.
       - key: BOT_TOKEN
-        value: ""
+        fromSecret: true
       - key: REDIS_URL
-        value: ""
+        fromService:
+          type: redis
+          name: cryptobot-redis
+          property: connectionString
       - key: ADMIN_CHAT_ID
-        value: ""
+        fromSecret: true
       - key: NEWS_CHAT_ID
-        value: ""
+        fromSecret: true
       - key: CMC_API_KEY
-        value: ""
+        fromSecret: true
       - key: OPENAI_API_KEY
-        value: ""
+        fromSecret: true
+
+  # Описание сервиса Redis остается без изменений
+  - type: redis
+    name: cryptobot-redis
+    plan: free
