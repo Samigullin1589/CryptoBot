@@ -1,19 +1,19 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
+from pydantic import BaseModel, Field
 
 class CryptoCoin(BaseModel):
     id: str
     symbol: str
     name: str
-    platforms: Optional[dict] = None
+    price: float
+    # Делаем поле опциональным и даем ему псевдоним
+    price_change_24h: Optional[float] = Field(None, alias='percent_change_24h')
+    algorithm: Optional[str] = None
 
 class AsicMiner(BaseModel):
     name: str
-    profitability: float  # в USD
-    algorithm: str
-    power: int  # в Ваттах
-
-class QuizQuestion(BaseModel):
-    question: str
-    options: List[str]
-    correct_option_index: int
+    profitability: float
+    algorithm: Optional[str] = None
+    hashrate: Optional[str] = None
+    power: Optional[int] = None
+    source: Optional[str] = None
