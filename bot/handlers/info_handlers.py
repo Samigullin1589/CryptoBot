@@ -5,7 +5,8 @@ from typing import Union
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, MessageEntity
+from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest
 
 from bot.services.asic_service import AsicService
@@ -60,7 +61,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     if not asics:
         text = "❌ Не удалось получить список ASIC-майнеров. Попробуйте позже."
     else:
-        text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
+        text = "🏆 <b>Топ-10 доходных ASIC из резервного списка:</b>\n\n"
         for miner in asics[:10]:
             text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
                      f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
@@ -182,7 +183,6 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         await message.delete()
         message_to_process = await message.answer("⏳ Генерирую вопрос...")
     else:
-        # Убрали edit_text, чтобы избежать ошибки, если пользователь отправит команду текстом
         message_to_process = await message.answer("⏳ Генерирую вопрос...")
 
     quiz = await quiz_service.generate_quiz_question()
@@ -197,7 +197,12 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         reply_markup=get_quiz_keyboard()
     )
 
-@router.message(F.text, ~Command(ignore_case=True))
+# ИСПРАВЛЕНИЕ: Это правильный способ игнорировать команды в текстовом обработчике
+@router.message(
+    F.content_type == ContentType.TEXT,
+    # Этот lambda-фильтр проверяет, что в сообщении нет сущностей типа "команда"
+    lambda message: not any(entity.type == "bot_command" for entity in message.entities or [])
+)
 async def handle_arbitrary_text(message: Message, price_service: PriceService, asic_service: AsicService, bot: Bot):
     if message.chat.type == "private":
         logger.info(f"User sent text '{message.text}' in private, processing as price request.")

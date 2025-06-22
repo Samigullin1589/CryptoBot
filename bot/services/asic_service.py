@@ -35,7 +35,6 @@ class AsicService:
     async def get_profitable_asics(self) -> List[AsicMiner]:
         logger.info("Updating ASIC miners cache...")
         
-        # Запускаем задачи параллельно: Playwright для WhatToMine, aiohttp для AsicMinerValue
         tasks = [
             self._fetch_whattomine_asics_playwright(),
             self._scrape_asicminervalue()
@@ -71,7 +70,6 @@ class AsicService:
         return sorted(relevant_asics, key=lambda x: x.profitability, reverse=True)
 
     async def _scrape_asicminervalue(self) -> List[AsicMiner]:
-        """Получает данные с asicminervalue.com через обычный aiohttp."""
         miners = []
         logger.info("Fetching data from AsicMinerValue...")
         async with aiohttp.ClientSession() as session:
@@ -97,7 +95,6 @@ class AsicService:
         return miners
 
     async def _fetch_whattomine_asics_playwright(self) -> List[AsicMiner]:
-        """Получает данные с whattomine.com, используя Playwright для обхода защиты."""
         logger.info("Fetching WhatToMine data using Playwright...")
         miners = []
         try:
@@ -106,7 +103,6 @@ class AsicService:
                 page = await browser.new_page()
                 await page.goto(settings.whattomine_asics_url, timeout=60000)
                 
-                # Получаем JSON напрямую из ответа страницы
                 json_response = await page.evaluate("() => fetch(window.location.href).then(res => res.json())")
                 await browser.close()
 

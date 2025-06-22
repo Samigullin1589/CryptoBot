@@ -1,21 +1,19 @@
 services:
-  # Этот сервис будет нашим ботом
+  # Этот сервис будет нашим ботом, запущенным в Docker
   - type: worker
     name: cryptobot
-    env: python
+    # ИЗМЕНЕНИЕ: Указываем, что среда выполнения - Docker
+    env: docker
     plan: pro
     
-    # Сначала запускаем наш скрипт, потом все остальное
-    buildCommand: "./build.sh && pip install -r requirements.txt && python -m playwright install chromium"
+    # ИЗМЕНЕНИЕ: Указываем путь к нашему Dockerfile
+    dockerfilePath: ./Dockerfile
     
-    startCommand: "python -m bot.main"
+    # buildCommand и startCommand больше не нужны, они определены в Dockerfile
     
     envVars:
-      - key: PYTHON_VERSION
-        value: '3.11.5'
       - key: BOT_TOKEN
         fromSecret: true
-      # Указываем, что URL для Redis нужно взять у создаваемого ниже сервиса
       - key: REDIS_URL
         fromService:
           type: redis
