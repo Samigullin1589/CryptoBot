@@ -130,14 +130,14 @@ async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis):
     profitability_per_day = float(session_data.get("asic_profitability_per_day", 0))
     
     elapsed_seconds = int(time.time()) - start_time
-    remaining_seconds = settings.MINING_DURATION_SECONDS - elapsed_seconds
+    remaining_seconds = max(0, settings.MINING_DURATION_SECONDS - elapsed_seconds)
     
     profit_per_second = profitability_per_day / (24 * 3600)
     earned_so_far = elapsed_seconds * profit_per_second
 
     m, s = divmod(remaining_seconds, 60)
     h, m = divmod(m, 60)
-    remaining_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+    remaining_time_str = f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
     text = (
         f"🖥️ <b>Моя ферма</b>\n\n"
@@ -181,9 +181,12 @@ async def handle_withdraw(call: CallbackQuery, redis_client: redis.Redis):
         f"Нажмите на кнопку ниже, чтобы перейти на сайт партнера и воспользоваться предложением."
     )
     
-    await redis_client.set(f"user:{user_id}:balance", 0)
-    logger.info(f"User {user_id} withdrew {balance:.2f} coins for a {total_discount}% discount.")
+    async with redis_client.pipeline() as pipe:
+        pipe.set(f"user:{user_id}:balance", 0)
+        pipe.incrbyfloat(f"user:{user_id}:total_withdrawn", balance)
+        await pipe.execute()
 
+    logger.info(f"User {user_id} withdrew {balance:.2f} coins for a {total_discount}% discount.")
     await call.message.edit_text(text, reply_markup=get_withdraw_keyboard())
 
 
@@ -210,3 +213,34 @@ async def handle_invite_friend(call: CallbackQuery, bot: Bot):
     
     await call.answer()
     await call.message.answer(text)
+
+# --- ЛОГИКА "СТАТИСТИКА" ---
+
+@router.callback_query(F.data == "mining_stats")
+async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis):
+    """
+    Отображает личную статистику пользователя в игре.
+    """
+    user_id = call.from_user.id
+
+    async with redis_client.pipeline() as pipe:
+        pipe.get(f"user:{user_id}:balance")
+        pipe.get(f"user:{user_id}:total_earned")
+        pipe.get(f"user:{user_id}:total_withdrawn")
+        pipe.scard(f"user:{user_id}:referrals")
+        results = await pipe.execute()
+    
+    balance = float(results[0]) if results[0] else 0
+    total_earned = float(results[1]) if results[1] else 0
+    total_withdrawn = float(results[2]) if results[2] else 0
+    referrals_count = int(results[3]) if results[3] else 0
+
+    text = (
+        f"📊 <b>Ваша игровая статистика</b>\n\n"
+        f"💰 Текущий баланс: <b>{balance:.2f} монет</b>\n"
+        f"📈 Всего заработано: <b>{total_earned:.2f} монет</b>\n"
+        f"📉 Всего выведено: <b>{total_withdrawn:.2f} монет</b>\n"
+        f"🤝 Приглашено друзей: <b>{referrals_count}</b>"
+    )
+
+    await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())

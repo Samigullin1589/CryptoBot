@@ -45,7 +45,17 @@ class AppSettings(BaseSettings):
 
     # Mining Game Settings
     MINING_DURATION_SECONDS: int = 8 * 3600
-    REFERRAL_BONUS_AMOUNT: float = 50.0 # НОВЫЙ ПАРАМЕТР: Бонус за друга
+    REFERRAL_BONUS_AMOUNT: float = 50.0
+    
+    # --- НОВЫЕ ПАРАМЕТРЫ ---
+    # Тарифы на электроэнергию (виртуальных монет в час)
+    ELECTRICITY_TARIFFS: Dict[str, float] = {
+        "Домашний 💡": 0.05,
+        "Промышленный 🏭": 0.02,
+        "Зеленый 🌱": 0.08
+    }
+    DEFAULT_ELECTRICITY_TARIFF: str = "Домашний 💡"
+
 
     fallback_asics: List[Dict[str, Any]] = load_fallback_asics()
 
