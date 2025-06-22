@@ -3,17 +3,18 @@ from typing import Union
 
 import redis.asyncio as redis
 from aiogram import F, Router, Bot
-from aiogram.filters import CommandStart, CommandObject
+from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.utils.helpers import get_message_and_chat_id
+# --- ИЗМЕНЕНИЕ: Импортируем текст из нового файла ---
+from bot.texts.messages import HELP_TEXT
 
 router = Router()
 logger = logging.getLogger(__name__)
-
 
 async def handle_referral(message: Message, command: CommandObject, redis_client: redis.Redis, bot: Bot):
     """Обрабатывает запуск по реферальной ссылке."""
@@ -32,10 +33,9 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
 
     bonus = settings.REFERRAL_BONUS_AMOUNT
     
-    # --- ИЗМЕНЕНИЕ: Используем pipeline ---
     async with redis_client.pipeline() as pipe:
         pipe.incrbyfloat(f"user:{referrer_id}:balance", bonus)
-        pipe.incrbyfloat(f"user:{referrer_id}:total_earned", bonus) # Увеличиваем и общий заработок
+        pipe.incrbyfloat(f"user:{referrer_id}:total_earned", bonus)
         pipe.sadd("referred_users", new_user_id)
         pipe.sadd(f"user:{referrer_id}:referrals", new_user_id)
         await pipe.execute()
@@ -68,7 +68,15 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     )
 
 
+@router.message(Command("help"))
+async def handle_help(message: Message):
+    """Отправляет информационное сообщение по команде /help."""
+    # Используем импортированную константу
+    await message.answer(HELP_TEXT, disable_web_page_preview=True)
+
+
 @router.callback_query(F.data == "back_to_main_menu")
 async def handle_back_to_main(call: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Назад в главное меню'."""
     await state.clear()
     await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
