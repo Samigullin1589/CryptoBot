@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from typing import Any
 
 import redis.asyncio as redis
 from aiogram import Bot, Dispatcher
@@ -90,32 +89,18 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    # Регистрация хука для корректного завершения
-    dp.shutdown.register(on_shutdown, scheduler=scheduler)
+    # ИСПРАВЛЕНИЕ: Регистрируем хук без передачи аргументов вручную.
+    # aiogram сам передаст в on_shutdown все, что есть в workflow_data, включая scheduler.
+    dp.shutdown.register(on_shutdown)
       
     try:
         scheduler.start()
         logger.info("Scheduler started.")
         
-        # Возвращаем "прогрев кэша", но запускаем его как фоновую задачу,
-        # чтобы не блокировать старт бота в случае сбоя API.
-        logger.info("Initiating cache pre-warming in the background...")
-        asyncio.create_task(
-            asyncio.gather(
-                asic_service.get_profitable_asics(), 
-                coin_list_service.get_coin_list(), 
-                return_exceptions=True
-            )
-        )
-          
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
 
-        # Определяем, какие типы обновлений мы хотим получать
-        allowed_updates = dp.resolve_used_update_types(skip_events=['poll_answer'])
-
-        # Запускаем опрос Telegram
-        await dp.start_polling(bot, **workflow_data, allowed_updates=allowed_updates)
+        await dp.start_polling(bot, **workflow_data)
         
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}")
