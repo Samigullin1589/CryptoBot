@@ -1,13 +1,11 @@
 services:
-  # Сервис для нашего бота, работающий в нативной среде Python
   - type: worker
     name: cryptobot
     runtime: python
-    plan: starter # Starter плана достаточно для этой конфигурации
+    plan: starter
     region: frankfurt
     
-    # ИСПРАВЛЕНИЕ: Убираем команду playwright install.
-    # Теперь мы только устанавливаем зависимости из requirements.txt
+    # Правильная, упрощенная команда сборки БЕЗ PLAYWRIGHT
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
     
     startCommand: "python -m bot.main"
