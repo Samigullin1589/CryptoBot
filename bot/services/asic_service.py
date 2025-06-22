@@ -1,129 +1,86 @@
-import asyncio
+import json
 import logging
-from typing import List, Dict
 import aiohttp
+from typing import List, Optional
 from async_lru import alru_cache
-from bs4 import BeautifulSoup
-from fuzzywuzzy import process, fuzz
-from playwright.async_api import async_playwright
 
 from bot.config.settings import settings
 from bot.utils.models import AsicMiner
-from bot.utils.helpers import make_request, parse_power, parse_profitability
+# Импортируем нашу новую функцию
+from bot.utils.helpers import make_request
 
 logger = logging.getLogger(__name__)
-
-def _process_and_merge_miners(all_miners_raw: List[AsicMiner]) -> List[AsicMiner]:
-    if not all_miners_raw:
-        return []
-    final_miners: Dict[str, AsicMiner] = {}
-    for miner in sorted(all_miners_raw, key=lambda m: m.name):
-        best_match, score = process.extractOne(miner.name, final_miners.keys(), scorer=fuzz.token_set_ratio) if final_miners else (None, 0)
-        if score > 90 and best_match:
-            existing = final_miners[best_match]
-            if miner.profitability > existing.profitability:
-                existing.profitability = miner.profitability
-            existing.algorithm = existing.algorithm or miner.algorithm
-            existing.hashrate = existing.hashrate or miner.hashrate
-            existing.power = existing.power or miner.power
-        else:
-            final_miners[miner.name] = miner
-    return sorted(final_miners.values(), key=lambda m: m.profitability, reverse=True)
 
 class AsicService:
     @alru_cache(maxsize=1, ttl=settings.asic_cache_update_hours * 3600)
     async def get_profitable_asics(self) -> List[AsicMiner]:
-        logger.info("Updating ASIC miners cache...")
-        
-        tasks = [
-            self._fetch_whattomine_asics_playwright(),
-            self._scrape_asicminervalue()
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        all_miners = []
-        for res in results:
-            if isinstance(res, list) and res:
-                all_miners.extend(res)
-            elif isinstance(res, Exception):
-                logger.error(f"A data source failed: {res}")
-
-        if not all_miners:
-            logger.warning("All data sources failed. Using reliable fallback ASIC list.")
-            return [AsicMiner(**asic) for asic in settings.fallback_asics]
-
-        loop = asyncio.get_running_loop()
-        processed_list = await loop.run_in_executor(None, _process_and_merge_miners, all_miners)
-          
-        logger.info(f"ASIC cache updated with {len(processed_list)} unique devices.")
-        return processed_list
-
-    async def find_asics_by_algorithm(self, algorithm: str) -> List[AsicMiner]:
-        if not algorithm:
-            return []
-        all_asics = await self.get_profitable_asics()
-        normalized_algo = algorithm.lower().replace('-', '').replace('_', '')
-        relevant_asics = [
-            asic for asic in all_asics 
-            if asic.algorithm and normalized_algo in asic.algorithm.lower().replace('-', '').replace('_', '')
-        ]
-        return sorted(relevant_asics, key=lambda x: x.profitability, reverse=True)
-
-    async def _scrape_asicminervalue(self) -> List[AsicMiner]:
+        """
+        Возвращает отсортированный список самых прибыльных ASIC-майнеров.
+        Данные кэшируются.
+        """
+        logger.info("Обновление кэша ASIC-майнеров...")
         miners = []
-        logger.info("Fetching data from AsicMinerValue...")
         async with aiohttp.ClientSession() as session:
-            html = await make_request(session, settings.asicminervalue_url, 'text')
-            if not html: return miners
-        
-        soup = BeautifulSoup(html, 'lxml')
-        table = soup.find('table', {'id': 'datatable'})
-        if not table or not table.tbody: return miners
-          
-        for row in table.tbody.find_all('tr', limit=50):
-            cols = row.find_all('td')
-            if len(cols) > 4:
-                try:
-                    name = cols[1].find('a').text.strip()
-                    profitability = parse_profitability(cols[3].text)
-                    power = parse_power(cols[4].text)
-                    if profitability > 0:
-                        miners.append(AsicMiner(name=name, profitability=profitability, power=power, source='AsicMinerValue'))
-                except (AttributeError, ValueError) as e:
-                    logger.warning(f"Failed to parse row on AsicMinerValue", extra={'error': str(e)})
-        logger.info(f"Scraped {len(miners)} miners from AsicMinerValue.")
-        return miners
+            # 1. Основной источник: WhatToMine JSON API
+            wtm_data = await make_request(session, settings.whattomine_asics_url)
+            if wtm_data and isinstance(wtm_data, dict) and "asics" in wtm_data:
+                miners = self._parse_whattomine_data(wtm_data["asics"])
+                logger.info(f"Получено {len(miners)} майнеров с WhatToMine.")
 
-    async def _fetch_whattomine_asics_playwright(self) -> List[AsicMiner]:
-        logger.info("Fetching WhatToMine data using Playwright...")
-        miners = []
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch()
-                page = await browser.new_page()
-                await page.goto(settings.whattomine_asics_url, timeout=60000)
-                
-                json_response = await page.evaluate("() => fetch(window.location.href).then(res => res.json())")
-                await browser.close()
+        # 2. Если основной источник не сработал, используем резервный список из файла
+        if not miners:
+            logger.warning("WhatToMine не ответил, используем резервный список из файла.")
+            miners = await self._get_fallback_asics()
 
-            if not json_response or 'asics' not in json_response:
-                logger.warning(f"WhatToMine (Playwright) returned unexpected data.")
-                return miners
-
-            for name, asic_data in json_response['asics'].items():
-                if asic_data.get('status') == 'Active' and 'revenue' in asic_data:
-                    try:
-                        profit = parse_profitability(asic_data['revenue'])
-                        if profit > 0:
-                            miners.append(AsicMiner(
-                                name=name, profitability=profit, algorithm=asic_data.get('algorithm'),
-                                hashrate=str(asic_data.get('hashrate')), power=parse_power(str(asic_data.get('power', 0))),
-                                source='WhatToMine'
-                            ))
-                    except (ValueError, TypeError):
-                        logger.warning(f"Failed to parse ASIC data from WhatToMine for '{name}'")
-            logger.info(f"Successfully fetched {len(miners)} miners from WhatToMine using Playwright.")
-            return miners
-        except Exception as e:
-            logger.error(f"Critical error fetching from WhatToMine using Playwright: {e}")
+        if not miners:
+            logger.error("Все источники данных для ASIC недоступны.")
             return []
+
+        # Сортируем майнеры по прибыльности в долларах (от большей к меньшей)
+        sorted_miners = sorted(miners, key=lambda x: x.profitability, reverse=True)
+        return sorted_miners
+
+    def _parse_whattomine_data(self, asics_data: dict) -> List[AsicMiner]:
+        """Парсит данные, полученные от WhatToMine JSON API."""
+        parsed_miners = []
+        for key, data in asics_data.items():
+            try:
+                # Пропускаем майнеры, у которых нет данных о прибыльности
+                if data.get("profitability") is None:
+                    continue
+
+                miner = AsicMiner(
+                    name=data.get("name", "Unknown Miner"),
+                    profitability=float(data.get("profitability", 0)),
+                    algorithm=data.get("algorithm", "Unknown"),
+                    power=int(data.get("power", 0)),
+                )
+                parsed_miners.append(miner)
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(f"Не удалось распарсить запись для майнера {key}: {e}")
+        return parsed_miners
+
+    async def _get_fallback_asics(self) -> List[AsicMiner]:
+        """
+        Загружает резервный список ASIC-майнеров из JSON-файла.
+        """
+        try:
+            with open(settings.fallback_asics_path, 'r', encoding='utf-8') as f:
+                fallback_data = json.load(f)
+
+            miners = [AsicMiner(**item) for item in fallback_data]
+            logger.info(f"Успешно загружено {len(miners)} майнеров из резервного файла.")
+            return miners
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Не удалось загрузить или распарсить резервный файл {settings.fallback_asics_path}: {e}")
+            return []
+
+    async def get_asic_by_name(self, name: str) -> Optional[AsicMiner]:
+        """
+        Находит ASIC-майнер по его имени.
+        """
+        all_asics = await self.get_profitable_asics()
+        for asic in all_asics:
+            if asic.name == name:
+                return asic
+        return None

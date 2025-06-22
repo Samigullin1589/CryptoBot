@@ -1,78 +1,47 @@
 import logging
-import sys
-import re
-import asyncio
-from typing import Literal, Optional, Any, Union
-
+import backoff
 import aiohttp
-import bleach
-from aiogram.types import Message, CallbackQuery
+from aiohttp import ClientError, ClientTimeout
 
-from bot.keyboards.keyboards import get_main_menu_keyboard
+# Настраиваем логирование
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+
+def setup_logging():
+    """Просто чтобы функция была, если вы захотите усложнить логирование."""
+    pass
 
 logger = logging.getLogger(__name__)
 
-def setup_logging():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        stream=sys.stdout,
-    )
-    logging.getLogger("aiogram.dispatcher").setLevel(logging.WARNING)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-
-async def make_request(
-    session: aiohttp.ClientSession,
-    url: str,
-    response_type: Literal['json', 'text'] = 'json',
-    headers: Optional[dict] = None,
-    retries: int = 3
-) -> Optional[Any]:
-    for attempt in range(retries):
-        try:
-            timeout = aiohttp.ClientTimeout(total=15)
-            async with session.get(url, headers=headers, timeout=timeout) as response:
-                response.raise_for_status()
-                if response_type == 'json':
-                    return await response.json(content_type=None)
-                return await response.text()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-            if attempt < retries - 1:
-                logger.warning(f"Request to {url} failed. Retrying in {attempt + 1}s... Error: {e}")
-                await asyncio.sleep(attempt + 1)
-            else:
-                logger.error(f"Request to {url} failed after {retries} retries. Error: {e}")
-        except Exception:
-            logger.exception("Unexpected error in make_request for URL: %s", url)
-            break
-    return None
-
-def sanitize_html(text: str) -> str:
-    if not text:
-        return ""
-    return bleach.clean(text, tags=['b', 'i', 'u', 's', 'code', 'pre', 'a'], attributes={'a': ['href']}, strip=True)
-
-def parse_profitability(s: str) -> float:
-    if not isinstance(s, str):
-        s = str(s)
-    match = re.search(r'[\d.]+', s.replace(',', '.'))
-    return float(match.group(0)) if match else 0.0
-
-def parse_power(s: str) -> Optional[int]:
-    if not isinstance(s, str):
-        s = str(s)
-    match = re.search(r'[\d]+', s)
-    return int(match.group(0)) if match else None
-
-async def get_message_and_chat_id(update: Union[CallbackQuery, Message]):
-    if isinstance(update, CallbackQuery):
-        await update.answer()
-        return update.message, update.message.chat.id
-    return update, update.chat.id
-
-async def show_main_menu(message: Message):
+# Это декоратор, который будет повторять запрос в случае определенных ошибок
+@backoff.on_exception(backoff.expo,
+                      (ClientError, asyncio.TimeoutError),
+                      max_tries=3,
+                      max_time=60,
+                      on_giveup=lambda details: logger.error(
+                          f"Запрос не удался после {details['tries']} попыток. "
+                          f"URL: {details['args'][1]}, Ошибка: {details['exception']}"
+                      ))
+async def make_request(session: aiohttp.ClientSession, url: str, method: str = "GET", **kwargs) -> dict | str | None:
+    """
+    Универсальная функция для выполнения асинхронных HTTP-запросов с тайм-аутом и повторными попытками.
+    """
+    timeout = ClientTimeout(total=10) # 10-секундный тайм-аут для запроса
     try:
-        await message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
-    except Exception:
-        await message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+        async with session.request(method, url, timeout=timeout, **kwargs) as response:
+            if response.status == 200:
+                # Пытаемся декодировать JSON, если не получается - возвращаем текст
+                try:
+                    return await response.json()
+                except aiohttp.ContentTypeError:
+                    return await response.text()
+            else:
+                logger.warning(f"Ошибка запроса к {url}. Статус: {response.status}, Ответ: {await response.text()}")
+                # Вызываем исключение, чтобы backoff сработал
+                response.raise_for_status()
+    except asyncio.TimeoutError:
+        logger.warning(f"Тайм-аут при запросе к {url}")
+        raise  # Перевыбрасываем исключение для backoff
+    except ClientError as e:
+        logger.error(f"Ошибка клиента при запросе к {url}: {e}")
+        raise  # Перевыбрасываем исключение для backoff
+    return None
