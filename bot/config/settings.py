@@ -26,22 +26,17 @@ class AppSettings(BaseSettings):
     coingecko_api_base: str = "https://api.coingecko.com/api/v3"
     coinpaprika_api_base: str = "https://api.coinpaprika.com/v1"
     minerstat_api_base: str = "https://api.minerstat.com/v2"
-    whattomine_asics_url: str = "https://whattomine.com/asics.json" # Прямой API-адрес
+    whattomine_asics_url: str = "https://whattomine.com/asics.json"
     asicminervalue_url: str = "https://www.asicminervalue.com/"
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
     cmc_fear_and_greed_url: str = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical"
     cbr_daily_json_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
-    # Обновленные, более точные URL
     btc_halving_url: str = "https://mempool.space/api/blocks/tip/height"
     btc_fees_url: str = "https://mempool.space/api/v1/fees/recommended"
     btc_mempool_url: str = "https://mempool.space/api/mempool"
 
     # App Settings
-    news_rss_feeds: List[str] = [
-        "https://forklog.com/feed",
-        "https://beincrypto.ru/feed/",
-        "https://cointelegraph.com/rss/tag/russia"
-    ]
+    news_rss_feeds: List[str] = [ "https://forklog.com/feed", "https://beincrypto.ru/feed/", "https://cointelegraph.com/rss/tag/russia" ]
     news_interval_hours: int = 3
     asic_cache_update_hours: int = 1
 
@@ -50,7 +45,7 @@ class AppSettings(BaseSettings):
 
     # Mining Game Settings
     MINING_DURATION_SECONDS: int = 8 * 3600
-    MINING_RATE_PER_HOUR: float = 10.0
+    REFERRAL_BONUS_AMOUNT: float = 50.0 # НОВЫЙ ПАРАМЕТР: Бонус за друга
 
     fallback_asics: List[Dict[str, Any]] = load_fallback_asics()
 
