@@ -1,49 +1,42 @@
-import logging
 import json
-from typing import Optional
-from openai import AsyncOpenAI, OpenAIError
-
-from bot.utils.models import QuizQuestion
+import logging
+from typing import Optional, Dict, List
+from openai import AsyncOpenAI
+from pydantic import BaseModel, Field, conint, ValidationError
 
 logger = logging.getLogger(__name__)
 
+class QuizResponse(BaseModel):
+    question: str
+    options: List[str] = Field(..., min_length=4, max_length=4)
+    correct_option_index: conint(ge=0, lt=4)
+
 class QuizService:
     def __init__(self, openai_client: Optional[AsyncOpenAI]):
-        self.client = openai_client
+        self.openai_client = openai_client
 
-    async def get_quiz_question(self) -> Optional[QuizQuestion]:
-        """Генерирует вопрос для викторины с помощью OpenAI."""
-        if not self.client:
-            logger.warning("Клиент OpenAI не инициализирован. Викторина недоступна.")
+    async def generate_quiz_question(self) -> Optional[Dict]:
+        if not self.openai_client:
+            logger.warning("OpenAI client is not configured. Quiz feature disabled.")
             return None
-
-        logger.info("Запрос нового вопроса для викторины к OpenAI...")
-        prompt = (
-            "Создай один вопрос для викторины на тему криптовалют. "
-            "Вопрос должен быть интересным и не слишком сложным. "
-            "Предоставь 4 варианта ответа. "
-            "Ответ должен быть в формате JSON: "
-            '{"question": "Текст вопроса", "options": ["Вариант А", "Вариант Б", "Вариант В", "Вариант Г"], "correct_option_index": N}, '
-            "где N - это индекс правильного ответа (от 0 до 3)."
-        )
+            
+        logger.info("Generating quiz question with OpenAI...")
+        prompt_messages = [
+            {"role": "system", "content": "You are an assistant that creates fun and engaging multiple-choice questions about cryptocurrency. Provide the response as a JSON object with keys: 'question', 'options' (a list of 4 strings), and 'correct_option_index' (an integer from 0 to 3)."},
+            {"role": "user", "content": "Generate a new cryptocurrency quiz question."}
+        ]
         try:
-            response = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.7,
-                response_format={"type": "json_object"}
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=prompt_messages,
+                response_format={"type": "json_object"},
+                temperature=0.9
             )
-            content = response.choices[0].message.content
-            if not content:
-                logger.error("OpenAI вернул пустой ответ.")
-                return None
-
-            data = json.loads(content)
-            logger.info("Вопрос для викторины успешно сгенерирован.")
-            return QuizQuestion(**data)
-        except OpenAIError as e:
-            logger.error(f"Ошибка при обращении к OpenAI: {e}")
-            return None
-        except (json.JSONDecodeError, TypeError) as e:
-            logger.error(f"Не удалось распарсить JSON от OpenAI: {e}")
-            return None
+            raw_data = json.loads(response.choices[0].message.content)
+            validated_data = QuizResponse.model_validate(raw_data)
+            return validated_data.model_dump()
+        except (ValidationError, json.JSONDecodeError) as e:
+            logger.error(f"Invalid JSON response from OpenAI: {e}")
+        except Exception as e:
+            logger.exception(f"Failed to generate quiz from OpenAI: {e}")
+        return None

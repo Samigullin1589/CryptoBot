@@ -10,7 +10,6 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from bot.config.settings import settings
 from bot.keyboards.keyboards import (get_main_menu_keyboard,
                                      get_price_keyboard, get_quiz_keyboard)
 from bot.services.asic_service import AsicService
@@ -118,13 +117,14 @@ async def handle_fear_greed_menu(update: Union[CallbackQuery, Message], market_d
     image_bytes = await loop.run_in_executor(None, generate_fng_image, value, classification)
     caption = f"😱 <b>Индекс страха и жадности: {value} - {classification}</b>"
 
+    # ИСПРАВЛЕНИЕ: Мы всегда должны отправлять новое сообщение с фото, а не редактировать
     if isinstance(update, CallbackQuery):
-        await message.delete()
-        await message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption)
-        await show_main_menu(message.answer) # Need a new message object
+        await update.message.delete()
+        await update.message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption)
+        await show_main_menu(update.message)
     else:
-        await message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption)
-        await show_main_menu(message)
+        await update.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption)
+        await show_main_menu(update)
 
 
 @router.callback_query(F.data == "menu_halving")

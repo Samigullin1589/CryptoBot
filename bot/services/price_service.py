@@ -1,8 +1,11 @@
 import logging
-import aiohttp
 from typing import Optional
 
+import aiohttp
+from async_lru import alru_cache
+
 from bot.config.settings import settings
+from bot.models.crypto_coin import CryptoCoin
 from bot.services.coin_list_service import CoinListService
 from bot.utils.helpers import make_request
 
@@ -12,53 +15,54 @@ class PriceService:
     def __init__(self, coin_list_service: CoinListService):
         self.coin_list_service = coin_list_service
 
-    async def get_price(self, ticker: str) -> Optional[float]:
-        """
-        Получает цену для указанного тикера, используя несколько источников.
-        """
-        logger.info(f"Попытка получить цену для '{ticker}'...")
-
-        # Сначала пытаемся получить цену через CoinGecko, так как он самый точный
-        price = await self._get_price_from_coingecko(ticker)
-        if price is not None:
-            logger.info(f"Цена для '{ticker}' успешно получена с CoinGecko: {price}")
-            return price
-
-        # Если CoinGecko не сработал, пробуем CoinPaprika
-        logger.warning(f"Не удалось получить цену для '{ticker}' с CoinGecko. Пробуем CoinPaprika.")
-        price = await self._get_price_from_coinpaprika(ticker)
-        if price is not None:
-            logger.info(f"Цена для '{ticker}' успешно получена с CoinPaprika: {price}")
-            return price
-
-        logger.error(f"Не удалось получить цену для '{ticker}' ни из одного источника.")
-        return None
-
-    async def _get_price_from_coingecko(self, ticker: str) -> Optional[float]:
-        coin_id = await self.coin_list_service.get_coin_id(ticker)
-        if not coin_id:
-            logger.warning(f"Не найден ID для тикера '{ticker}' в CoinGecko.")
-            return None
-
-        url = f"{settings.coingecko_api_base}/simple/price?ids={coin_id}&vs_currencies=usd"
+    @alru_cache(maxsize=100, ttl=300)
+    async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
+        query_norm = settings.ticker_aliases.get(query.strip().lower(), query.strip().lower())
+        
         async with aiohttp.ClientSession() as session:
-            data = await make_request(session, url)
-            if isinstance(data, dict) and coin_id in data and "usd" in data[coin_id]:
-                return data[coin_id]["usd"]
-        return None
+            # Пытаемся получить данные с CoinGecko
+            logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
+            cg_search_data = await make_request(session, f"{settings.coingecko_api_base}/search?query={query_norm}")
+            
+            if cg_search_data and cg_search_data.get('coins'):
+                coin_id = cg_search_data['coins'][0].get('id')
+                if coin_id:
+                    market_data_list = await make_request(session, f"{settings.coingecko_api_base}/coins/markets?vs_currency=usd&ids={coin_id}")
+                    if market_data_list and isinstance(market_data_list, list) and market_data_list:
+                        md = market_data_list[0]
+                        symbol = md.get('symbol', '').upper()
+                        coin_list = await self.coin_list_service.get_coin_list()
+                        logger.info(f"Successfully fetched price for '{query_norm}' from CoinGecko.")
+                        return CryptoCoin(
+                            id=md.get('id'),
+                            symbol=symbol,
+                            name=md.get('name'),
+                            price=md.get('current_price', 0.0),
+                            price_change_24h=md.get('price_change_percentage_24h'),
+                            algorithm=coin_list.get(symbol)
+                        )
+            
+            # Если не получилось, пробуем CoinPaprika
+            logger.warning(f"Failed to get price from CoinGecko for '{query_norm}'. Falling back to CoinPaprika.")
+            cp_search_data = await make_request(session, f"{settings.coinpaprika_api_base}/search?q={query_norm}&c=currencies")
+            if cp_search_data and cp_search_data.get('currencies'):
+                target_coin = next((c for c in cp_search_data['currencies'] if c['symbol'].lower() == query_norm), cp_search_data['currencies'][0])
+                coin_id = target_coin.get('id')
+                
+                ticker_data = await make_request(session, f"{settings.coinpaprika_api_base}/tickers/{coin_id}")
+                if ticker_data:
+                    quotes = ticker_data.get('quotes', {}).get('USD', {})
+                    symbol = ticker_data.get('symbol', '').upper()
+                    coin_list = await self.coin_list_service.get_coin_list()
+                    logger.info(f"Successfully fetched price for '{query_norm}' from CoinPaprika.")
+                    return CryptoCoin(
+                        id=ticker_data.get('id'),
+                        symbol=symbol,
+                        name=ticker_data.get('name'),
+                        price=quotes.get('price', 0.0),
+                        price_change_24h=quotes.get('percent_change_24h'),
+                        algorithm=coin_list.get(symbol)
+                    )
 
-    async def _get_price_from_coinpaprika(self, ticker: str) -> Optional[float]:
-        # CoinPaprika часто использует формат "btc-bitcoin"
-        coin_id = await self.coin_list_service.get_coin_id(ticker)
-        if not coin_id:
-            return None # Уже залогировали в coingecko
-
-        ticker_lower = ticker.lower()
-        coinpaprika_id = f"{ticker_lower}-{coin_id.replace(ticker_lower, '').strip('-')}" if coin_id != ticker_lower else ticker_lower
-
-        url = f"{settings.coinpaprika_api_base}/tickers/{coinpaprika_id}"
-        async with aiohttp.ClientSession() as session:
-            data = await make_request(session, url)
-            if isinstance(data, dict) and "quotes" in data and "USD" in data["quotes"] and "price" in data["quotes"]["USD"]:
-                return data["quotes"]["USD"]["price"]
+        logger.error(f"Failed to get price for '{query_norm}' from all sources.")
         return None
