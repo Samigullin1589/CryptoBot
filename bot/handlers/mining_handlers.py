@@ -10,7 +10,10 @@ from datetime import datetime, timedelta
 
 from bot.config.settings import settings
 from bot.services.asic_service import AsicService
-from bot.keyboards.keyboards import get_mining_menu_keyboard, get_asic_shop_keyboard, get_my_farm_keyboard, get_withdraw_keyboard
+from bot.keyboards.keyboards import (
+    get_mining_menu_keyboard, get_asic_shop_keyboard, 
+    get_my_farm_keyboard, get_withdraw_keyboard, get_electricity_menu_keyboard
+)
 from bot.utils.helpers import get_message_and_chat_id, sanitize_html
 
 router = Router()
@@ -244,3 +247,83 @@ async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis):
     )
 
     await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
+
+
+# --- ЛОГИКА "ЭЛЕКТРОЭНЕРГИЯ" ---
+
+@router.callback_query(F.data == "mining_electricity")
+async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis):
+    """
+    Показывает меню выбора и покупки тарифов на электроэнергию.
+    """
+    user_id = call.from_user.id
+    
+    current_tariff = await redis_client.get(f"user:{user_id}:tariff") or settings.DEFAULT_ELECTRICITY_TARIFF
+    
+    unlocked_tariffs = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
+    if not unlocked_tariffs:
+        unlocked_tariffs = {settings.DEFAULT_ELECTRICITY_TARIFF}
+
+    text = (
+        f"⚡️ <b>Управление электроэнергией</b>\n\n"
+        f"Покупайте более выгодные тарифы, чтобы увеличить чистую прибыль от майнинга.\n\n"
+        f"Текущий выбранный тариф: <b>{current_tariff}</b>"
+    )
+    
+    await call.message.edit_text(text, reply_markup=get_electricity_menu_keyboard(current_tariff, unlocked_tariffs))
+
+
+@router.callback_query(F.data.startswith("select_tariff_"))
+async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis):
+    """
+    Обрабатывает выбор доступного тарифа.
+    """
+    user_id = call.from_user.id
+    tariff_name = call.data[len("select_tariff_"):]
+
+    unlocked_tariffs = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
+    if not unlocked_tariffs:
+        unlocked_tariffs = {settings.DEFAULT_ELECTRICITY_TARIFF}
+
+    if tariff_name not in unlocked_tariffs:
+        await call.answer("🔒 Этот тариф вам еще не доступен. Сначала его нужно купить.", show_alert=True)
+        return
+
+    await redis_client.set(f"user:{user_id}:tariff", tariff_name)
+    logger.info(f"User {user_id} selected new electricity tariff: {tariff_name}")
+    await call.answer(f"✅ Тариф '{tariff_name}' успешно выбран!")
+    
+    await handle_electricity_menu(call, redis_client)
+
+
+@router.callback_query(F.data.startswith("buy_tariff_"))
+async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis):
+    """
+    Обрабатывает покупку нового тарифа.
+    """
+    user_id = call.from_user.id
+    tariff_name = call.data[len("buy_tariff_"):]
+
+    tariff_info = settings.ELECTRICITY_TARIFFS.get(tariff_name)
+    if not tariff_info:
+        await call.answer("❌ Тариф не найден.", show_alert=True)
+        return
+        
+    unlock_price = tariff_info['unlock_price']
+    
+    balance_str = await redis_client.get(f"user:{user_id}:balance")
+    balance = float(balance_str) if balance_str else 0
+
+    if balance < unlock_price:
+        await call.answer(f"ℹ️ Недостаточно средств. Нужно {unlock_price:.0f} монет, у вас {balance:.2f}.", show_alert=True)
+        return
+
+    async with redis_client.pipeline() as pipe:
+        pipe.decrbyfloat(f"user:{user_id}:balance", unlock_price)
+        pipe.sadd(f"user:{user_id}:unlocked_tariffs", tariff_name)
+        await pipe.execute()
+        
+    logger.info(f"User {user_id} bought new tariff '{tariff_name}' for {unlock_price} coins.")
+    await call.answer(f"🎉 Тариф '{tariff_name}' успешно куплен и доступен для выбора!", show_alert=True)
+
+    await handle_electricity_menu(call, redis_client)

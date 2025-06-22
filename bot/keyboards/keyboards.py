@@ -1,5 +1,5 @@
 import random
-from typing import List, Dict
+from typing import List, Dict, Set
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config.settings import settings
@@ -95,11 +95,18 @@ def get_withdraw_keyboard():
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
     return builder.as_markup()
 
-def get_electricity_menu_keyboard(current_tariff_name: str):
+def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Set[str]):
     builder = InlineKeyboardBuilder()
-    for name in settings.ELECTRICITY_TARIFFS.keys():
-        text = f"✅ {name}" if name == current_tariff_name else name
-        builder.button(text=text, callback_data=f"select_tariff_{name}")
+    for name, details in settings.ELECTRICITY_TARIFFS.items():
+        if name in unlocked_tariffs:
+            text = f"✅ {name}" if name == current_tariff_name else f"▶️ {name}"
+            callback_data = f"select_tariff_{name}"
+            builder.button(text=text, callback_data=callback_data)
+        else:
+            price = details['unlock_price']
+            text = f"🔒 {name} (купить за {price:.0f} монет)"
+            callback_data = f"buy_tariff_{name}"
+            builder.button(text=text, callback_data=callback_data)
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="⬅️ В меню майнинга", callback_data="menu_mining"))
     return builder.as_markup()

@@ -47,15 +47,12 @@ class AppSettings(BaseSettings):
     MINING_DURATION_SECONDS: int = 8 * 3600
     REFERRAL_BONUS_AMOUNT: float = 50.0
     
-    # --- НОВЫЕ ПАРАМЕТРЫ ---
-    # Тарифы на электроэнергию (виртуальных монет в час)
-    ELECTRICITY_TARIFFS: Dict[str, float] = {
-        "Домашний 💡": 0.05,
-        "Промышленный 🏭": 0.02,
-        "Зеленый 🌱": 0.08
+    ELECTRICITY_TARIFFS: Dict[str, Dict[str, float]] = {
+        "Домашний 💡": {"cost_per_hour": 0.05, "unlock_price": 0},
+        "Промышленный 🏭": {"cost_per_hour": 0.02, "unlock_price": 200},
+        "Зеленый 🌱": {"cost_per_hour": 0.08, "unlock_price": 50}
     }
     DEFAULT_ELECTRICITY_TARIFF: str = "Домашний 💡"
-
 
     fallback_asics: List[Dict[str, Any]] = load_fallback_asics()
 
