@@ -1,9 +1,13 @@
 import random
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from typing import List
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config.settings import settings
+from bot.utils.models import AsicMiner
 
 PROMO_URL = "https://cutt.ly/5rWGcgYL"
+
+# ИЗМЕНЕНИЕ: Ваш новый, расширенный список промо-текстов
 PROMO_TEXTS = [
     "🎁 Суперцена на майнеры –50%",
     "🔥 Горячий прайс: скидка до 30%",
@@ -36,10 +40,14 @@ PROMO_TEXTS = [
     "💹 Bull-прайс: мощные ASIC по выгодной цене"
 ]
 
+ITEMS_PER_PAGE = 5  # Количество ASIC'ов на одной странице магазина
+
 def get_promo_button() -> InlineKeyboardButton:
+    """Возвращает кнопку с рандомным промо-текстом."""
     return InlineKeyboardButton(text=random.choice(PROMO_TEXTS), url=PROMO_URL)
 
 def get_main_menu_keyboard():
+    """Создает главную клавиатуру меню."""
     builder = InlineKeyboardBuilder()
     buttons = {
         "💹 Курс": "menu_price", "⚙️ Топ ASIC": "menu_asics",
@@ -55,6 +63,7 @@ def get_main_menu_keyboard():
     return builder.as_markup()
 
 def get_price_keyboard():
+    """Создает клавиатуру для выбора популярных монет."""
     builder = InlineKeyboardBuilder()
     for ticker in settings.popular_tickers:
         builder.button(text=ticker, callback_data=f"price_{ticker}")
@@ -65,16 +74,14 @@ def get_price_keyboard():
     return builder.as_markup()
 
 def get_quiz_keyboard():
+    """Создает клавиатуру для викторины."""
     builder = InlineKeyboardBuilder()
     builder.button(text="Следующий вопрос", callback_data="menu_quiz")
-    builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main_menu"))
     builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_mining_menu_keyboard():
-    """
-    Создает клавиатуру для главного меню раздела "Виртуальный Майнинг".
-    """
+    """Создает клавиатуру для главного меню раздела "Виртуальный Майнинг"."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🏪 Магазин оборудования", callback_data="mining_shop")
     builder.button(text="🖥️ Моя ферма", callback_data="mining_my_farm")
@@ -85,8 +92,18 @@ def get_mining_menu_keyboard():
     builder.adjust(2, 2, 1, 1)
     return builder.as_markup()
 
-def get_back_to_menu_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру с одной кнопкой "Назад в меню"."""
+def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
+    """Создает клавиатуру для магазина ASIC с пагинацией."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
-    return builder.as_markup()
+    start_index = page * ITEMS_PER_PAGE
+    end_index = start_index + ITEMS_PER_PAGE
+    
+    # Добавляем кнопки для ASIC'ов на текущей странице
+    for i, asic in enumerate(asics[start_index:end_index]):
+        builder.button(
+            text=f"▶️ {asic.name} (${asic.profitability:.2f}/день)",
+            callback_data=f"start_mining_{i + start_index}"
+        )
+    
+    # Создаем кнопки для навигации по страницам
+    nav_buttons =
