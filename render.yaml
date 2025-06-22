@@ -2,11 +2,11 @@ services:
   # Этот сервис будет нашим ботом, запущенным в Docker
   - type: worker
     name: cryptobot
-    # ИЗМЕНЕНИЕ: Указываем, что среда выполнения - Docker
+    # Указываем, что среда выполнения - Docker
     env: docker
     plan: pro
     
-    # ИЗМЕНЕНИЕ: Указываем путь к нашему Dockerfile
+    # Указываем путь к нашему Dockerfile
     dockerfilePath: ./Dockerfile
     
     # buildCommand и startCommand больше не нужны, они определены в Dockerfile

@@ -61,7 +61,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     if not asics:
         text = "❌ Не удалось получить список ASIC-майнеров. Попробуйте позже."
     else:
-        text = "🏆 <b>Топ-10 доходных ASIC из резервного списка:</b>\n\n"
+        text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
         for miner in asics[:10]:
             text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
                      f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
