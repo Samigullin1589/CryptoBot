@@ -1,7 +1,6 @@
 import random
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
 from bot.config.settings import settings
 
 PROMO_URL = "https://cutt.ly/5rWGcgYL"
@@ -35,6 +34,7 @@ PROMO_TEXTS = [
 "🎈 Лёгкий вход в майнинг: ASIC дешевле",
 "🥳 Праздничный прайс-шок на ASIC",
 "💹 Bull-прайс: мощные ASIC по выгодной цене"
+
 ]
 
 def get_promo_button() -> InlineKeyboardButton:
@@ -69,4 +69,23 @@ def get_quiz_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="Следующий вопрос", callback_data="menu_quiz")
     builder.row(get_promo_button())
+    return builder.as_markup()
+
+# --- НОВАЯ ФУНКЦИЯ ДЛЯ МЕНЮ МАЙНИНГА ---
+def get_mining_menu_keyboard():
+    """
+    Создает клавиатуру для главного меню раздела "Виртуальный Майнинг".
+    """
+    builder = InlineKeyboardBuilder()
+    # Кнопки согласно нашему ТЗ v2.0
+    builder.button(text="🏪 Магазин оборудования", callback_data="mining_shop")
+    builder.button(text="🖥️ Моя ферма", callback_data="mining_my_farm")
+    builder.button(text="⚡️ Электроэнергия", callback_data="mining_electricity")
+    builder.button(text="📊 Статистика", callback_data="mining_stats")
+    builder.button(text="💰 Вывод средств", callback_data="mining_withdraw")
+    builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
+    
+    # Расставляем кнопки в ряды для красоты
+    builder.adjust(2, 2, 1, 1)
+    
     return builder.as_markup()

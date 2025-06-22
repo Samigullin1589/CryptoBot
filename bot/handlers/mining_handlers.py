@@ -8,27 +8,33 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.config.settings import settings
-from bot.keyboards.keyboards import get_main_menu_keyboard
+# --- ИЗМЕНЕНИЕ: Импортируем новую клавиатуру ---
+from bot.keyboards.keyboards import get_mining_menu_keyboard
 from bot.utils.helpers import get_message_and_chat_id
 
 router = Router()
 logger = logging.getLogger(__name__)
 
+
+# --- ИЗМЕНЕНИЕ: Полностью переписанный обработчик ---
 @router.callback_query(F.data == "menu_mining")
 @router.message(F.text == "💎 Виртуальный Майнинг")
 async def handle_mining_menu(update: Union[CallbackQuery, Message]):
-    message, _ = await get_message_and_chat_id(update)
-    text = (
-        "<b>💎 Виртуальный майнинг</b>\n\n"
-        "Эта функция находится в разработке.\n\n"
-        "Скоро здесь вы сможете запускать виртуальные майнинг-фермы, "
-        "получать пассивный доход и обменивать его на реальные призы!\n\n"
-        "Используйте команду /start_mining для начала."
-    )
-    try:
-        await message.edit_text(text, reply_markup=get_main_menu_keyboard())
-    except:
-        await message.answer(text, reply_markup=get_main_menu_keyboard())
+    """
+    Отправляет пользователю главное меню раздела "Виртуальный Майнинг".
+    """
+    message, chat_id = await get_message_and_chat_id(update)
+    
+    text = "<b>💎 Центр управления Виртуальным Майнингом</b>\n\nВыберите действие:"
+    
+    # В зависимости от типа апдейта, редактируем сообщение или отправляем новое
+    if isinstance(update, CallbackQuery):
+        await message.edit_text(text, reply_markup=get_mining_menu_keyboard())
+    else:
+        await message.answer(text, reply_markup=get_mining_menu_keyboard())
+
+
+# --- ЭТИ ФУНКЦИИ МЫ ИЗМЕНИМ НА СЛЕДУЮЩИХ ШАГАХ. ПОКА ОНИ ОСТАЮТСЯ КАК ЕСТЬ. ---
 
 @router.message(Command("start_mining"))
 async def start_mining(message: Message, redis_client: redis.Redis, scheduler: AsyncIOScheduler, bot: Bot):
@@ -44,7 +50,6 @@ async def start_mining(message: Message, redis_client: redis.Redis, scheduler: A
 
     run_date = datetime.now() + timedelta(seconds=settings.MINING_DURATION_SECONDS)
     
-    # Эта логика остается верной - используем текстовый путь и передаем только user_id
     job = scheduler.add_job(
         'bot.services.mining_tasks:end_mining_session',
         'date',
