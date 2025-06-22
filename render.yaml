@@ -1,0 +1,31 @@
+services:
+  - type: worker # 'worker' подходит для бота, так как ему не нужен внешний веб-адрес
+    name: cryptobot
+    env: python
+    plan: free # Укажите ваш тарифный план, если он отличается
+    
+    # Указываем версию Python для стабильности
+    pythonVersion: '3.11.5'
+    
+    # Команда сборки теперь разделена и не содержит --with-deps
+    buildCommand: "pip install -r requirements.txt && playwright install"
+    
+    # Команда для запуска вашего бота
+    startCommand: "python -m bot.main"
+    
+    # Переменные окружения. Секреты нужно будет задать в панели Render.
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.5
+      - key: BOT_TOKEN
+        fromSecret: true
+      - key: REDIS_URL
+        fromSecret: true
+      - key: ADMIN_CHAT_ID
+        fromSecret: true
+      - key: NEWS_CHAT_ID
+        fromSecret: true
+      - key: CMC_API_KEY
+        fromSecret: true
+      - key: OPENAI_API_KEY
+        fromSecret: true
