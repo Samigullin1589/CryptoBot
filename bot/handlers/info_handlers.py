@@ -2,10 +2,11 @@ import asyncio
 import logging
 import re
 from typing import Union
-
 from aiogram import Bot, F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.services.asic_service import AsicService
 from bot.services.market_data_service import MarketDataService
@@ -13,47 +14,65 @@ from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
 from bot.utils.helpers import sanitize_html, get_message_and_chat_id, show_main_menu
-from bot.keyboards.keyboards import (get_main_menu_keyboard, get_price_keyboard,
-                                     get_quiz_keyboard)
+from bot.keyboards.keyboards import (get_main_menu_keyboard, get_price_keyboard, get_quiz_keyboard)
 from bot.utils.plotting import generate_fng_image
 from bot.utils.states import PriceInquiry, ProfitCalculator
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-async def send_price_info(message: Message, query: str, price_service: PriceService, asic_service: AsicService):
-    coin = await price_service.get_crypto_price(query)
-    if not coin:
-        await message.answer(f"❌ Не удалось найти информацию по '{sanitize_html(query)}'.")
-        return
+async def send_price_info(message: Message, query: str, price_service: PriceService, asic_service: AsicService):  
+    coin = await price_service.get_crypto_price(query)  
+    if not coin:  
+        await message.answer(f"❌ Не удалось найти информацию по '{sanitize_html(query)}'.")  
+        return  
 
-    change = coin.price_change_24h or 0
-    emoji = "📈" if change >= 0 else "📉"
-    text = (f"<b>{coin.name} ({coin.symbol})</b>\n"
-            f"💹 Курс: <b>${coin.price:,.4f}</b>\n"
-            f"{emoji} 24ч: <b>{change:.2f}%</b>\n")
+    change = coin.price_change_24h or 0  
+    emoji = "📈" if change >= 0 else "📉"  
+    text = (f"<b>{coin.name} ({coin.symbol})</b>\n"  
+            f"💹 Курс: <b>${coin.price:,.4f}</b>\n"  
+            f"{emoji} 24ч: <b>{change:.2f}%</b>\n")  
 
-    if coin.algorithm:
-        text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>\n"
-        relevant_asics = await asic_service.find_asics_by_algorithm(coin.algorithm)
-        if relevant_asics:
-            text += f"\n⚙️ <b>Рекомендуемое оборудование под {coin.algorithm}:</b>\n"
-            for asic in relevant_asics[:3]:
-                text += f"  • <b>{sanitize_html(asic.name)}</b>: ${asic.profitability:.2f}/день\n"
+    if coin.algorithm:  
+        text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>\n"  
+        relevant_asics = await asic_service.find_asics_by_algorithm(coin.algorithm)  
+        if relevant_asics:  
+            text += f"\n⚙️ <b>Рекомендуемое оборудование под {coin.algorithm}:</b>\n"  
+            for asic in relevant_asics[:3]:  
+                text += f"  • <b>{sanitize_html(asic.name)}</b>: ${asic.profitability:.2f}/день\n"  
     await message.answer(text)
 
 @router.callback_query(F.data == "menu_asics")
 @router.message(F.text == "⚙️ Топ ASIC")
 async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service: AsicService):
     message, _ = await get_message_and_chat_id(update)
-    await message.edit_text("⏳ Загружаю актуальный список...")
+    
+    try:
+        if isinstance(update, CallbackQuery):
+            await message.edit_text("⏳ Загружаю актуальный список...")
+        else:
+            await message.answer("⏳ Загружаю актуальный список...")
+    except TelegramBadRequest:
+        logger.warning("Message not modified, skipping initial edit.")
+
     asics = await asic_service.get_profitable_asics()
-    text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
-    for miner in asics[:10]:
-        text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
-                 f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
-                 f"{f' | {miner.power}W' if miner.power else ''}\n")
-    await message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    
+    if not asics:
+        text = "❌ Не удалось получить список ASIC-майнеров. Попробуйте позже."
+    else:
+        text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
+        for miner in asics[:10]:
+            text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
+                     f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
+                     f"{f' | {miner.power}W' if miner.power else ''}\n")
+    
+    try:
+        if isinstance(update, CallbackQuery):
+            await message.edit_text(text, reply_markup=get_main_menu_keyboard())
+        else:
+            await message.answer(text, reply_markup=get_main_menu_keyboard())
+    except TelegramBadRequest as e:
+        logger.error(f"Failed to edit message in handle_asics_menu: {e}")
 
 @router.callback_query(F.data == "menu_price")
 @router.message(F.text == "💹 Курс")
@@ -163,8 +182,8 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         await message.delete()
         message_to_process = await message.answer("⏳ Генерирую вопрос...")
     else:
-        await message.edit_text("⏳ Генерирую вопрос...")
-        message_to_process = message
+        # Убрали edit_text, чтобы избежать ошибки, если пользователь отправит команду текстом
+        message_to_process = await message.answer("⏳ Генерирую вопрос...")
 
     quiz = await quiz_service.generate_quiz_question()
     if not quiz:
@@ -178,11 +197,8 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         reply_markup=get_quiz_keyboard()
     )
 
-@router.message(F.text)
+@router.message(F.text, ~Command(ignore_case=True))
 async def handle_arbitrary_text(message: Message, price_service: PriceService, asic_service: AsicService, bot: Bot):
-    if message.text and message.text.startswith('/'):
-        return
-
     if message.chat.type == "private":
         logger.info(f"User sent text '{message.text}' in private, processing as price request.")
         await send_price_info(message, message.text, price_service, asic_service)
