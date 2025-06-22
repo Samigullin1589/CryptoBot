@@ -1,31 +1,50 @@
 import asyncio
 import logging
-import redis.asyncio as redis
+import signal
+from typing import Any
 
+import redis.asyncio as redis
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from openai import AsyncOpenAI
 
 from bot.config.settings import settings
-from bot.utils.helpers import setup_logging
-from bot.services.asic_service import AsicService
-from bot.services.coin_list_service import CoinListService
-from bot.services.price_service import PriceService
-from bot.services.news_service import NewsService
-from bot.services.market_data_service import MarketDataService
-from bot.services.quiz_service import QuizService
-from bot.services.scheduler import setup_scheduler
 from bot.handlers import common_handlers, info_handlers, mining_handlers
 from bot.middlewares.throttling import ThrottlingMiddleware
+from bot.services.asic_service import AsicService
+from bot.services.coin_list_service import CoinListService
+from bot.services.market_data_service import MarketDataService
+from bot.services.news_service import NewsService
+from bot.services.price_service import PriceService
+from bot.services.quiz_service import QuizService
+from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
+from bot.utils.helpers import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
+async def on_shutdown(bot: Bot, dp: Dispatcher, scheduler: Any):
+    """Выполняет действия при корректном завершении работы."""
+    logger.info("Shutting down...")
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("Scheduler shut down.")
+    
+    await dp.storage.close()
+    logger.info("FSM storage closed.")
+    
+    await bot.session.close()
+    logger.info("Bot session closed.")
+    logger.info("Graceful shutdown complete.")
+
+
 async def main():
+    """Основная функция для инициализации и запуска бота."""
     if not settings.bot_token or not settings.redis_url:
-        logger.critical("Bot token or Redis URL not found in environment variables.")
+        logger.critical("BOT_TOKEN or REDIS_URL not found in environment variables.")
         return
 
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
@@ -34,11 +53,11 @@ async def main():
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
       
-    dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, default_rate_limit=1.0))
+    dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
       
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
-    # Создаем сервисы
+    # Инициализация сервисов
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
     asic_service = AsicService()
@@ -46,18 +65,17 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
       
-    # --- ИНИЦИАЛИЗАЦИЯ ГЛОБАЛЬНЫХ ЗАВИСИМОСТЕЙ ---
+    # Заполнение глобальных зависимостей
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
-    # ИСПРАВЛЕНИЕ: Добавляем redis_client в глобальные зависимости
     dependencies.redis_client = redis_client
       
+    # Регистрация роутеров
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # Собираем словарь зависимостей для передачи в планировщик и обработчики
     context_data = {
         "asic_service": asic_service,
         "news_service": news_service,
@@ -67,12 +85,11 @@ async def main():
         "redis_client": redis_client,
     }
 
-    # Настраиваем планировщик, передавая ему словарь с зависимостями
     scheduler = setup_scheduler(context_data)
-      
-    # Добавляем планировщик в общий словарь для доступа из хендлеров
-    workflow_data = context_data.copy()
-    workflow_data["scheduler"] = scheduler
+    workflow_data = {**context_data, "scheduler": scheduler}
+    
+    # Регистрация хука для корректного завершения
+    dp.shutdown.register(on_shutdown, bot=bot, dp=dp, scheduler=scheduler)
       
     try:
         scheduler.start()
@@ -89,17 +106,14 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
 
-        allowed_updates = dp.resolve_used_update_types(skip_events=['poll_answer'])
+        await dp.start_polling(bot, **workflow_data)
+        
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped by user or system.")
 
-        await dp.start_polling(bot, **workflow_data, allowed_updates=allowed_updates)
-    finally:
-        scheduler.shutdown()
-        await dp.storage.close()
-        await bot.session.close()
-        logger.info("Bot stopped.")
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped by user.")
+    except KeyboardInterrupt:
+        logger.info("Bot execution stopped.")
