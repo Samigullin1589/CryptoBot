@@ -1,6 +1,9 @@
+import asyncio
 import logging
+from typing import Optional
+
 import aiohttp
-from typing import Optional, Dict
+from async_lru import alru_cache
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request
@@ -8,25 +11,80 @@ from bot.utils.helpers import make_request
 logger = logging.getLogger(__name__)
 
 class MarketDataService:
-    async def get_fear_and_greed_index(self) -> Optional[Dict]:
-        """Получает индекс страха и жадности с Alternative.me."""
-        logger.info("Запрос индекса страха и жадности...")
+    @alru_cache(maxsize=1, ttl=14400)
+    async def get_fear_and_greed_index(self) -> Optional[dict]:
+        """Получает Индекс Страха и Жадности, используя несколько источников."""
+        logger.info("Fetching Fear & Greed Index...")
         async with aiohttp.ClientSession() as session:
+            # Пробуем получить с CoinMarketCap, если есть ключ
+            if settings.cmc_api_key:
+                headers = {'X-CMC_PRO_API_KEY': settings.cmc_api_key}
+                data = await make_request(session, settings.cmc_fear_and_greed_url, headers=headers)
+                if data and 'data' in data and data['data']:
+                    fng_data = data['data'][0] # CMC returns a list
+                    logger.info("Fetched F&G index from CoinMarketCap")
+                    return {
+                        'value': fng_data['score'],
+                        'value_classification': fng_data['rating']
+                    }
+                logger.warning("Failed to fetch from CMC, falling back to Alternative.me")
+            
+            # Резервный источник
             data = await make_request(session, settings.fear_and_greed_api_url)
-            if isinstance(data, dict) and "data" in data and data["data"]:
-                logger.info("Индекс страха и жадности успешно получен.")
-                return data["data"][0]
-        logger.error("Не удалось получить индекс страха и жадности.")
+            if data and 'data' in data and data['data']:
+                logger.info("Fetched F&G index from Alternative.me")
+                return data['data'][0]
+        
+        logger.error("Failed to fetch F&G index from all sources.")
         return None
 
-    async def get_usd_rub_rate(self) -> Optional[float]:
-        """Получает курс доллара к рублю с API ЦБ РФ."""
-        logger.info("Запрос курса USD/RUB...")
+    @alru_cache(maxsize=1, ttl=43200)
+    async def get_usd_rub_rate(self) -> float:
+        """Получает курс USD/RUB от Центробанка РФ."""
+        logger.info("Fetching USD/RUB exchange rate.")
         async with aiohttp.ClientSession() as session:
             data = await make_request(session, settings.cbr_daily_json_url)
-            if isinstance(data, dict) and "Valute" in data and "USD" in data["Valute"]:
+            if data and "Valute" in data and "USD" in data["Valute"]:
                 rate = data["Valute"]["USD"]["Value"]
-                logger.info(f"Курс USD/RUB успешно получен: {rate}")
-                return rate
-        logger.error("Не удалось получить курс USD/RUB.")
-        return None
+                logger.info(f"Current USD/RUB rate: {rate}")
+                return float(rate)
+        logger.warning("Could not fetch USD/RUB rate. Using fallback rate 90.0.")
+        return 90.0
+
+    async def get_halving_info(self) -> str:
+        """Получает информацию о халвинге Bitcoin."""
+        logger.info("Fetching Bitcoin halving info...")
+        async with aiohttp.ClientSession() as session:
+            height_str = await make_request(session, settings.btc_halving_url, response_type='text')
+            if not height_str or not height_str.isdigit():
+                return "❌ Не удалось получить данные о халвинге."
+            
+            current_block = int(height_str)
+            halving_interval = 210000
+            blocks_left = halving_interval - (current_block % halving_interval)
+            days_left = blocks_left / 144
+            
+            return (f"⏳ <b>До халвинга Bitcoin осталось:</b>\n\n"
+                    f"🧱 <b>Блоков:</b> <code>{blocks_left:,}</code>\n"
+                    f"🗓 <b>Примерно дней:</b> <code>{days_left:.1f}</code>")
+
+    async def get_btc_network_status(self) -> str:
+        """Получает статус сети Bitcoin (комиссии и мемпул)."""
+        logger.info("Fetching Bitcoin network status...")
+        async with aiohttp.ClientSession() as session:
+            tasks = [
+                make_request(session, settings.btc_fees_url),
+                make_request(session, settings.btc_mempool_url)
+            ]
+            results = await asyncio.gather(*tasks)
+            fees_data, mempool_data = results
+
+            if not fees_data or not mempool_data:
+                return "❌ Не удалось получить статус сети BTC."
+            
+            return (f"📡 <b>Статус сети Bitcoin:</b>\n\n"
+                    f"📈 <b>Транзакций в мемпуле:</b> <code>{mempool_data.get('count', 'N/A'):,}</code>\n\n"
+                    f"💸 <b>Рекомендуемые комиссии (sat/vB):</b>\n"
+                    f"  - 🚀 Высокий: <code>{fees_data.get('fastestFee', 'N/A')}</code>\n"
+                    f"  - 🚶‍♂️ Средний: <code>{fees_data.get('halfHourFee', 'N/A')}</code>\n"
+                    f"  - 🐢 Низкий: <code>{fees_data.get('hourFee', 'N/A')}</code>")
