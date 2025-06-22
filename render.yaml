@@ -3,10 +3,13 @@ services:
   - type: worker
     name: cryptobot
     runtime: python
-    plan: starter # Starter плана достаточно, так как мы не используем тяжелый браузер
-    region: frankfurt # Рекомендуемый регион, близкий к Европе
+    plan: starter # Starter плана достаточно для этой конфигурации
+    region: frankfurt
     
+    # ИСПРАВЛЕНИЕ: Убираем команду playwright install.
+    # Теперь мы только устанавливаем зависимости из requirements.txt
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    
     startCommand: "python -m bot.main"
     
     envVars:
@@ -24,10 +27,3 @@ services:
         fromSecret: true
       - key: OPENAI_API_KEY
         fromSecret: true
-
-  # Рекомендуется использовать внешний Redis (например, с upstash.com),
-  # и указать его URL в секретах. Если вы хотите использовать Redis от Render,
-  # раскомментируйте секцию ниже и измените fromSecret на fromService для REDIS_URL.
-  # - type: redis
-  #   name: cryptobot-redis
-  #   plan: free
