@@ -10,10 +10,17 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: '3.11.5'
-      # Объявляем ключи для секретов. Значения будут добавлены в панели Render.
+      # Объявляем ключи для секретов и задаем пустые значения-заглушки.
+      # Реальные значения будут подставлены из панели Environment в Render.
       - key: BOT_TOKEN
+        value: ""
       - key: REDIS_URL
+        value: ""
       - key: ADMIN_CHAT_ID
+        value: ""
       - key: NEWS_CHAT_ID
+        value: ""
       - key: CMC_API_KEY
+        value: ""
       - key: OPENAI_API_KEY
+        value: ""
