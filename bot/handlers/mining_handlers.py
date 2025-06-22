@@ -3,15 +3,14 @@ import logging
 from typing import Union
 import redis.asyncio as redis
 from aiogram import F, Router, Bot
-from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 
 from bot.config.settings import settings
 from bot.services.asic_service import AsicService
-from bot.keyboards.keyboards import get_mining_menu_keyboard, get_asic_shop_keyboard
-from bot.utils.helpers import get_message_and_chat_id
+from bot.keyboards.keyboards import get_mining_menu_keyboard, get_asic_shop_keyboard, get_my_farm_keyboard
+from bot.utils.helpers import get_message_and_chat_id, sanitize_html
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -19,16 +18,10 @@ logger = logging.getLogger(__name__)
 # --- ГЛАВНОЕ МЕНЮ РАЗДЕЛА ---
 
 @router.callback_query(F.data == "menu_mining")
-@router.message(F.text == "💎 Виртуальный Майнинг")
-async def handle_mining_menu(update: Union[CallbackQuery, Message]):
+async def handle_mining_menu(call: CallbackQuery):
     """Отправляет пользователю главное меню раздела "Виртуальный Майнинг"."""
-    message, _ = await get_message_and_chat_id(update)
     text = "<b>💎 Центр управления Виртуальным Майнингом</b>\n\nВыберите действие:"
-    
-    if isinstance(update, CallbackQuery):
-        await message.edit_text(text, reply_markup=get_mining_menu_keyboard())
-    else:
-        await message.answer(text, reply_markup=get_mining_menu_keyboard())
+    await call.message.edit_text(text, reply_markup=get_mining_menu_keyboard())
 
 
 # --- ЛОГИКА МАГАЗИНА ОБОРУДОВАНИЯ ---
@@ -61,7 +54,7 @@ async def handle_shop_pagination(call: CallbackQuery, asic_service: AsicService)
 # --- ЛОГИКА ЗАПУСКА МАЙНИНГА ---
 
 @router.callback_query(F.data.startswith("start_mining_"))
-async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, scheduler: AsyncIOScheduler, asic_service: AsicService, bot: Bot):
+async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, scheduler: AsyncIOScheduler, asic_service: AsicService):
     """Обработчик выбора конкретного ASIC для запуска майнинга."""
     user_id = call.from_user.id
 
@@ -89,7 +82,6 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
         replace_existing=True
     )
 
-    # Сохраняем в Redis информацию о текущей сессии
     session_data = {
         "start_time": int(time.time()),
         "job_id": job.id,
@@ -107,4 +99,41 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
     )
     logger.info(f"User {user_id} started mining session with ASIC: {selected_asic.name}")
 
-# Обработчики для "Моя ферма", "Электроэнергия", "Статистика", "Вывод средств" будут добавлены на следующих шагах.
+
+# --- НОВЫЙ ОБРАБОТЧИК: 'МОЯ ФЕРМА' ---
+
+@router.callback_query(F.data == "mining_my_farm")
+async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis):
+    """Показывает статус текущей майнинг-сессии."""
+    user_id = call.from_user.id
+    session_data = await redis_client.hgetall(f"mining:session:{user_id}")
+
+    if not session_data:
+        text = "🖥️ <b>Моя ферма</b>\n\nУ вас нет активных майнинг-сессий. Зайдите в магазин, чтобы запустить оборудование!"
+        await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
+        return
+
+    # Расчеты времени и дохода
+    start_time = int(session_data.get("start_time", 0))
+    profitability_per_day = float(session_data.get("asic_profitability_per_day", 0))
+    
+    elapsed_seconds = int(time.time()) - start_time
+    remaining_seconds = settings.MINING_DURATION_SECONDS - elapsed_seconds
+    
+    profit_per_second = profitability_per_day / (24 * 3600)
+    earned_so_far = elapsed_seconds * profit_per_second
+
+    # Форматирование времени
+    m, s = divmod(remaining_seconds, 60)
+    h, m = divmod(m, 60)
+    remaining_time_str = f"{h:02d}:{m:02d}:{s:02d}"
+
+    text = (
+        f"🖥️ <b>Моя ферма</b>\n\n"
+        f"✅ <b>Статус:</b> В работе\n"
+        f"⚙️ <b>Оборудование:</b> {sanitize_html(session_data.get('asic_name', 'Неизвестно'))}\n"
+        f"⏳ <b>Осталось времени:</b> <code>{remaining_time_str}</code>\n"
+        f"💰 <b>Намайнено в этой сессии:</b> ~${earned_so_far:.4f}"
+    )
+    
+    await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())

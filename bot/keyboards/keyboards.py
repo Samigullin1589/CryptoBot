@@ -6,8 +6,6 @@ from bot.config.settings import settings
 from bot.utils.models import AsicMiner
 
 PROMO_URL = "https://cutt.ly/5rWGcgYL"
-
-# ИЗМЕНЕНИЕ: Ваш новый, расширенный список промо-текстов
 PROMO_TEXTS = [
     "🎁 Суперцена на майнеры –50%",
     "🔥 Горячий прайс: скидка до 30%",
@@ -39,8 +37,7 @@ PROMO_TEXTS = [
     "🥳 Праздничный прайс-шок на ASIC",
     "💹 Bull-прайс: мощные ASIC по выгодной цене"
 ]
-
-ITEMS_PER_PAGE = 5  # Количество ASIC'ов на одной странице магазина
+ITEMS_PER_PAGE = 5
 
 def get_promo_button() -> InlineKeyboardButton:
     """Возвращает кнопку с рандомным промо-текстом."""
@@ -98,12 +95,26 @@ def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
     start_index = page * ITEMS_PER_PAGE
     end_index = start_index + ITEMS_PER_PAGE
     
-    # Добавляем кнопки для ASIC'ов на текущей странице
     for i, asic in enumerate(asics[start_index:end_index]):
         builder.button(
             text=f"▶️ {asic.name} (${asic.profitability:.2f}/день)",
             callback_data=f"start_mining_{i + start_index}"
         )
     
-    # Создаем кнопки для навигации по страницам
-    nav_buttons =
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"shop_page_{page - 1}"))
+    if end_index < len(asics):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"shop_page_{page + 1}"))
+        
+    builder.adjust(1)
+    builder.row(*nav_buttons)
+    builder.row(InlineKeyboardButton(text="⬅️ В меню майнинга", callback_data="menu_mining"))
+    return builder.as_markup()
+
+# --- НОВАЯ ФУНКЦИЯ ---
+def get_my_farm_keyboard():
+    """Создает клавиатуру для раздела 'Моя ферма'."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
+    return builder.as_markup()
