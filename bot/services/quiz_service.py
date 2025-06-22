@@ -1,7 +1,8 @@
+import asyncio
 import json
 import logging
-from typing import Optional, Dict
-
+# --- ИСПРАВЛЕНИЕ: Добавляем недостающий импорт ---
+from typing import Optional, Dict, List 
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, conint, ValidationError, field_validator
 
@@ -28,7 +29,7 @@ class QuizService:
             logger.warning("OpenAI client is not configured. Quiz feature disabled.")
             return None
             
-        for attempt in range(3): # Пытаемся сгенерировать корректный вопрос 3 раза
+        for attempt in range(3):
             logger.info(f"Generating quiz question with OpenAI... Attempt {attempt + 1}")
             prompt_messages = [
                 {"role": "system", "content": "You are an assistant that creates fun and engaging multiple-choice questions about cryptocurrency for a Russian-speaking audience. Provide the response IN RUSSIAN as a JSON object with keys: 'question' (max 300 chars), 'options' (a list of 4 strings, each max 100 chars), and 'correct_option_index' (an integer from 0 to 3)."},
@@ -46,7 +47,7 @@ class QuizService:
                 return validated_data.model_dump()
             except (ValidationError, json.JSONDecodeError) as e:
                 logger.error(f"Invalid data from OpenAI on attempt {attempt + 1}: {e}")
-                await asyncio.sleep(1) # Ждем секунду перед повторной попыткой
+                await asyncio.sleep(1)
             except Exception as e:
                 logger.exception(f"Failed to generate quiz from OpenAI: {e}")
                 return None
