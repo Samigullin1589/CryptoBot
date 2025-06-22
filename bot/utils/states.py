@@ -1,7 +1,5 @@
 from aiogram.fsm.state import State, StatesGroup
 
-class PriceInquiry(StatesGroup):
-    waiting_for_ticker = State()
-
-class ProfitCalculator(StatesGroup):
-    waiting_for_electricity_cost = State()
+class UserState(StatesGroup):
+    # Состояние, когда бот ждет тикер криптовалюты от пользователя
+    awaiting_ticker = State()

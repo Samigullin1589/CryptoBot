@@ -1,24 +1,21 @@
 services:
-  # Этот сервис будет нашим ботом, запущенным в Docker
+  # Сервис для нашего бота, работающий в нативной среде Python
   - type: worker
     name: cryptobot
-    # Указываем, что среда выполнения - Docker
-    env: docker
-    plan: pro
+    runtime: python
+    plan: starter # Starter плана достаточно, так как мы не используем тяжелый браузер
+    region: frankfurt # Рекомендуемый регион, близкий к Европе
     
-    # Указываем путь к нашему Dockerfile
-    dockerfilePath: ./Dockerfile
-    
-    # buildCommand и startCommand больше не нужны, они определены в Dockerfile
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "python -m bot.main"
     
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
       - key: BOT_TOKEN
         fromSecret: true
       - key: REDIS_URL
-        fromService:
-          type: redis
-          name: cryptobot-redis
-          property: connectionString
+        fromSecret: true
       - key: ADMIN_CHAT_ID
         fromSecret: true
       - key: NEWS_CHAT_ID
@@ -28,7 +25,9 @@ services:
       - key: OPENAI_API_KEY
         fromSecret: true
 
-  # Этот сервис - наша база данных Redis
-  - type: redis
-    name: cryptobot-redis
-    plan: free
+  # Рекомендуется использовать внешний Redis (например, с upstash.com),
+  # и указать его URL в секретах. Если вы хотите использовать Redis от Render,
+  # раскомментируйте секцию ниже и измените fromSecret на fromService для REDIS_URL.
+  # - type: redis
+  #   name: cryptobot-redis
+  #   plan: free

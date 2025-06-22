@@ -1,18 +1,19 @@
-from typing import Optional
 from pydantic import BaseModel
+from typing import Optional, List
 
 class CryptoCoin(BaseModel):
     id: str
     symbol: str
     name: str
-    price: float
-    price_change_24h: Optional[float] = None
-    algorithm: Optional[str] = None
+    platforms: Optional[dict] = None
 
 class AsicMiner(BaseModel):
     name: str
-    profitability: float
-    algorithm: Optional[str] = None
-    hashrate: Optional[str] = None
-    power: Optional[int] = None
-    source: Optional[str] = None
+    profitability: float  # в USD
+    algorithm: str
+    power: int  # в Ваттах
+
+class QuizQuestion(BaseModel):
+    question: str
+    options: List[str]
+    correct_option_index: int
