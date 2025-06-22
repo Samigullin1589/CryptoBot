@@ -1,42 +1,37 @@
 import logging
+from typing import Dict, Optional
+
 import aiohttp
-from typing import List, Optional
 from async_lru import alru_cache
 
 from bot.config.settings import settings
-from bot.utils.models import CryptoCoin
 from bot.utils.helpers import make_request
 
 logger = logging.getLogger(__name__)
 
 class CoinListService:
-    @alru_cache(maxsize=1)
-    async def get_coin_list(self) -> List[CryptoCoin]:
-        """Получает полный список монет с их ID для использования в других API."""
-        logger.info("Обновление списка монет...")
+    @alru_cache(maxsize=1, ttl=21600)  # Кэшируем на 6 часов
+    async def get_coin_list(self) -> Dict[str, str]:
+        """
+        Получает и кэширует список монет и их алгоритмов, возвращая словарь.
+        """
+        logger.info("Updating coin list with algorithms...")
         async with aiohttp.ClientSession() as session:
-            # Пытаемся получить список с CoinGecko
-            cg_data = await make_request(session, f"{settings.coingecko_api_base}/coins/list?include_platform=true")
-            if isinstance(cg_data, list):
-                logger.info(f"Успешно получено {len(cg_data)} монет с CoinGecko.")
-                return [CryptoCoin(**item) for item in cg_data]
+            # Сначала пытаемся получить с CoinGecko
+            gecko_data = await make_request(session, f"{settings.coingecko_api_base}/coins/list?include_platform=true")
+            if gecko_data and isinstance(gecko_data, list):
+                logger.info(f"Successfully fetched {len(gecko_data)} coins from CoinGecko.")
+                # Преобразуем список словарей в словарь {символ: id}
+                # Это не дает алгоритмы, но дает нам ID для других запросов
+                return {coin['symbol'].upper(): coin['id'] for coin in gecko_data if 'symbol' in coin and 'id' in coin}
 
-            # Если CoinGecko не удался, пробуем MinerStat
-            ms_data = await make_request(session, f"{settings.minerstat_api_base}/coins")
-            if isinstance(ms_data, list):
-                logger.warning("CoinGecko не ответил, используется резервный список с MinerStat.")
-                logger.info(f"Успешно получено {len(ms_data)} монет с MinerStat.")
-                # Адаптируем ответ MinerStat под нашу модель
-                return [CryptoCoin(id=item.get('id', item['coin'].lower()), symbol=item['coin'], name=item['name']) for item in ms_data]
-
-        logger.error("Не удалось получить список монет ни из одного источника.")
-        return []
-
-    async def get_coin_id(self, ticker: str) -> Optional[str]:
-        """Находит ID монеты (для CoinGecko) по ее тикеру."""
-        coins = await self.get_coin_list()
-        ticker_lower = ticker.lower()
-        for coin in coins:
-            if coin.symbol.lower() == ticker_lower:
-                return coin.id
-        return None
+            # Если CoinGecko не ответил, используем MinerStat
+            logger.warning("CoinGecko failed, using MinerStat as a fallback.")
+            minerstat_data = await make_request(session, f"{settings.minerstat_api_base}/coins")
+            if minerstat_data and isinstance(minerstat_data, list):
+                logger.info(f"Successfully fetched {len(minerstat_data)} coins from MinerStat.")
+                # Этот источник дает нам алгоритмы
+                return {coin['coin']: coin['algorithm'] for coin in minerstat_data if 'coin' in coin and 'algorithm' in coin}
+        
+        logger.error("Failed to fetch coin list from all sources.")
+        return {}
