@@ -13,4 +13,4 @@ openai
 pydantic-settings
 pydantic
 async-lru
-playwright
+backoff
