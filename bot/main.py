@@ -90,16 +90,16 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    # Регистрация хука для корректного завершения (современный способ)
+    # Регистрация хука для корректного завершения
     dp.shutdown.register(on_shutdown, scheduler=scheduler)
       
     try:
         scheduler.start()
         logger.info("Scheduler started.")
         
-        # --- Предварительный прогрев кэша (возвращен) ---
-        # Запускаем задачи в фоне, не блокируя старт бота, если одна из них "зависнет"
-        logger.info("Pre-warming caches in background...")
+        # Возвращаем "прогрев кэша", но запускаем его как фоновую задачу,
+        # чтобы не блокировать старт бота в случае сбоя API.
+        logger.info("Initiating cache pre-warming in the background...")
         asyncio.create_task(
             asyncio.gather(
                 asic_service.get_profitable_asics(), 
@@ -107,14 +107,15 @@ async def main():
                 return_exceptions=True
             )
         )
-        logger.info("Cache pre-warming initiated.")
           
-        # Удаляем старые вебхуки перед запуском
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
 
+        # Определяем, какие типы обновлений мы хотим получать
+        allowed_updates = dp.resolve_used_update_types(skip_events=['poll_answer'])
+
         # Запускаем опрос Telegram
-        await dp.start_polling(bot, **workflow_data)
+        await dp.start_polling(bot, **workflow_data, allowed_updates=allowed_updates)
         
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}")
