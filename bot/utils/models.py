@@ -12,7 +12,7 @@ class CryptoCoin(BaseModel):
     price: float
     # Pydantic будет искать 'price_change_percentage_24h' (от CoinGecko)
     # или 'percent_change_24h' (от CoinPaprika) и помещать значение в это поле.
-    price_change_24h: Optional[float] = Field(None, alias='price_change_percentage_24h')
+    price_change_24h: Optional[float] = Field(None, validation_alias='price_change_percentage_24h')
     algorithm: Optional[str] = None
 
 class AsicMiner(BaseModel):

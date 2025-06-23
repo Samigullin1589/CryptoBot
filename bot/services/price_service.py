@@ -18,12 +18,12 @@ class PriceService:
     @alru_cache(maxsize=100, ttl=300)
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
         query_norm = settings.ticker_aliases.get(query.strip().lower(), query.strip().lower())
-        coin_list_dict = await self.coin_list_service.get_coin_list()
         
         async with aiohttp.ClientSession() as session:
             # Попытка №1: CoinGecko
             logger.info(f"Attempting to fetch price for '{query_norm}' from CoinGecko.")
             cg_search_data = await make_request(session, f"{settings.coingecko_api_base}/search?query={query_norm}")
+            
             if cg_search_data and cg_search_data.get('coins'):
                 if cg_search_data['coins']:
                     coin_id = cg_search_data['coins'][0].get('id')
@@ -32,14 +32,10 @@ class PriceService:
                         if market_data_list and isinstance(market_data_list, list) and market_data_list:
                             md = market_data_list[0]
                             symbol = md.get('symbol', '').upper()
+                            coin_list_dict = await self.coin_list_service.get_coin_list()
                             logger.info(f"Successfully fetched price for '{query_norm}' from CoinGecko.")
-                            return CryptoCoin(
-                                id=md.get('id'), symbol=symbol, name=md.get('name'),
-                                price=md.get('current_price', 0.0),
-                                price_change_24h=md.get('price_change_percentage_24h'),
-                                algorithm=coin_list_dict.get(symbol)
-                            )
-            
+                            return CryptoCoin.model_validate(md, context={"algorithm_map": coin_list_dict})
+
             # Попытка №2: CoinPaprika
             logger.warning(f"Failed to get price from CoinGecko for '{query_norm}'. Falling back to CoinPaprika.")
             cp_search_data = await make_request(session, f"{settings.coinpaprika_api_base}/search?q={query_norm}&c=currencies")
@@ -52,13 +48,16 @@ class PriceService:
                         if ticker_data:
                             quotes = ticker_data.get('quotes', {}).get('USD', {})
                             symbol = ticker_data.get('symbol', '').upper()
+                            coin_list_dict = await self.coin_list_service.get_coin_list()
                             logger.info(f"Successfully fetched price for '{query_norm}' from CoinPaprika.")
-                            # Используем model_validate для работы с псевдонимами полей
-                            return CryptoCoin.model_validate({
-                                'id': ticker_data.get('id'), 'symbol': symbol, 'name': ticker_data.get('name'),
-                                'price': quotes.get('price', 0.0), 'algorithm': coin_list_dict.get(symbol),
-                                **quotes # Добавляем все поля из quotes, pydantic сам найдет 'percent_change_24h'
-                            })
+                            
+                            # Собираем данные в один словарь для валидации
+                            combined_data = {
+                                **ticker_data, 
+                                **quotes,
+                                'price_change_24h': quotes.get('percent_change_24h')
+                            }
+                            return CryptoCoin.model_validate(combined_data, context={"algorithm_map": coin_list_dict})
 
         logger.error(f"Failed to get price for '{query_norm}' from all sources.")
         return None

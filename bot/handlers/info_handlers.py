@@ -31,9 +31,12 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     """
     coin = await price_service.get_crypto_price(query)
     
-    # Теперь эта функция не отправляет сообщение, а только готовит текст
     if not coin:
-        return f"❌ Не удалось найти информацию по '{sanitize_html(query)}'."
+        await message.edit_text(
+            f"❌ Не удалось найти информацию по '{sanitize_html(query)}'.",
+            reply_markup=get_after_action_keyboard()
+        )
+        return
 
     change = coin.price_change_24h or 0
     emoji = "📈" if change >= 0 else "📉"
@@ -44,7 +47,7 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     if coin.algorithm:
         text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>"
     
-    return text
+    await message.edit_text(text, reply_markup=get_after_action_keyboard())
 
 
 @router.callback_query(F.data == "menu_asics")
@@ -55,8 +58,11 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     """
     message, _ = await get_message_and_chat_id(update)
     
-    # Отправляем временное сообщение, которое будем редактировать
-    temp_message = await message.answer("⏳ Загружаю актуальный список...")
+    if isinstance(update, CallbackQuery):
+        await message.edit_text("⏳ Загружаю актуальный список...")
+    else:
+        # В случае текстовой команды, отправляем новое сообщение
+        message = await message.answer("⏳ Загружаю актуальный список...")
 
     asics = await asic_service.get_profitable_asics()
     
@@ -69,8 +75,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
                      f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
                      f"{f' | {miner.power}W' if miner.power else ''}\n")
     
-    # Редактируем временное сообщение, добавляя результат и основную клавиатуру
-    await temp_message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    await message.edit_text(text, reply_markup=get_main_menu_keyboard())
 
 
 @router.callback_query(F.data == "menu_price")
@@ -115,7 +120,7 @@ async def handle_fear_greed_menu(update: Union[CallbackQuery, Message], market_d
         if isinstance(update, CallbackQuery):
             await update.message.delete()
     except TelegramBadRequest:
-        pass
+        pass # Игнорируем ошибку, если сообщение уже удалено
 
     index = await market_data_service.get_fear_and_greed_index()
     if not index:
@@ -168,7 +173,6 @@ async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_se
     else:
         await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
         text = await send_price_info(call.message, query, price_service, asic_service)
-        await call.message.edit_text(text, reply_markup=get_after_action_keyboard())
 
 
 @router.message(PriceInquiry.waiting_for_ticker)
@@ -178,8 +182,10 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     """
     await state.clear()
     temp_msg = await message.answer("⏳ Получаю курс...")
-    text = await send_price_info(message, message.text, price_service, asic_service)
-    await temp_msg.edit_text(text, reply_markup=get_after_action_keyboard())
+    # Так как send_price_info теперь возвращает текст, мы должны его отправить
+    text_to_send = await send_price_info(temp_msg, message.text, price_service, asic_service)
+    # Теперь редактируем временное сообщение
+    await temp_msg.edit_text(text_to_send, reply_markup=get_after_action_keyboard())
 
 
 @router.callback_query(F.data == "menu_calculator")
@@ -255,6 +261,7 @@ async def handle_arbitrary_text(message: Message, price_service: PriceService, a
     """
     if message.chat.type == "private":
         logger.info(f"User sent text '{message.text}' in private, processing as price request.")
+        # Используем новую функцию, которая сразу отправляет сообщение с клавиатурой
         await send_price_info(message, message.text, price_service, asic_service)
         return
 
