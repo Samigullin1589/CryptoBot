@@ -11,7 +11,6 @@ from openai import AsyncOpenAI
 
 from bot.config.settings import settings
 from bot.handlers import common_handlers, info_handlers, mining_handlers
-from bot.handlers.moderation import spam_handler 
 from bot.middlewares.throttling import ThrottlingMiddleware
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
@@ -28,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 
 async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
-    """Выполняет действия при корректном завершении работы."""
+    """
+    Выполняет действия при корректном завершении работы бота.
+    """
     logger.info("Shutting down bot...")
     if scheduler.running:
         scheduler.shutdown()
@@ -40,21 +41,24 @@ async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
 
 
 async def main():
-    """Основная функция для инициализации и запуска бота."""
+    """
+    Основная функция для инициализации и запуска бота.
+    """
     if not settings.bot_token or not settings.redis_url:
         logger.critical("BOT_TOKEN or REDIS_URL not found in environment variables.")
         return
 
+    # Настройка зависимостей
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     storage = RedisStorage(redis=redis_client)
-      
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
-      
+    
+    # Регистрация Middlewares
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
       
+    # Инициализация клиентов и сервисов
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
     asic_service = AsicService()
@@ -62,19 +66,18 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
       
+    # Заполнение глобальных зависимостей для фоновых задач
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
     dependencies.redis_client = redis_client
       
-    # Регистрируем роутер модерации ПЕРВЫМ, чтобы он отлавливал спам
-    # до того, как его обработают другие хендлеры.
-    dp.include_router(spam_handler.spam_router)
-
+    # Регистрация роутеров
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
+    # Словарь с данными для передачи в обработчики и планировщик
     context_data = {
         "asic_service": asic_service,
         "news_service": news_service,
@@ -87,12 +90,14 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    dp.shutdown.register(on_shutdown, scheduler=scheduler)
+    # ИСПРАВЛЕНИЕ: Регистрируем хук без передачи аргументов вручную.
+    # aiogram сам передаст в on_shutdown все, что есть в workflow_data.
+    dp.shutdown.register(on_shutdown)
       
     try:
         scheduler.start()
         logger.info("Scheduler started.")
-          
+        
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
 
