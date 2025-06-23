@@ -55,40 +55,31 @@ def get_main_menu_keyboard():
     }
     for text, data in buttons.items():
         builder.button(text=text, callback_data=data)
-    
     builder.adjust(2)
     builder.row(get_promo_button())
-    
     return builder.as_markup()
 
 def get_price_keyboard():
     """Создает клавиатуру для выбора популярных монет."""
     builder = InlineKeyboardBuilder()
-    
     for ticker in settings.popular_tickers:
         builder.button(text=ticker, callback_data=f"price_{ticker}")
-    
     builder.adjust(len(settings.popular_tickers))
-    
     builder.row(InlineKeyboardButton(text="➡️ Другая монета", callback_data="price_other"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="back_to_main_menu"))
     builder.row(get_promo_button())
-    
     return builder.as_markup()
 
 def get_quiz_keyboard():
     """Создает клавиатуру для викторины."""
     builder = InlineKeyboardBuilder()
-    
     builder.button(text="Следующий вопрос", callback_data="menu_quiz")
     builder.row(get_promo_button())
-    
     return builder.as_markup()
 
 def get_mining_menu_keyboard():
     """Создает клавиатуру для главного меню раздела 'Виртуальный Майнинг'."""
     builder = InlineKeyboardBuilder()
-    
     builder.button(text="🏪 Магазин оборудования", callback_data="mining_shop")
     builder.button(text="🖥️ Моя ферма", callback_data="mining_my_farm")
     builder.button(text="⚡️ Электроэнергия", callback_data="mining_electricity")
@@ -96,9 +87,8 @@ def get_mining_menu_keyboard():
     builder.button(text="📊 Статистика", callback_data="mining_stats")
     builder.button(text="💰 Вывод средств", callback_data="mining_withdraw")
     builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
-    
     builder.adjust(2, 2, 2, 1)
-    
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
@@ -106,46 +96,40 @@ def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
     builder = InlineKeyboardBuilder()
     start_index = page * ITEMS_PER_PAGE
     end_index = start_index + ITEMS_PER_PAGE
-    
     for i, asic in enumerate(asics[start_index:end_index]):
         builder.button(
             text=f"▶️ {asic.name} (${asic.profitability:.2f}/день)",
             callback_data=f"start_mining_{i + start_index}"
         )
-    
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"shop_page_{page - 1}"))
     if end_index < len(asics):
         nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"shop_page_{page + 1}"))
-        
     builder.adjust(1)
     builder.row(*nav_buttons)
     builder.row(InlineKeyboardButton(text="⬅️ В меню майнинга", callback_data="menu_mining"))
-    
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_my_farm_keyboard():
     """Создает клавиатуру для раздела 'Моя ферма'."""
     builder = InlineKeyboardBuilder()
-    
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
-    
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_withdraw_keyboard():
     """Создает клавиатуру для сообщения о выводе средств."""
     builder = InlineKeyboardBuilder()
-    
     builder.button(text="🎉 Получить у партнера", url=PROMO_URL)
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
-    
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Set[str]):
     """Создает клавиатуру для меню выбора тарифа на электроэнергию."""
     builder = InlineKeyboardBuilder()
-    
     for name, details in settings.ELECTRICITY_TARIFFS.items():
         if name in unlocked_tariffs:
             text = f"✅ {name}" if name == current_tariff_name else f"▶️ {name}"
@@ -156,8 +140,16 @@ def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Se
             text = f"🔒 {name} (купить за {price:.0f} монет)"
             callback_data = f"buy_tariff_{name}"
             builder.button(text=text, callback_data=callback_data)
-
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="⬅️ В меню майнинга", callback_data="menu_mining"))
-    
+    builder.row(get_promo_button())
+    return builder.as_markup()
+
+def get_after_action_keyboard():
+    """
+    Клавиатура, отображаемая после выполнения действия (например, показа курса).
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
+    builder.row(get_promo_button())
     return builder.as_markup()
