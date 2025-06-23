@@ -7,7 +7,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).parent.parent.parent
 
 def load_fallback_asics() -> List[Dict[str, Any]]:
-    """Загружает список резервных ASIC'ов из JSON-файла."""
     file_path = BASE_DIR / "data" / "fallback_asics.json"
     if not file_path.exists():
         return []
@@ -46,13 +45,16 @@ class AppSettings(BaseSettings):
     # Mining Game Settings
     MINING_DURATION_SECONDS: int = 8 * 3600
     REFERRAL_BONUS_AMOUNT: float = 50.0
-    
     ELECTRICITY_TARIFFS: Dict[str, Dict[str, float]] = {
         "Домашний 💡": {"cost_per_hour": 0.05, "unlock_price": 0},
         "Промышленный 🏭": {"cost_per_hour": 0.02, "unlock_price": 200},
         "Зеленый 🌱": {"cost_per_hour": 0.08, "unlock_price": 50}
     }
     DEFAULT_ELECTRICITY_TARIFF: str = "Домашний 💡"
+
+    # Moderation Settings
+    STOP_WORDS: List[str] = ["казино", "ставки", "бонус", "фриспин", "депозит", "работа", "вакансия", "зарплата", "заработок"]
+    ALLOWED_LINK_USER_IDS: List[int] = [admin_chat_id]
 
     fallback_asics: List[Dict[str, Any]] = load_fallback_asics()
 

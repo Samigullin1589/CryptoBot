@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import Any
 
 import redis.asyncio as redis
 from aiogram import Bot, Dispatcher
@@ -9,9 +10,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
 from bot.config.settings import settings
-# --- ИЗМЕНЕНИЕ: Импортируем новый роутер ---
 from bot.handlers import common_handlers, info_handlers, mining_handlers
-from bot.handlers.admin import admin_menu
+from bot.handlers.moderation import spam_handler 
 from bot.middlewares.throttling import ThrottlingMiddleware
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
@@ -26,29 +26,35 @@ from bot.utils.helpers import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
+    """Выполняет действия при корректном завершении работы."""
     logger.info("Shutting down bot...")
     if scheduler.running:
         scheduler.shutdown()
         logger.info("Scheduler has been shut down.")
+    
     await bot.session.close()
     logger.info("Bot session has been closed.")
     logger.info("Graceful shutdown complete.")
 
+
 async def main():
+    """Основная функция для инициализации и запуска бота."""
     if not settings.bot_token or not settings.redis_url:
         logger.critical("BOT_TOKEN or REDIS_URL not found in environment variables.")
         return
 
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     storage = RedisStorage(redis=redis_client)
+      
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
-    
+      
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
       
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-    
+
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
     asic_service = AsicService()
@@ -61,17 +67,23 @@ async def main():
     dependencies.news_service = news_service
     dependencies.redis_client = redis_client
       
-    # --- ИЗМЕНЕНИЕ: Регистрируем админский роутер ---
-    # Важно регистрировать его до общих обработчиков, чтобы он имел приоритет
-    dp.include_router(admin_menu.admin_router)
+    # Регистрируем роутер модерации ПЕРВЫМ, чтобы он отлавливал спам
+    # до того, как его обработают другие хендлеры.
+    dp.include_router(spam_handler.spam_router)
+
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
     context_data = {
-        "asic_service": asic_service, "news_service": news_service, "price_service": price_service,
-        "market_data_service": market_data_service, "quiz_service": quiz_service, "redis_client": redis_client,
+        "asic_service": asic_service,
+        "news_service": news_service,
+        "price_service": price_service,
+        "market_data_service": market_data_service,
+        "quiz_service": quiz_service,
+        "redis_client": redis_client,
     }
+
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
@@ -80,13 +92,17 @@ async def main():
     try:
         scheduler.start()
         logger.info("Scheduler started.")
+          
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
+
         await dp.start_polling(bot, **workflow_data)
+        
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}")
     finally:
         logger.info("Polling finished.")
+
 
 if __name__ == '__main__':
     try:
