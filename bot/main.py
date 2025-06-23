@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 
 from bot.config.settings import settings
 from bot.handlers import common_handlers, info_handlers, mining_handlers
+from bot.handlers.admin import admin_menu
 from bot.middlewares.throttling import ThrottlingMiddleware
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
@@ -73,6 +74,7 @@ async def main():
     dependencies.redis_client = redis_client
       
     # Регистрация роутеров
+    dp.include_router(admin_menu.admin_router)
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
@@ -91,12 +93,22 @@ async def main():
     workflow_data = {**context_data, "scheduler": scheduler}
     
     # Регистрация хука для корректного завершения
-    dp.shutdown.register(on_shutdown)
+    dp.shutdown.register(on_shutdown, scheduler=scheduler)
       
     try:
         scheduler.start()
         logger.info("Scheduler started.")
         
+        # Предварительный прогрев кэша в фоновом режиме
+        logger.info("Initiating cache pre-warming in the background...")
+        asyncio.create_task(
+            asyncio.gather(
+                asic_service.get_profitable_asics(), 
+                coin_list_service.get_coin_list(), 
+                return_exceptions=True
+            )
+        )
+          
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode.")
 
