@@ -60,9 +60,12 @@ def get_mining_menu_keyboard():
     builder.button(text="🖥️ Моя ферма", callback_data="mining_my_farm")
     builder.button(text="⚡️ Электроэнергия", callback_data="mining_electricity")
     builder.button(text="🤝 Пригласить друга", callback_data="mining_invite")
+    builder.button(text="📊 Статистика", callback_data="mining_stats")
     builder.button(text="💰 Вывод средств", callback_data="mining_withdraw")
     builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
     builder.adjust(2, 2, 2, 1)
+    # --- ИЗМЕНЕНИЕ: Добавляем промо-кнопку ---
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
@@ -82,17 +85,23 @@ def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
     builder.adjust(1)
     builder.row(*nav_buttons)
     builder.row(InlineKeyboardButton(text="⬅️ В меню майнинга", callback_data="menu_mining"))
+    # --- ИЗМЕНЕНИЕ: Добавляем промо-кнопку ---
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_my_farm_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
+    # --- ИЗМЕНЕНИЕ: Добавляем промо-кнопку ---
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_withdraw_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="🎉 Получить у партнера", url=PROMO_URL)
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
+    # --- ИЗМЕНЕНИЕ: Добавляем промо-кнопку ---
+    builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Set[str]):
@@ -109,4 +118,6 @@ def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Se
             builder.button(text=text, callback_data=callback_data)
     builder.adjust(1)
     builder.row(InlineKeyboardButton(text="⬅️ В меню майнинга", callback_data="menu_mining"))
+    # --- ИЗМЕНЕНИЕ: Добавляем промо-кнопку ---
+    builder.row(get_promo_button())
     return builder.as_markup()
