@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -54,7 +55,8 @@ class AppSettings(BaseSettings):
 
     # Moderation Settings
     STOP_WORDS: List[str] = ["казино", "ставки", "бонус", "фриспин", "депозит", "работа", "вакансия", "зарплата", "заработок"]
-    ALLOWED_LINK_USER_IDS: List[int] = [admin_chat_id]
+    # ИЗМЕНЕНИЕ: Мы определяем это поле пустым, а заполним его ниже
+    ALLOWED_LINK_USER_IDS: List[int] = []
 
     fallback_asics: List[Dict[str, Any]] = load_fallback_asics()
 
@@ -63,5 +65,13 @@ class AppSettings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False
     )
+    
+    # ИЗМЕНЕНИЕ: Используем валидатор pydantic, который сработает ПОСЛЕ загрузки всех полей
+    @model_validator(mode='after')
+    def set_allowed_users(self) -> 'AppSettings':
+        """Добавляет admin_chat_id в список разрешенных после инициализации."""
+        if self.admin_chat_id and self.admin_chat_id not in self.ALLOWED_LINK_USER_IDS:
+            self.ALLOWED_LINK_USER_IDS.append(self.admin_chat_id)
+        return self
 
 settings = AppSettings()
