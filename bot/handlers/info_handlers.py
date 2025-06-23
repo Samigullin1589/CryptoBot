@@ -30,12 +30,10 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     Готовит и отправляет сообщение с информацией о курсе и клавиатурой.
     """
     coin = await price_service.get_crypto_price(query)
+    
+    # Теперь эта функция не отправляет сообщение, а только готовит текст
     if not coin:
-        await message.edit_text(
-            f"❌ Не удалось найти информацию по '{sanitize_html(query)}'.",
-            reply_markup=get_after_action_keyboard()
-        )
-        return
+        return f"❌ Не удалось найти информацию по '{sanitize_html(query)}'."
 
     change = coin.price_change_24h or 0
     emoji = "📈" if change >= 0 else "📉"
@@ -46,7 +44,7 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     if coin.algorithm:
         text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>"
     
-    await message.edit_text(text, reply_markup=get_after_action_keyboard())
+    return text
 
 
 @router.callback_query(F.data == "menu_asics")
@@ -57,11 +55,8 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     """
     message, _ = await get_message_and_chat_id(update)
     
-    if isinstance(update, CallbackQuery):
-        await message.edit_text("⏳ Загружаю актуальный список...")
-    else:
-        # В случае текстовой команды, отправляем новое сообщение
-        message = await message.answer("⏳ Загружаю актуальный список...")
+    # Отправляем временное сообщение, которое будем редактировать
+    temp_message = await message.answer("⏳ Загружаю актуальный список...")
 
     asics = await asic_service.get_profitable_asics()
     
@@ -74,7 +69,8 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
                      f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
                      f"{f' | {miner.power}W' if miner.power else ''}\n")
     
-    await message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    # Редактируем временное сообщение, добавляя результат и основную клавиатуру
+    await temp_message.edit_text(text, reply_markup=get_main_menu_keyboard())
 
 
 @router.callback_query(F.data == "menu_price")
@@ -116,11 +112,10 @@ async def handle_fear_greed_menu(update: Union[CallbackQuery, Message], market_d
     message, _ = await get_message_and_chat_id(update)
     temp_message = await message.answer("⏳ Получаю индекс и рисую график...")
     try:
-        # Если это колбек, удаляем предыдущее меню
         if isinstance(update, CallbackQuery):
             await update.message.delete()
     except TelegramBadRequest:
-        pass # Игнорируем ошибку, если сообщение уже удалено
+        pass
 
     index = await market_data_service.get_fear_and_greed_index()
     if not index:
@@ -135,8 +130,7 @@ async def handle_fear_greed_menu(update: Union[CallbackQuery, Message], market_d
     caption = f"😱 <b>Индекс страха и жадности: {value} - {classification}</b>"
 
     await temp_message.delete()
-    await message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption)
-    await show_main_menu(message)
+    await message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption, reply_markup=get_after_action_keyboard())
 
 
 @router.callback_query(F.data == "menu_halving")
@@ -147,7 +141,7 @@ async def handle_halving_menu(update: Union[CallbackQuery, Message], market_data
     """
     message, _ = await get_message_and_chat_id(update)
     text = await market_data_service.get_halving_info()
-    await message.answer(text, reply_markup=get_main_menu_keyboard())
+    await message.answer(text, reply_markup=get_after_action_keyboard())
 
 
 @router.callback_query(F.data == "menu_btc_status")
@@ -158,13 +152,13 @@ async def handle_btc_status_menu(update: Union[CallbackQuery, Message], market_d
     """
     message, _ = await get_message_and_chat_id(update)
     text = await market_data_service.get_btc_network_status()
-    await message.answer(text, reply_markup=get_main_menu_keyboard())
+    await message.answer(text, reply_markup=get_after_action_keyboard())
 
 
 @router.callback_query(F.data.startswith("price_"))
 async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService, asic_service: AsicService):
     """
-    Обрабатывает выбор монеты из кнопок или переход к вводу.
+    Обрабатывает выбор монеты из кнопок и редактирует сообщение.
     """
     query = call.data.split('_', 1)[1]
     
@@ -173,7 +167,8 @@ async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_se
         await call.message.edit_text("Введите тикер монеты (напр. Aleo):")
     else:
         await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
-        await send_price_info(call.message, query, price_service, asic_service)
+        text = await send_price_info(call.message, query, price_service, asic_service)
+        await call.message.edit_text(text, reply_markup=get_after_action_keyboard())
 
 
 @router.message(PriceInquiry.waiting_for_ticker)
@@ -183,7 +178,8 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     """
     await state.clear()
     temp_msg = await message.answer("⏳ Получаю курс...")
-    await send_price_info(temp_msg, message.text, price_service, asic_service)
+    text = await send_price_info(message, message.text, price_service, asic_service)
+    await temp_msg.edit_text(text, reply_markup=get_after_action_keyboard())
 
 
 @router.callback_query(F.data == "menu_calculator")
