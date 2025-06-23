@@ -90,7 +90,7 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    # ИСПРАВЛЕНИЕ: Регистрируем хук БЕЗ передачи аргументов вручную.
+    # Регистрация хука для корректного завершения
     dp.shutdown.register(on_shutdown)
       
     try:
