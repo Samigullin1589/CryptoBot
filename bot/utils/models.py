@@ -1,18 +1,21 @@
-from typing import Optional
-from pydantic import BaseModel, Field
+from typing import Optional, List
+from pydantic import BaseModel, Field, AliasChoices
 
 class CryptoCoin(BaseModel):
     """
-    Pydantic-модель для хранения данных о криптовалюте.
-    Использует псевдонимы для унификации данных из разных API.
+    Универсальная Pydantic-модель для данных о криптовалюте.
+    Использует AliasChoices для корректной работы с разными API.
     """
     id: str
     symbol: str
     name: str
-    price: float
-    # Pydantic будет искать 'price_change_percentage_24h' (от CoinGecko)
-    # или 'percent_change_24h' (от CoinPaprika) и помещать значение в это поле.
-    price_change_24h: Optional[float] = Field(None, validation_alias='price_change_percentage_24h')
+    
+    # Pydantic будет искать 'current_price' (от CoinGecko) ИЛИ 'price' (от CoinPaprika)
+    price: float = Field(..., validation_alias=AliasChoices('current_price', 'price'))
+    
+    # То же самое для изменения цены за 24 часа
+    price_change_24h: Optional[float] = Field(None, validation_alias=AliasChoices('price_change_percentage_24h', 'percent_change_24h'))
+    
     algorithm: Optional[str] = None
 
 class AsicMiner(BaseModel):
