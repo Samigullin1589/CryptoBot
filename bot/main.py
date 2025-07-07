@@ -25,43 +25,29 @@ from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
 from bot.utils.helpers import setup_logging
 
-# Инициализация логирования
 setup_logging()
 logger = logging.getLogger(__name__)
 
 async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
-    """
-    Выполняет действия при корректном завершении работы бота.
-    """
     logger.info("Shutting down bot...")
     if scheduler.running:
         scheduler.shutdown()
-        logger.info("Scheduler has been shut down.")
-    
     await bot.session.close()
-    logger.info("Bot session has been closed.")
     logger.info("Graceful shutdown complete.")
 
-
 async def main():
-    """
-    Основная функция для инициализации и запуска бота.
-    """
     if not all([settings.bot_token, settings.redis_url, settings.admin_chat_id]):
         logger.critical("One or more critical environment variables are missing (BOT_TOKEN, REDIS_URL, ADMIN_CHAT_ID)")
         return
 
-    # Настройка зависимостей
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     storage = RedisStorage(redis=redis_client)
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
     
-    # Регистрация Middlewares
     dp.update.middleware(StatsMiddleware(redis_client=redis_client))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
       
-    # Инициализация клиентов и сервисов
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     
     admin_service = AdminService(redis_client=redis_client)
@@ -72,14 +58,11 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
       
-    # Заполнение глобальных зависимостей для фоновых задач
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
     dependencies.redis_client = redis_client
       
-    # Регистрация роутеров
-    # Важно регистрировать специфичные роутеры (админ, модерация) до общих
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(spam_handler.spam_router)
@@ -87,7 +70,6 @@ async def main():
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # Словарь с данными для передачи в обработчики и планировщик
     context_data = {
         "admin_service": admin_service,
         "asic_service": asic_service, 
@@ -100,26 +82,19 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    # Регистрация хука для корректного завершения
     dp.shutdown.register(on_shutdown, scheduler=scheduler)
       
     try:
         scheduler.start()
-        logger.info("Scheduler started.")
-        
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Starting bot in polling mode.")
-
         await dp.start_polling(bot, **workflow_data)
-        
     except Exception as e:
         logger.error(f"Polling failed with an error: {e}")
     finally:
         logger.info("Polling finished.")
 
-
 if __name__ == '__main__':
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot execution stopped by user or system signal.")
+        logger.info("Bot stopped by user.")

@@ -1,4 +1,5 @@
 from typing import Callable, Dict, Any, Awaitable
+from datetime import datetime
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 import redis.asyncio as redis
@@ -18,10 +19,10 @@ class StatsMiddleware(BaseMiddleware):
     ) -> Any:
         user_id = event.from_user.id
         
-        # Сохраняем ID всех, кто пишет боту
+        # Сохраняем ID всех, кто пишет боту, в множество
         await self.redis.sadd("users:known", user_id)
         
-        # Обновляем время последней активности пользователя
+        # Обновляем время последней активности пользователя в сортированном множестве
         await self.redis.zadd("stats:user_activity", {str(user_id): int(datetime.now().timestamp())})
 
         # Считаем использование команд/кнопок
@@ -29,10 +30,11 @@ class StatsMiddleware(BaseMiddleware):
         if isinstance(event, Message) and event.text and event.text.startswith('/'):
             command_name = event.text.split()[0]
         elif isinstance(event, CallbackQuery) and event.data:
-            # Считаем по префиксу, чтобы не засорять статистику (например, 'price' вместо 'price_btc')
+            # Считаем по префиксу, чтобы не засорять статистику (например, 'menu' вместо 'menu_price')
             command_name = event.data.split('_')[0]
 
         if command_name:
+            # Увеличиваем счетчик для команды в сортированном множестве
             await self.redis.zincrby("stats:commands", 1, command_name)
 
         return await handler(event, data)
