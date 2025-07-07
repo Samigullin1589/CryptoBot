@@ -72,7 +72,7 @@ async def main():
 
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
     
-    # --- ИЗМЕНЕНИЕ: Добавляем ожидание Redis ---
+    # Добавляем ожидание Redis перед основной логикой
     if not await wait_for_redis(redis_client):
         return # Завершаем работу, если Redis недоступен
 
