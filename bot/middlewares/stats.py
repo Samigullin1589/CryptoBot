@@ -19,10 +19,12 @@ class StatsMiddleware(BaseMiddleware):
     ) -> Any:
         user_id = event.from_user.id
         
-        # Сохраняем ID всех, кто пишет боту, в множество
-        await self.redis.sadd("users:known", user_id)
+        # Проверяем, новый ли это пользователь, и если да, сохраняем время первого контакта
+        is_new_user = await self.redis.sadd("users:known", user_id)
+        if is_new_user:
+            await self.redis.zadd("stats:user_first_seen", {str(user_id): int(datetime.now().timestamp())})
         
-        # Обновляем время последней активности пользователя в сортированном множестве
+        # Обновляем время последней активности пользователя
         await self.redis.zadd("stats:user_activity", {str(user_id): int(datetime.now().timestamp())})
 
         # Считаем использование команд/кнопок
@@ -30,11 +32,9 @@ class StatsMiddleware(BaseMiddleware):
         if isinstance(event, Message) and event.text and event.text.startswith('/'):
             command_name = event.text.split()[0]
         elif isinstance(event, CallbackQuery) and event.data:
-            # Считаем по префиксу, чтобы не засорять статистику (например, 'menu' вместо 'menu_price')
             command_name = event.data.split('_')[0]
 
         if command_name:
-            # Увеличиваем счетчик для команды в сортированном множестве
             await self.redis.zincrby("stats:commands", 1, command_name)
 
         return await handler(event, data)

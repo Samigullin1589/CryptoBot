@@ -15,12 +15,15 @@ class AdminService:
         """Собирает общую статистику по пользователям."""
         total_users = await self.redis.scard("users:known")
         
-        one_day_ago = int((datetime.now() - timedelta(days=1)).timestamp())
-        active_24h = await self.redis.zcount("stats:user_activity", min=one_day_ago, max=-1)
+        one_day_ago_ts = int((datetime.now() - timedelta(days=1)).timestamp())
         
+        active_24h = await self.redis.zcount("stats:user_activity", min=one_day_ago_ts, max=-1)
+        new_24h = await self.redis.zcount("stats:user_first_seen", min=one_day_ago_ts, max=-1)
+
         return {
             "total_users": total_users,
             "active_24h": active_24h,
+            "new_24h": new_24h
         }
 
     async def get_mining_stats(self) -> dict:

@@ -8,28 +8,22 @@ from bot.services.admin_service import AdminService
 stats_router = Router()
 logger = logging.getLogger(__name__)
 
-# Применяем фильтр админа ко всем обработчикам в этом файле
 stats_router.callback_query.filter(IsAdmin())
 
 @stats_router.callback_query(F.data == "admin_stats_general")
 async def show_general_stats(call: CallbackQuery, admin_service: AdminService):
-    """
-    Отображает общую статистику по пользователям.
-    """
     stats = await admin_service.get_general_stats()
     text = (
         "<b>📊 Общая статистика</b>\n\n"
-        f"👥 Всего пользователей в боте: <b>{stats['total_users']}</b>\n"
-        f"🏃‍♂️ Активных за последние 24 часа: <b>{stats['active_24h']}</b>"
+        f"👥 Всего пользователей: <b>{stats['total_users']}</b>\n"
+        f"🚀 Новых за 24 часа: <b>{stats['new_24h']}</b>\n"
+        f"🏃‍♂️ Активных за 24 часа: <b>{stats['active_24h']}</b>"
     )
     await call.message.edit_text(text, reply_markup=get_back_to_admin_menu_keyboard())
 
 
 @stats_router.callback_query(F.data == "admin_stats_mining")
 async def show_mining_stats(call: CallbackQuery, admin_service: AdminService):
-    """
-    Отображает статистику по модулю 'Виртуальный Майнинг'.
-    """
     stats = await admin_service.get_mining_stats()
     text = (
         "<b>💎 Статистика 'Виртуального Майнинга'</b>\n\n"
@@ -43,9 +37,6 @@ async def show_mining_stats(call: CallbackQuery, admin_service: AdminService):
 
 @stats_router.callback_query(F.data == "admin_stats_commands")
 async def show_command_stats(call: CallbackQuery, admin_service: AdminService):
-    """
-    Отображает статистику использования команд.
-    """
     top_commands = await admin_service.get_command_stats()
     
     if not top_commands:
