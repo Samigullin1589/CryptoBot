@@ -4,7 +4,6 @@ services:
     name: cryptobot
     runtime: python
     plan: starter # Starter плана достаточно для этой конфигурации
-    region: frankfurt # Рекомендуемый регион, близкий к Европе
     
     # Правильная, упрощенная команда сборки БЕЗ PLAYWRIGHT
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
