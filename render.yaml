@@ -1,9 +1,10 @@
 services:
+  # Сервис для нашего бота, работающий в нативной среде Python
   - type: worker
     name: cryptobot
     runtime: python
-    plan: starter
-    region: frankfurt
+    plan: starter # Starter плана достаточно для этой конфигурации
+    region: frankfurt # Рекомендуемый регион, близкий к Европе
     
     # Правильная, упрощенная команда сборки БЕЗ PLAYWRIGHT
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
@@ -12,16 +13,18 @@ services:
     
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: '3.11'
+      # Объявляем ключи для секретов и задаем пустые значения-заглушки.
+      # Реальные значения будут подставлены из панели Environment в Render.
       - key: BOT_TOKEN
-        fromSecret: true
+        value: "" 
       - key: REDIS_URL
-        fromSecret: true
+        value: ""
       - key: ADMIN_CHAT_ID
-        fromSecret: true
+        value: ""
       - key: NEWS_CHAT_ID
-        fromSecret: true
+        value: ""
       - key: CMC_API_KEY
-        fromSecret: true
+        value: ""
       - key: OPENAI_API_KEY
-        fromSecret: true
+        value: ""
