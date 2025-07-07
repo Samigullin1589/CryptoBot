@@ -11,11 +11,7 @@ from openai import AsyncOpenAI
 
 from bot.config.settings import settings
 from bot.handlers import common_handlers, info_handlers, mining_handlers
-from bot.handlers.admin import admin_menu, stats_handlers
-from bot.handlers.moderation import spam_handler
-from bot.middlewares.stats import StatsMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
-from bot.services.admin_service import AdminService
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
 from bot.services.market_data_service import MarketDataService
@@ -48,8 +44,8 @@ async def main():
     """
     Основная функция для инициализации и запуска бота.
     """
-    if not all([settings.bot_token, settings.redis_url, settings.admin_chat_id]):
-        logger.critical("One or more critical environment variables are missing (BOT_TOKEN, REDIS_URL, ADMIN_CHAT_ID)")
+    if not settings.bot_token or not settings.redis_url:
+        logger.critical("BOT_TOKEN or REDIS_URL not found in environment variables.")
         return
 
     # Настройка зависимостей
@@ -59,13 +55,10 @@ async def main():
     dp = Dispatcher(storage=storage)
     
     # Регистрация Middlewares
-    dp.update.middleware(StatsMiddleware(redis_client=redis_client))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
       
     # Инициализация клиентов и сервисов
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-    
-    admin_service = AdminService(redis_client=redis_client)
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
     asic_service = AsicService()
@@ -80,28 +73,24 @@ async def main():
     dependencies.redis_client = redis_client
       
     # Регистрация роутеров
-    dp.include_router(admin_menu.admin_router)
-    dp.include_router(stats_handlers.stats_router)
-    dp.include_router(spam_handler.spam_router)
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
     # Словарь с данными для передачи в обработчики и планировщик
     context_data = {
-        "admin_service": admin_service,
-        "asic_service": asic_service, 
-        "news_service": news_service, 
+        "asic_service": asic_service,
+        "news_service": news_service,
         "price_service": price_service,
-        "market_data_service": market_data_service, 
-        "quiz_service": quiz_service, 
+        "market_data_service": market_data_service,
+        "quiz_service": quiz_service,
         "redis_client": redis_client,
     }
+
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
     # ИСПРАВЛЕНИЕ: Регистрируем хук БЕЗ передачи аргументов вручную.
-    # aiogram сам передаст в on_shutdown все, что есть в workflow_data.
     dp.shutdown.register(on_shutdown)
       
     try:
