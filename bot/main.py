@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from functools import partial
 from typing import Any
 
 import redis.asyncio as redis
@@ -31,7 +30,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-async def on_shutdown(bot: Bot, scheduler: AsyncIOSIOScheduler):
+async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
     """
     Выполняет действия при корректном завершении работы бота.
     """
@@ -45,44 +44,25 @@ async def on_shutdown(bot: Bot, scheduler: AsyncIOSIOScheduler):
     logger.info("Graceful shutdown complete.")
 
 
-async def wait_for_redis(redis_client: redis.Redis):
-    """
-    Ожидает доступности Redis, делая несколько попыток подключения.
-    """
-    for attempt in range(5): # Пытаемся 5 раз
-        try:
-            await redis_client.ping()
-            logger.info("Successfully connected to Redis.")
-            return True
-        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
-            logger.warning(f"Redis connection failed (Attempt {attempt + 1}/5): {e}. Retrying in {2 ** attempt} seconds...")
-            await asyncio.sleep(2 ** attempt) # Экспоненциальная задержка: 1, 2, 4, 8 секунд
-    
-    logger.critical("Could not connect to Redis after multiple attempts.")
-    return False
-
-
 async def main():
     """
     Основная функция для инициализации и запуска бота.
     """
     if not all([settings.bot_token, settings.redis_url, settings.admin_chat_id]):
-        logger.critical("One or more critical environment variables are missing.")
+        logger.critical("One or more critical environment variables are missing (BOT_TOKEN, REDIS_URL, ADMIN_CHAT_ID)")
         return
 
+    # Настройка зависимостей
     redis_client = redis.from_url(settings.redis_url, decode_responses=True)
-    
-    # Добавляем ожидание Redis перед основной логикой
-    if not await wait_for_redis(redis_client):
-        return # Завершаем работу, если Redis недоступен
-
     storage = RedisStorage(redis=redis_client)
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
     
+    # Регистрация Middlewares
     dp.update.middleware(StatsMiddleware(redis_client=redis_client))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
       
+    # Инициализация клиентов и сервисов
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     
     admin_service = AdminService(redis_client=redis_client)
@@ -93,11 +73,13 @@ async def main():
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
       
+    # Заполнение глобальных зависимостей для фоновых задач
     dependencies.bot = bot
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
     dependencies.redis_client = redis_client
       
+    # Регистрация роутеров
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(spam_handler.spam_router)
@@ -105,6 +87,7 @@ async def main():
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
+    # Словарь с данными для передачи в обработчики и планировщик
     context_data = {
         "admin_service": admin_service,
         "asic_service": asic_service, 
@@ -117,10 +100,8 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Мы создаем анонимную lambda-функцию, которая вызывает on_shutdown
-    # с нужными нам аргументами: bot и scheduler.
-    dp.shutdown.register(lambda: on_shutdown(bot=bot, scheduler=scheduler))
+    # Регистрируем хук для корректного завершения
+    dp.shutdown.register(on_shutdown, scheduler=scheduler)
       
     try:
         scheduler.start()
@@ -132,9 +113,8 @@ async def main():
     finally:
         logger.info("Polling finished.")
 
-
 if __name__ == '__main__':
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped by user.")
+        logger.info("Bot execution stopped by user.")
