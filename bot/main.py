@@ -1,6 +1,6 @@
 import asyncio
 import logging
-import time
+from functools import partial
 from typing import Any
 
 import redis.asyncio as redis
@@ -31,7 +31,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler):
+async def on_shutdown(bot: Bot, scheduler: AsyncIOSIOScheduler):
     """
     Выполняет действия при корректном завершении работы бота.
     """
@@ -117,7 +117,10 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
     
-    dp.shutdown.register(on_shutdown, scheduler=scheduler)
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Мы создаем анонимную lambda-функцию, которая вызывает on_shutdown
+    # с нужными нам аргументами: bot и scheduler.
+    dp.shutdown.register(lambda: on_shutdown(bot=bot, scheduler=scheduler))
       
     try:
         scheduler.start()
