@@ -111,31 +111,3 @@ async def handle_back_to_main(call: CallbackQuery, state: FSMContext):
     """Обработчик кнопки 'Назад в главное меню'."""
     await state.clear()
     await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
-
-
-# 👇 ЭТОТ БЛОК БЫЛ ДОБАВЛЕН С ИСПРАВЛЕННЫМ ОТСТУПОМ
-@router.message(Command("debuginfo"))
-async def handle_debug_info(message: Message):
-    """
-    Временный обработчик для отладки.
-    Показывает ID текущего пользователя и ID админа из настроек.
-    """
-    user_id = message.from_user.id
-    admin_id_from_settings = settings.admin_chat_id
-
-    debug_text = (
-        f"🔍 **Информация для отладки:**\n\n"
-        f"<b>Ваш User ID:</b> <code>{user_id}</code>\n"
-        f"<b>Admin ID из настроек:</b> <code>{admin_id_from_settings}</code>\n\n"
-    )
-
-    # Сравниваем ID и даем прямой ответ
-    if user_id == admin_id_from_settings:
-        debug_text += "✅ **Совпадение:** ID совпадают. Проблема не в ID."
-    else:
-        debug_text += (
-            "❌ **Несовпадение:** ID не совпадают.\n"
-            "Скопируйте значение 'Ваш User ID' и вставьте его в переменную окружения ADMIN_CHAT_ID на Render."
-        )
-
-    await message.answer(debug_text)

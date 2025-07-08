@@ -10,7 +10,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
 from bot.config.settings import settings
-# 👇 ИМПОРТ ДОБАВЛЕН ЗДЕСЬ
 from bot.handlers.admin import admin_menu
 from bot.handlers import common_handlers, info_handlers, mining_handlers
 from bot.middlewares.throttling import ThrottlingMiddleware
@@ -75,11 +74,14 @@ async def main():
     dependencies.redis_client = redis_client
 
     # Регистрация роутеров
+    # Админский роутер регистрируем первым, чтобы его команды имели наивысший приоритет
+    dp.include_router(admin_menu.admin_router)
+    
+    # Остальные роутеры
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
-    # 👇 СТРОКА РЕГИСТРАЦИИ ДОБАВЛЕНА ЗДЕСЬ
-    dp.include_router(admin_menu.admin_router)
+
 
     # Словарь с данными для передачи в обработчики и планировщик
     context_data = {
@@ -94,7 +96,6 @@ async def main():
     scheduler = setup_scheduler(context_data)
     workflow_data = {**context_data, "scheduler": scheduler}
 
-    # ИСПРАВЛЕНИЕ: Регистрируем хук БЕЗ передачи аргументов вручную.
     dp.shutdown.register(on_shutdown)
 
     try:
