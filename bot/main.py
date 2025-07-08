@@ -19,8 +19,8 @@ from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
-# 👇 1. ИМПОРТИРУЕМ AdminService
-from bot.services.admin.admin_service import AdminService
+# 👇 ИСПРАВЛЕННЫЙ ПУТЬ ИМПОРТА
+from bot.services.admin_service import AdminService
 from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
 from bot.utils.helpers import setup_logging
@@ -68,8 +68,6 @@ async def main():
     news_service = NewsService()
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
-    # 👇 2. СОЗДАЕМ ЭКЗЕМПЛЯР AdminService
-    # Предполагаем, что ему нужен доступ к redis для сбора статистики
     admin_service = AdminService(redis_client=redis_client)
 
 
@@ -95,7 +93,6 @@ async def main():
         "market_data_service": market_data_service,
         "quiz_service": quiz_service,
         "redis_client": redis_client,
-        # 👇 3. ДОБАВЛЯЕМ СЕРВИС В СЛОВАРЬ
         "admin_service": admin_service,
     }
 
