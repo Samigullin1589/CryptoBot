@@ -5,7 +5,6 @@ import redis.asyncio as redis
 from aiogram import F, Router, Bot
 from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
-# --- ИЗМЕНЕНИЕ: Импортируем ReplyKeyboardRemove ---
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from bot.config.settings import settings
@@ -90,13 +89,11 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     
     logger.info(f"User {message.from_user.id} started the bot.")
 
-    # --- ИЗМЕНЕНИЕ: Отправляем сообщение с командой убрать нижнюю клавиатуру ---
     await message.answer(
         "Загружаю меню...",
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # Сразу же отправляем основное меню с инлайн-кнопками
     await message.answer(
         "👋 Добро пожаловать в CryptoBot! Выберите одну из опций в меню ниже, чтобы начать.",
         reply_markup=get_main_menu_keyboard()
@@ -114,7 +111,10 @@ async def handle_back_to_main(call: CallbackQuery, state: FSMContext):
     """Обработчик кнопки 'Назад в главное меню'."""
     await state.clear()
     await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
-    @router.message(Command("debuginfo"))
+
+
+# 👇 ЭТОТ БЛОК БЫЛ ДОБАВЛЕН С ИСПРАВЛЕННЫМ ОТСТУПОМ
+@router.message(Command("debuginfo"))
 async def handle_debug_info(message: Message):
     """
     Временный обработчик для отладки.
