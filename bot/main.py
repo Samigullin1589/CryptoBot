@@ -10,7 +10,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
 from bot.config.settings import settings
-# 👇 ИМПОРТ ДОБАВЛЕН ЗДЕСЬ
 from bot.handlers.admin import admin_menu, stats_handlers
 from bot.handlers import common_handlers, info_handlers, mining_handlers
 from bot.middlewares.throttling import ThrottlingMiddleware
@@ -20,6 +19,8 @@ from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
+# 👇 1. ИМПОРТИРУЕМ AdminService
+from bot.services.admin.admin_service import AdminService
 from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
 from bot.utils.helpers import setup_logging
@@ -67,6 +68,10 @@ async def main():
     news_service = NewsService()
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
+    # 👇 2. СОЗДАЕМ ЭКЗЕМПЛЯР AdminService
+    # Предполагаем, что ему нужен доступ к redis для сбора статистики
+    admin_service = AdminService(redis_client=redis_client)
+
 
     # Заполнение глобальных зависимостей для фоновых задач
     dependencies.bot = bot
@@ -75,12 +80,8 @@ async def main():
     dependencies.redis_client = redis_client
 
     # Регистрация роутеров
-    # Админские роутеры регистрируем первыми, чтобы их команды имели наивысший приоритет
     dp.include_router(admin_menu.admin_router)
-    # 👇 СТРОКА РЕГИСТРАЦИИ ДОБАВЛЕНА ЗДЕСЬ
     dp.include_router(stats_handlers.stats_router)
-    
-    # Остальные роутеры
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
@@ -94,6 +95,8 @@ async def main():
         "market_data_service": market_data_service,
         "quiz_service": quiz_service,
         "redis_client": redis_client,
+        # 👇 3. ДОБАВЛЯЕМ СЕРВИС В СЛОВАРЬ
+        "admin_service": admin_service,
     }
 
     scheduler = setup_scheduler(context_data)
