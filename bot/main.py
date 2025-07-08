@@ -19,7 +19,6 @@ from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
-# 👇 ИСПРАВЛЕННЫЙ ПУТЬ ИМПОРТА
 from bot.services.admin_service import AdminService
 from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
@@ -71,11 +70,15 @@ async def main():
     admin_service = AdminService(redis_client=redis_client)
 
 
-    # Заполнение глобальных зависимостей для фоновых задач
+    # 👇 ИСПРАВЛЕНИЕ: Добавляем все нужные сервисы в глобальные зависимости
     dependencies.bot = bot
+    dependencies.redis_client = redis_client
     dependencies.asic_service = asic_service
     dependencies.news_service = news_service
-    dependencies.redis_client = redis_client
+    dependencies.price_service = price_service
+    dependencies.market_data_service = market_data_service
+    dependencies.admin_service = admin_service
+    
 
     # Регистрация роутеров
     dp.include_router(admin_menu.admin_router)
