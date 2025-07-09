@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from bot.config.settings import settings
 from bot.services.asic_service import AsicService
-from bot.services.admin_service import AdminService  # <<< ДОБАВЛЕН ИМПОРТ
+from bot.services.admin_service import AdminService
 from bot.keyboards.keyboards import (
     get_mining_menu_keyboard, get_asic_shop_keyboard,
     get_my_farm_keyboard, get_withdraw_keyboard, get_electricity_menu_keyboard
@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 # --- ГЛАВНОЕ МЕНЮ РАЗДЕЛА ---
 
 @router.callback_query(F.data == "menu_mining")
-async def handle_mining_menu(call: CallbackQuery, admin_service: AdminService): # <<<
+async def handle_mining_menu(call: CallbackQuery, admin_service: AdminService):
     """
     Отправляет пользователю главное меню раздела "Виртуальный Майнинг".
     """
-    await admin_service.track_command_usage("💎 Виртуальный Майнинг") # <<<
+    await admin_service.track_command_usage("💎 Виртуальный Майнинг")
     text = "<b>💎 Центр управления Виртуальным Майнингом</b>\n\nВыберите действие:"
     await call.message.edit_text(text, reply_markup=get_mining_menu_keyboard())
 
@@ -49,11 +49,11 @@ async def show_shop_page(message: Message, asic_service: AsicService, page: int 
 
 
 @router.callback_query(F.data == "mining_shop")
-async def handle_shop_menu(call: CallbackQuery, asic_service: AsicService, admin_service: AdminService): # <<<
+async def handle_shop_menu(call: CallbackQuery, asic_service: AsicService, admin_service: AdminService):
     """
     Обработчик кнопки 'Магазин оборудования'.
     """
-    await admin_service.track_command_usage("🏪 Магазин оборудования") # <<<
+    await admin_service.track_command_usage("🏪 Магазин оборудования")
     await show_shop_page(call.message, asic_service, 0)
 
 
@@ -69,7 +69,7 @@ async def handle_shop_pagination(call: CallbackQuery, asic_service: AsicService)
 # --- ЛОГИКА ЗАПУСКА МАЙНИНГА ---
 
 @router.callback_query(F.data.startswith("start_mining_"))
-async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, scheduler: AsyncIOScheduler, asic_service: AsicService, admin_service: AdminService): # <<<
+async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, scheduler: AsyncIOScheduler, asic_service: AsicService, admin_service: AdminService):
     """
     Обработчик выбора конкретного ASIC для запуска майнинга.
     """
@@ -88,7 +88,7 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
         
     selected_asic = all_asics[asic_index]
     
-    await admin_service.track_command_usage(f"Запуск: {selected_asic.name}") # <<<
+    await admin_service.track_command_usage(f"Запуск: {selected_asic.name}")
     
     run_date = datetime.now() + timedelta(seconds=settings.MINING_DURATION_SECONDS)
     
@@ -122,11 +122,11 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
 # --- ЛОГИКА "МОЯ ФЕРМА" ---
 
 @router.callback_query(F.data == "mining_my_farm")
-async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # <<<
+async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     """
     Показывает статус текущей майнинг-сессии.
     """
-    await admin_service.track_command_usage("🖥️ Моя ферма") # <<<
+    await admin_service.track_command_usage("🖥️ Моя ферма")
     user_id = call.from_user.id
     session_data = await redis_client.hgetall(f"mining:session:{user_id}")
 
@@ -161,11 +161,11 @@ async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_s
 # --- ЛОГИКА "ВЫВОД СРЕДСТВ" ---
 
 @router.callback_query(F.data == "mining_withdraw")
-async def handle_withdraw(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # <<<
+async def handle_withdraw(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     """
     Обрабатывает вывод средств и расчет скидки.
     """
-    await admin_service.track_command_usage("💰 Вывод средств") # <<<
+    await admin_service.track_command_usage("💰 Вывод средств")
     user_id = call.from_user.id
     
     if await redis_client.exists(f"mining:session:{user_id}"):
@@ -203,11 +203,11 @@ async def handle_withdraw(call: CallbackQuery, redis_client: redis.Redis, admin_
 # --- ЛОГИКА "ПРИГЛАСИТЬ ДРУГА" ---
 
 @router.callback_query(F.data == "mining_invite")
-async def handle_invite_friend(call: CallbackQuery, bot: Bot, admin_service: AdminService): # <<<
+async def handle_invite_friend(call: CallbackQuery, bot: Bot, admin_service: AdminService):
     """
     Генерирует и отправляет пользователю его реферальную ссылку.
     """
-    await admin_service.track_command_usage("🤝 Пригласить друга") # <<<
+    await admin_service.track_command_usage("🤝 Пригласить друга")
     user_id = call.from_user.id
     bot_info = await bot.get_me()
     bot_username = bot_info.username
@@ -223,16 +223,18 @@ async def handle_invite_friend(call: CallbackQuery, bot: Bot, admin_service: Adm
     )
     
     await call.answer()
-    await call.message.answer(text)
+    # Отправляем новым сообщением, так как edit_text может вызвать проблемы, если исходное сообщение было с медиа
+    await call.message.answer(text, reply_markup=get_mining_menu_keyboard())
+
 
 # --- ЛОГИКА "СТАТИСТИКА" ---
 
 @router.callback_query(F.data == "mining_stats")
-async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # <<<
+async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     """
     Отображает личную статистику пользователя в игре.
     """
-    await admin_service.track_command_usage("📊 Статистика (Майнинг)") # <<<
+    await admin_service.track_command_usage("📊 Статистика (Майнинг)")
     user_id = call.from_user.id
 
     async with redis_client.pipeline() as pipe:
@@ -261,11 +263,11 @@ async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis, admin_
 # --- ЛОГИКА "ЭЛЕКТРОЭНЕРГИЯ" ---
 
 @router.callback_query(F.data == "mining_electricity")
-async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # <<<
+async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     """
     Показывает меню выбора и покупки тарифов на электроэнергию.
     """
-    await admin_service.track_command_usage("⚡️ Электроэнергия") # <<<
+    await admin_service.track_command_usage("⚡️ Электроэнергия")
     user_id = call.from_user.id
     
     current_tariff = await redis_client.get(f"user:{user_id}:tariff") or settings.DEFAULT_ELECTRICITY_TARIFF
@@ -284,7 +286,7 @@ async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis
 
 
 @router.callback_query(F.data.startswith("select_tariff_"))
-async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis):
+async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # ИСПРАВЛЕНО
     """
     Обрабатывает выбор доступного тарифа.
     """
@@ -303,11 +305,12 @@ async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis):
     logger.info(f"User {user_id} selected new electricity tariff: {tariff_name}")
     await call.answer(f"✅ Тариф '{tariff_name}' успешно выбран!")
     
-    await handle_electricity_menu(call, redis_client)
+    # ИСПРАВЛЕНО: Передаем admin_service при обновлении меню
+    await handle_electricity_menu(call, redis_client, admin_service)
 
 
 @router.callback_query(F.data.startswith("buy_tariff_"))
-async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # <<<
+async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     """
     Обрабатывает покупку нового тарифа.
     """
@@ -328,7 +331,7 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
         await call.answer(f"ℹ️ Недостаточно средств. Нужно {unlock_price:.0f} монет, у вас {balance:.2f}.", show_alert=True)
         return
 
-    await admin_service.track_command_usage(f"Покупка тарифа: {tariff_name}") # <<<
+    await admin_service.track_command_usage(f"Покупка тарифа: {tariff_name}")
 
     async with redis_client.pipeline() as pipe:
         pipe.decrbyfloat(f"user:{user_id}:balance", unlock_price)
@@ -338,4 +341,5 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
     logger.info(f"User {user_id} bought new tariff '{tariff_name}' for {unlock_price} coins.")
     await call.answer(f"🎉 Тариф '{tariff_name}' успешно куплен и доступен для выбора!", show_alert=True)
 
-    await handle_electricity_menu(call, redis_client)
+    # ИСПРАВЛЕНО: Передаем admin_service при обновлении меню
+    await handle_electricity_menu(call, redis_client, admin_service)

@@ -70,10 +70,16 @@ def get_price_keyboard():
     builder.row(get_promo_button())
     return builder.as_markup()
 
+# --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
 def get_quiz_keyboard():
-    """Создает клавиатуру для викторины."""
+    """
+    Создает клавиатуру для викторины с возможностью выхода.
+    """
     builder = InlineKeyboardBuilder()
-    builder.button(text="Следующий вопрос", callback_data="menu_quiz")
+    # Добавляем две кнопки в один ряд для удобства
+    builder.button(text="Следующий вопрос ➡️", callback_data="menu_quiz")
+    builder.button(text="⬅️ Завершить", callback_data="back_to_main_menu")
+    builder.adjust(2) # Располагаем их в один ряд
     builder.row(get_promo_button())
     return builder.as_markup()
 
