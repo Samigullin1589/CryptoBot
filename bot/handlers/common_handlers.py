@@ -6,10 +6,13 @@ from aiogram import F, Router, Bot
 from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+# 👇 Добавляем нужные импорты
+from aiogram.enums import ContentType
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
-from bot.services.admin_service import AdminService  # <<< ДОБАВЛЕН ИМПОРТ
+from bot.services.admin_service import AdminService
 from bot.utils.helpers import get_message_and_chat_id
 
 router = Router()
@@ -81,9 +84,9 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
 
 
 @router.message(CommandStart())
-async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService): # <<< ДОБАВЛЕН admin_service
+async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService):
     """Обработчик команды /start с поддержкой рефералов и удалением старой клавиатуры."""
-    await admin_service.track_command_usage("/start") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
+    await admin_service.track_command_usage("/start")
     await state.clear()
     
     if command.args:
@@ -103,15 +106,35 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
 
 
 @router.message(Command("help"))
-async def handle_help(message: Message, admin_service: AdminService): # <<< ДОБАВЛЕН admin_service
+async def handle_help(message: Message, admin_service: AdminService):
     """Отправляет информационное сообщение по команде /help."""
-    await admin_service.track_command_usage("/help") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
+    await admin_service.track_command_usage("/help")
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
 
+# --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
 @router.callback_query(F.data == "back_to_main_menu")
-async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_service: AdminService): # <<< ДОБАВЛЕН admin_service
-    """Обработчик кнопки 'Назад в главное меню'."""
-    await admin_service.track_command_usage("⬅️ Назад в меню") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
+async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_service: AdminService):
+    """
+    Обработчик кнопки 'Назад в главное меню'.
+    Умеет обрабатывать колбэки из текстовых сообщений, медиа и опросов.
+    """
+    await admin_service.track_command_usage("⬅️ Назад в меню")
     await state.clear()
-    await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
+    
+    try:
+        # Проверяем, можно ли отредактировать сообщение (если это текст)
+        if call.message.content_type == ContentType.TEXT:
+            await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
+        else:
+            # Если это опрос, фото или что-то еще, удаляем старое и присылаем новое
+            await call.message.delete()
+            await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+    except TelegramBadRequest as e:
+        logger.error(f"Error returning to main menu: {e}. Sending new message.")
+        # Если возникла любая другая ошибка (например, сообщение слишком старое),
+        # просто отправляем новое сообщение.
+        await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+    finally:
+        # В любом случае отвечаем на колбэк, чтобы убрать "часики"
+        await call.answer()
