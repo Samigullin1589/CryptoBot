@@ -5,6 +5,8 @@ from math import floor
 import redis.asyncio as redis
 from aiogram import F, Router, Bot
 from aiogram.types import Message, CallbackQuery
+# 👇 Добавляем CommandObject для работы с аргументами команды
+from aiogram.filters import Command, CommandObject
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 
@@ -332,7 +334,6 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
     await admin_service.track_command_usage(f"Покупка тарифа: {tariff_name}")
 
     async with redis_client.pipeline() as pipe:
-        # ИСПРАВЛЕНИЕ: Используем incrbyfloat с отрицательным значением
         pipe.incrbyfloat(f"user:{user_id}:balance", -unlock_price)
         pipe.sadd(f"user:{user_id}:unlocked_tariffs", tariff_name)
         await pipe.execute()
@@ -341,3 +342,76 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
     await call.answer(f"🎉 Тариф '{tariff_name}' успешно куплен и доступен для выбора!", show_alert=True)
 
     await handle_electricity_menu(call, redis_client, admin_service)
+
+
+# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ ЧАЕВЫХ ---
+
+@router.message(Command("tip"))
+async def handle_tip_command(message: Message, command: CommandObject, redis_client: redis.Redis, admin_service: AdminService):
+    """
+    Обрабатывает команду /tip для перевода монет другому пользователю.
+    Используется ответом на сообщение.
+    """
+    # 1. Проверяем, что это ответ на сообщение
+    if not message.reply_to_message:
+        await message.reply("⚠️ Эту команду нужно использовать ответом на сообщение того, кому вы хотите отправить монеты.")
+        return
+
+    # 2. Парсим сумму
+    try:
+        if command.args is None:
+            raise ValueError("Не указана сумма.")
+        
+        amount = float(command.args)
+        if amount <= 0:
+            raise ValueError("Сумма должна быть положительной.")
+            
+    except (ValueError, TypeError):
+        await message.reply("⚠️ Неверный формат. Используйте: <code>/tip [сумма]</code>\nНапример: <code>/tip 10.5</code>")
+        return
+
+    # 3. Определяем отправителя и получателя
+    sender = message.from_user
+    recipient = message.reply_to_message.from_user
+
+    # 4. Проверяем, что это не бот и не перевод самому себе
+    if sender.id == recipient.id:
+        await message.reply("😅 Нельзя отправить чаевые самому себе.")
+        return
+
+    if recipient.is_bot:
+        await message.reply("🤖 Нельзя отправить чаевые боту.")
+        return
+
+    # 5. Проверяем баланс отправителя
+    sender_balance_str = await redis_client.get(f"user:{sender.id}:balance")
+    sender_balance = float(sender_balance_str) if sender_balance_str else 0
+
+    if sender_balance < amount:
+        await message.reply(f"😕 Недостаточно средств. Ваш баланс: {sender_balance:.2f} монет.")
+        return
+
+    # 6. Выполняем перевод
+    try:
+        async with redis_client.pipeline() as pipe:
+            pipe.incrbyfloat(f"user:{sender.id}:balance", -amount)
+            pipe.incrbyfloat(f"user:{recipient.id}:balance", amount)
+            # Увеличиваем счетчик "всего заработано" для получателя
+            pipe.incrbyfloat(f"user:{recipient.id}:total_earned", amount)
+            await pipe.execute()
+    except Exception as e:
+        logger.error(f"Failed to process tip from {sender.id} to {recipient.id}: {e}")
+        await message.reply("❌ Произошла внутренняя ошибка при переводе. Попробуйте позже.")
+        return
+
+    # 7. Отправляем уведомление и записываем статистику
+    await admin_service.track_command_usage("/tip")
+    
+    sender_name = f"<a href='tg://user?id={sender.id}'>{sanitize_html(sender.full_name)}</a>"
+    recipient_name = f"<a href='tg://user?id={recipient.id}'>{sanitize_html(recipient.full_name)}</a>"
+    
+    await message.reply(
+        f"💸 {sender_name} отправил(а) <b>{amount:.2f} монет</b> в качестве чаевых {recipient_name}!",
+        disable_web_page_preview=True
+    )
+    logger.info(f"User {sender.id} tipped {amount:.2f} to {recipient.id}")
