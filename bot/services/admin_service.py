@@ -55,16 +55,15 @@ class AdminService:
     async def get_command_stats(self) -> list:
         """Получает топ-10 самых используемых команд."""
         top_commands = await self.redis.zrevrange("stats:commands", 0, 9, withscores=True)
-        return [(cmd.decode('utf-8'), int(score)) for cmd, score in top_commands]
+        # ИСПРАВЛЕНИЕ: Убираем .decode('utf-8'), так как Redis уже возвращает строки
+        return [(cmd, int(score)) for cmd, score in top_commands]
 
-    # 👇 НОВЫЙ МЕТОД, КОТОРЫЙ МЫ ДОБАВИЛИ
     async def track_command_usage(self, command_name: str):
         """
         Увеличивает счетчик использования для указанной команды.
         Использует Redis Sorted Set для хранения статистики.
         """
         try:
-            # Увеличиваем счетчик для команды на 1
             await self.redis.zincrby("stats:commands", 1, command_name)
             logger.info(f"Tracked command usage for: {command_name}")
         except Exception as e:
