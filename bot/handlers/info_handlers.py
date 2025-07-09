@@ -10,8 +10,10 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
+# ВАЖНО: Убедитесь, что все эти клавиатуры импортированы
 from bot.keyboards.keyboards import (get_main_menu_keyboard,
-                                     get_price_keyboard, get_quiz_keyboard, get_after_action_keyboard)
+                                     get_price_keyboard,
+                                     get_quiz_keyboard)
 from bot.services.asic_service import AsicService
 from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
@@ -25,7 +27,8 @@ from bot.utils.states import PriceInquiry, ProfitCalculator
 router = Router()
 logger = logging.getLogger(__name__)
 
-async def send_price_info(message: Message, query: str, price_service: PriceService, asic_service: AsicService):
+
+async def send_price_info(message: Message, query: str, price_service: PriceService):
     """
     Готовит и отправляет сообщение с информацией о курсе и клавиатурой.
     """
@@ -34,7 +37,7 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     if not coin:
         await message.edit_text(
             f"❌ Не удалось найти информацию по '{sanitize_html(query)}'.",
-            reply_markup=get_after_action_keyboard()
+            reply_markup=get_main_menu_keyboard()  # ИСПРАВЛЕНО
         )
         return
 
@@ -47,7 +50,7 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     if coin.algorithm:
         text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>"
     
-    await message.edit_text(text, reply_markup=get_after_action_keyboard())
+    await message.edit_text(text, reply_markup=get_main_menu_keyboard())  # ИСПРАВЛЕНО
 
 
 @router.callback_query(F.data == "menu_asics")
@@ -61,7 +64,6 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     if isinstance(update, CallbackQuery):
         await message.edit_text("⏳ Загружаю актуальный список...")
     else:
-        # В случае текстовой команды, отправляем новое сообщение
         message = await message.answer("⏳ Загружаю актуальный список...")
 
     asics = await asic_service.get_profitable_asics()
@@ -115,12 +117,15 @@ async def handle_fear_greed_menu(update: Union[CallbackQuery, Message], market_d
     Отправляет график Индекса Страха и Жадности.
     """
     message, _ = await get_message_and_chat_id(update)
-    temp_message = await message.answer("⏳ Получаю индекс и рисую график...")
-    try:
-        if isinstance(update, CallbackQuery):
+    
+    # Сначала удаляем старое сообщение, если это колбэк
+    if isinstance(update, CallbackQuery):
+        try:
             await update.message.delete()
-    except TelegramBadRequest:
-        pass # Игнорируем ошибку, если сообщение уже удалено
+        except TelegramBadRequest:
+            pass # Игнорируем ошибку, если сообщение уже удалено
+
+    temp_message = await message.answer("⏳ Получаю индекс и рисую график...")
 
     index = await market_data_service.get_fear_and_greed_index()
     if not index:
@@ -135,7 +140,8 @@ async def handle_fear_greed_menu(update: Union[CallbackQuery, Message], market_d
     caption = f"😱 <b>Индекс страха и жадности: {value} - {classification}</b>"
 
     await temp_message.delete()
-    await message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption, reply_markup=get_after_action_keyboard())
+    # ИСПРАВЛЕНО: Отправляем фото с правильной клавиатурой главного меню
+    await message.answer_photo(BufferedInputFile(image_bytes, "fng.png"), caption=caption, reply_markup=get_main_menu_keyboard())
 
 
 @router.callback_query(F.data == "menu_halving")
@@ -145,8 +151,15 @@ async def handle_halving_menu(update: Union[CallbackQuery, Message], market_data
     Отправляет информацию о дате халвинга Bitcoin.
     """
     message, _ = await get_message_and_chat_id(update)
-    text = await market_data_service.get_halving_info()
-    await message.answer(text, reply_markup=get_after_action_keyboard())
+    if isinstance(update, CallbackQuery):
+        # Если это колбэк, редактируем сообщение
+        await update.message.edit_text("⏳ Загружаю информацию о халвинге...")
+        text = await market_data_service.get_halving_info()
+        await update.message.edit_text(text, reply_markup=get_main_menu_keyboard()) # ИСПРАВЛЕНО
+    else:
+        # Если это текстовая команда, отправляем новое
+        text = await market_data_service.get_halving_info()
+        await message.answer(text, reply_markup=get_main_menu_keyboard()) # ИСПРАВЛЕНО
 
 
 @router.callback_query(F.data == "menu_btc_status")
@@ -156,12 +169,17 @@ async def handle_btc_status_menu(update: Union[CallbackQuery, Message], market_d
     Отправляет информацию о статусе сети Bitcoin.
     """
     message, _ = await get_message_and_chat_id(update)
-    text = await market_data_service.get_btc_network_status()
-    await message.answer(text, reply_markup=get_after_action_keyboard())
+    if isinstance(update, CallbackQuery):
+        await update.message.edit_text("⏳ Загружаю статус сети...")
+        text = await market_data_service.get_btc_network_status()
+        await update.message.edit_text(text, reply_markup=get_main_menu_keyboard()) # ИСПРАВЛЕНО
+    else:
+        text = await market_data_service.get_btc_network_status()
+        await message.answer(text, reply_markup=get_main_menu_keyboard()) # ИСПРАВЛЕНО
 
 
 @router.callback_query(F.data.startswith("price_"))
-async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService, asic_service: AsicService):
+async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService):
     """
     Обрабатывает выбор монеты из кнопок и редактирует сообщение.
     """
@@ -172,20 +190,17 @@ async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_se
         await call.message.edit_text("Введите тикер монеты (напр. Aleo):")
     else:
         await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
-        text = await send_price_info(call.message, query, price_service, asic_service)
+        await send_price_info(call.message, query, price_service)
 
 
 @router.message(PriceInquiry.waiting_for_ticker)
-async def process_ticker_input(message: Message, state: FSMContext, price_service: PriceService, asic_service: AsicService):
+async def process_ticker_input(message: Message, state: FSMContext, price_service: PriceService):
     """
     Обрабатывает введенный пользователем тикер.
     """
     await state.clear()
     temp_msg = await message.answer("⏳ Получаю курс...")
-    # Так как send_price_info теперь возвращает текст, мы должны его отправить
-    text_to_send = await send_price_info(temp_msg, message.text, price_service, asic_service)
-    # Теперь редактируем временное сообщение
-    await temp_msg.edit_text(text_to_send, reply_markup=get_after_action_keyboard())
+    await send_price_info(temp_msg, message.text, price_service)
 
 
 @router.callback_query(F.data == "menu_calculator")
@@ -195,6 +210,7 @@ async def handle_calculator_menu(update: Union[CallbackQuery, Message], state: F
     Запускает сценарий калькулятора доходности.
     """
     message, _ = await get_message_and_chat_id(update)
+    await state.clear()
     await state.set_state(ProfitCalculator.waiting_for_electricity_cost)
     await message.edit_text("💡 Введите стоимость электроэнергии в <b>рублях</b> за кВт/ч:")
 
@@ -214,12 +230,11 @@ async def process_electricity_cost(message: Message, state: FSMContext, market_d
             if asic.power:
                 profit = asic.profitability - ((asic.power / 1000) * 24 * cost_usd)
                 res.append(f"<b>{sanitize_html(asic.name)}</b>: ${profit:.2f}/день")
-        await message.answer("\n".join(res))
+        await message.answer("\n".join(res), reply_markup=get_main_menu_keyboard()) # Добавил клавиатуру
     except (ValueError, TypeError):
         await message.answer("❌ Неверный формат. Введите число (напр. 4.5).")
     
     await state.clear()
-    await show_main_menu(message)
 
 
 @router.callback_query(F.data == "menu_quiz")
@@ -230,12 +245,13 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
     """
     message, _ = await get_message_and_chat_id(update)
     
-    temp_message = await message.answer("⏳ Генерирую вопрос...")
     if isinstance(update, CallbackQuery):
         try:
             await update.message.delete()
         except TelegramBadRequest:
             pass
+
+    temp_message = await message.answer("⏳ Генерирую вопрос...")
 
     quiz = await quiz_service.generate_quiz_question()
     if not quiz:
@@ -251,23 +267,18 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
     )
 
 
+# Этот обработчик должен быть одним из последних, чтобы не перехватывать другие команды
 @router.message(
     F.content_type == ContentType.TEXT,
     lambda message: not any(entity.type == "bot_command" for entity in message.entities or [])
 )
-async def handle_arbitrary_text(message: Message, price_service: PriceService, asic_service: AsicService, bot: Bot):
+async def handle_arbitrary_text(message: Message, price_service: PriceService, bot: Bot):
     """
-    Обрабатывает произвольный текст как запрос цены.
+    Обрабатывает произвольный текст как запрос цены в личных сообщениях.
     """
-    if message.chat.type == "private":
-        logger.info(f"User sent text '{message.text}' in private, processing as price request.")
-        # Используем новую функцию, которая сразу отправляет сообщение с клавиатурой
-        await send_price_info(message, message.text, price_service, asic_service)
+    if message.chat.type != "private":
         return
 
-    bot_info = await bot.get_me()
-    if bot_info.username and f"@{bot_info.username}" in message.text:
-        text_to_process = re.sub(f'@{bot_info.username}', '', message.text, flags=re.IGNORECASE).strip()
-        if text_to_process:
-            logger.info(f"User mentioned bot in group with text '{text_to_process}', processing as price request.")
-            await send_price_info(message, text_to_process, price_service, asic_service)
+    logger.info(f"User sent text '{message.text}' in private, processing as price request.")
+    temp_msg = await message.answer("⏳ Получаю курс...")
+    await send_price_info(temp_msg, message.text, price_service)
