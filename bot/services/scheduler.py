@@ -23,51 +23,37 @@ def setup_scheduler(context: dict) -> AsyncIOScheduler:
     
     scheduler = AsyncIOScheduler(
         jobstores=jobstores, 
-        timezone="Europe/Moscow", # Рекомендую указать ваш часовой пояс
+        timezone="Asia/Tbilisi",  # ИСПРАВЛЕНИЕ: Устанавливаем часовой пояс Тбилиси
         job_defaults={'misfire_grace_time': 300},
         context=context
     )
 
-    # Задача отправки новостей
     if settings.news_chat_id:
         scheduler.add_job(
-            'bot.services.tasks:send_news_job',
-            'interval',
-            hours=settings.news_interval_hours,
-            id='news_sending_job',
-            replace_existing=True
+            'bot.services.tasks:send_news_job', 'interval', 
+            hours=settings.news_interval_hours, id='news_sending_job', replace_existing=True
         )
     
-    # Задача обновления кэша ASIC-майнеров
     scheduler.add_job(
-        'bot.services.tasks:update_asics_cache_job',
-        'interval',
-        hours=settings.asic_cache_update_hours,
-        id='asic_cache_update_job',
-        replace_existing=True
+        'bot.services.tasks:update_asics_cache_job', 'interval', 
+        hours=settings.asic_cache_update_hours, id='asic_cache_update_job', replace_existing=True
     )
     
-    # 👇 НОВАЯ ЗАДАЧА: Утренняя сводка (каждый день в 9:00 по МСК)
     scheduler.add_job(
-        'bot.services.tasks:send_morning_summary_job',
-        'cron',
-        day_of_week='mon-sun',
-        hour=9,
-        minute=0,
-        id='morning_summary_job',
-        replace_existing=True
+        'bot.services.tasks:send_morning_summary_job', 'cron', 
+        hour=9, minute=0, id='morning_summary_job', replace_existing=True
     )
 
-    # 👇 НОВАЯ ЗАДАЧА: Лидерборд (каждую пятницу в 18:00 по МСК)
     scheduler.add_job(
-        'bot.services.tasks:send_leaderboard_job',
-        'cron',
-        day_of_week='fri',
-        hour=18,
-        minute=0,
-        id='leaderboard_job',
-        replace_existing=True
+        'bot.services.tasks:send_leaderboard_job', 'cron', 
+        day_of_week='fri', hour=18, minute=0, id='leaderboard_job', replace_existing=True
     )
     
-    logger.info("Scheduler configured with all jobs.")
+    # ОТЛАДОЧНАЯ ЗАДАЧА: Запускается каждые 5 минут
+    scheduler.add_job(
+        'bot.services.tasks:health_check_job', 'interval', 
+        minutes=5, id='health_check_job', replace_existing=True
+    )
+    
+    logger.info("Scheduler configured with all jobs, including health check.")
     return scheduler
