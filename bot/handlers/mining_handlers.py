@@ -223,7 +223,6 @@ async def handle_invite_friend(call: CallbackQuery, bot: Bot, admin_service: Adm
     )
     
     await call.answer()
-    # Отправляем новым сообщением, так как edit_text может вызвать проблемы, если исходное сообщение было с медиа
     await call.message.answer(text, reply_markup=get_mining_menu_keyboard())
 
 
@@ -286,7 +285,7 @@ async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis
 
 
 @router.callback_query(F.data.startswith("select_tariff_"))
-async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService): # ИСПРАВЛЕНО
+async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     """
     Обрабатывает выбор доступного тарифа.
     """
@@ -305,7 +304,6 @@ async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis, a
     logger.info(f"User {user_id} selected new electricity tariff: {tariff_name}")
     await call.answer(f"✅ Тариф '{tariff_name}' успешно выбран!")
     
-    # ИСПРАВЛЕНО: Передаем admin_service при обновлении меню
     await handle_electricity_menu(call, redis_client, admin_service)
 
 
@@ -334,12 +332,12 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
     await admin_service.track_command_usage(f"Покупка тарифа: {tariff_name}")
 
     async with redis_client.pipeline() as pipe:
-        pipe.decrbyfloat(f"user:{user_id}:balance", unlock_price)
+        # ИСПРАВЛЕНИЕ: Используем incrbyfloat с отрицательным значением
+        pipe.incrbyfloat(f"user:{user_id}:balance", -unlock_price)
         pipe.sadd(f"user:{user_id}:unlocked_tariffs", tariff_name)
         await pipe.execute()
         
     logger.info(f"User {user_id} bought new tariff '{tariff_name}' for {unlock_price} coins.")
     await call.answer(f"🎉 Тариф '{tariff_name}' успешно куплен и доступен для выбора!", show_alert=True)
 
-    # ИСПРАВЛЕНО: Передаем admin_service при обновлении меню
     await handle_electricity_menu(call, redis_client, admin_service)
