@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
+from bot.services.admin_service import AdminService  # <<< ДОБАВЛЕН ИМПОРТ
 from bot.utils.helpers import get_message_and_chat_id
 
 router = Router()
@@ -80,8 +81,9 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
 
 
 @router.message(CommandStart())
-async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot):
+async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService): # <<< ДОБАВЛЕН admin_service
     """Обработчик команды /start с поддержкой рефералов и удалением старой клавиатуры."""
+    await admin_service.track_command_usage("/start") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
     await state.clear()
     
     if command.args:
@@ -101,13 +103,15 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
 
 
 @router.message(Command("help"))
-async def handle_help(message: Message):
+async def handle_help(message: Message, admin_service: AdminService): # <<< ДОБАВЛЕН admin_service
     """Отправляет информационное сообщение по команде /help."""
+    await admin_service.track_command_usage("/help") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
 
 @router.callback_query(F.data == "back_to_main_menu")
-async def handle_back_to_main(call: CallbackQuery, state: FSMContext):
+async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_service: AdminService): # <<< ДОБАВЛЕН admin_service
     """Обработчик кнопки 'Назад в главное меню'."""
+    await admin_service.track_command_usage("⬅️ Назад в меню") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
     await state.clear()
     await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
