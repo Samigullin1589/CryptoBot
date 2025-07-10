@@ -27,4 +27,5 @@ class AsicMiner(BaseModel):
     algorithm: Optional[str] = None
     hashrate: Optional[str] = None
     power: Optional[int] = None
+    efficiency: Optional[str] = None # <<< ДОБАВЛЕНО ЭТО ПОЛЕ
     source: Optional[str] = None
