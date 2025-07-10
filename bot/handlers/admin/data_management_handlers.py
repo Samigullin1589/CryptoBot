@@ -3,18 +3,28 @@ import redis.asyncio as redis
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
-# Убедитесь, что у вас есть такой фильтр, или временно уберите его для теста
-from bot.filters.admin_filter import AdminFilter 
+
+# Импортируем наши настройки, где хранится ID админа
+from bot.config.settings import settings
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-# Применяем фильтр, чтобы команда была доступна только админам
-@router.message(Command("force_clear_cache"), AdminFilter())
+# Убираем AdminFilter из декоратора
+@router.message(Command("force_clear_cache"))
 async def force_clear_asic_cache(message: Message, redis_client: redis.Redis):
     """
     Принудительно очищает все ключи, связанные с ASIC, из кэша Redis.
+    Теперь доступно только администратору, ID которого указан в настройках.
     """
+    # --- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+    # Проверяем ID пользователя прямо внутри функции, а не через фильтр
+    if message.from_user.id != settings.admin_chat_id:
+        logger.warning(f"User {message.from_user.id} tried to use an admin command: /force_clear_cache")
+        # Просто ничего не отвечаем не-админам
+        return
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     logger.warning(f"Admin {message.from_user.id} initiated a forced cache clear.")
     
     try:
@@ -23,7 +33,6 @@ async def force_clear_asic_cache(message: Message, redis_client: redis.Redis):
         
         # Добавляем ключ времени последнего обновления
         last_update_key = "asics_last_update_utc"
-        # Используем await, так как exists может быть асинхронным
         if await redis_client.exists(last_update_key):
             keys_to_delete.append(last_update_key)
         
@@ -38,4 +47,3 @@ async def force_clear_asic_cache(message: Message, redis_client: redis.Redis):
     except Exception as e:
         logger.error(f"Failed to clear cache: {e}")
         await message.answer(f"❌ Произошла ошибка при очистке кэша: {e}")
-
