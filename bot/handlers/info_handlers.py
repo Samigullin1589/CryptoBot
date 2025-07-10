@@ -22,6 +22,7 @@ from bot.services.admin_service import AdminService
 from bot.utils.helpers import (get_message_and_chat_id, sanitize_html,
                                show_main_menu)
 from bot.utils.plotting import generate_fng_image
+# 👇 ИМПОРТИРУЕМ ОБНОВЛЕННЫЕ СОСТОЯНИЯ
 from bot.utils.states import PriceInquiry, ProfitCalculator
 
 router = Router()
@@ -43,7 +44,6 @@ async def safe_edit_or_send(call: CallbackQuery, text: str, markup, delete_photo
             await call.message.answer(text, reply_markup=markup, disable_web_page_preview=True)
     except TelegramBadRequest as e:
         logger.error(f"Error editing or sending message: {e}")
-        # Если редактирование не удалось, отправляем новое сообщение
         await call.message.answer(text, reply_markup=markup, disable_web_page_preview=True)
 
 
@@ -206,39 +206,94 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     temp_msg = await message.answer("⏳ Получаю курс...")
     await send_price_info(temp_msg, message.text, price_service)
 
+# --- БЛОК КАЛЬКУЛЯТОРА (ПОЛНОСТЬЮ ПЕРЕПИСАН) ---
 
 @router.callback_query(F.data == "menu_calculator")
 @router.message(F.text == "⛏️ Калькулятор")
 async def handle_calculator_menu(update: Union[CallbackQuery, Message], state: FSMContext, admin_service: AdminService):
+    """Шаг 1: Запрашиваем стоимость электроэнергии."""
     await admin_service.track_command_usage("⛏️ Калькулятор")
-    text = "💡 Введите стоимость электроэнергии в <b>рублях</b> за кВт/ч:"
+    text = "💡 Введите стоимость электроэнергии в <b>рублях</b> за кВт/ч (например, <code>4.5</code>):"
     
     if isinstance(update, CallbackQuery):
         await safe_edit_or_send(update, text, None)
     else:
         await update.answer(text)
         
-    await state.clear()
     await state.set_state(ProfitCalculator.waiting_for_electricity_cost)
 
 
 @router.message(ProfitCalculator.waiting_for_electricity_cost)
-async def process_electricity_cost(message: Message, state: FSMContext, market_data_service: MarketDataService, asic_service: AsicService):
+async def process_electricity_cost(message: Message, state: FSMContext):
+    """Шаг 2: Проверяем стоимость э/э и запрашиваем комиссию пула."""
     try:
         cost_rub = float(message.text.replace(',', '.'))
-        rate_usd_rub = await market_data_service.get_usd_rub_rate()
-        cost_usd = cost_rub / rate_usd_rub
-        asics = await asic_service.get_profitable_asics()
-        res = [f"💰 <b>Расчет профита (розетка {cost_rub:.2f} ₽/кВтч)</b>\n"]
-        for asic in asics[:10]:
-            if asic.power:
-                profit = asic.profitability - ((asic.power / 1000) * 24 * cost_usd)
-                res.append(f"<b>{sanitize_html(asic.name)}</b>: ${profit:.2f}/день")
-        await message.answer("\n".join(res), reply_markup=get_main_menu_keyboard())
+        if cost_rub < 0:
+            raise ValueError("Стоимость не может быть отрицательной")
+        
+        await state.update_data(electricity_cost_rub=cost_rub)
+        await state.set_state(ProfitCalculator.waiting_for_pool_commission)
+        
+        await message.answer(" पूल आयोग के प्रतिशत में दर्ज करें (उदाहरण के लिए, 1 или 1.5):")
     except (ValueError, TypeError):
-        await message.answer("❌ Неверный формат. Введите число (напр. 4.5).")
+        await message.answer("❌ Неверный формат. Введите число (например, <code>4.5</code>).")
+        
+
+@router.message(ProfitCalculator.waiting_for_pool_commission)
+async def process_pool_commission(message: Message, state: FSMContext, market_data_service: MarketDataService, asic_service: AsicService):
+    """Шаг 3: Получаем комиссию, считаем и выводим результат."""
+    try:
+        commission_percent = float(message.text.replace(',', '.'))
+        if not (0 <= commission_percent < 100):
+            raise ValueError("Комиссия должна быть от 0 до 99.9")
+            
+        await message.answer("⏳ Считаю... Это может занять до 30 секунд.")
+
+        user_data = await state.get_data()
+        cost_rub_per_kwh = user_data['electricity_cost_rub']
+        
+        # Получаем необходимые данные
+        rate_usd_rub = await market_data_service.get_usd_rub_rate()
+        asics = await asic_service.get_profitable_asics()
+        
+        if not asics or not rate_usd_rub:
+            await message.answer("❌ Не удалось получить данные о курсах или ASIC. Попробуйте позже.")
+            await state.clear()
+            return
+            
+        res = [f"💰 <b>Расчет доходности (розетка {cost_rub_per_kwh:.2f} ₽, пул {commission_percent:.2f}%)</b>\n"]
+        
+        for asic in asics[:10]:
+            if not asic.power:
+                continue
+
+            # Расчеты в рублях
+            gross_income_usd = asic.profitability
+            gross_income_rub = gross_income_usd * rate_usd_rub
+            
+            electricity_cost_day_rub = (asic.power / 1000) * 24 * cost_rub_per_kwh
+            pool_fee_rub = gross_income_rub * (commission_percent / 100)
+            
+            net_profit_rub = gross_income_rub - electricity_cost_day_rub - pool_fee_rub
+
+            res.append(
+                f"➖➖➖➖➖➖➖➖➖➖\n"
+                f"<b>{sanitize_html(asic.name)}</b>\n"
+                f" доход: {gross_income_rub:,.0f} ₽\n"
+                f" розетка: -{electricity_cost_day_rub:,.0f} ₽\n"
+                f" пул: -{pool_fee_rub:,.0f} ₽\n"
+                f"✅ <b>Итого: {net_profit_rub:,.0f} ₽/день</b>"
+            )
+
+        await message.answer("\n".join(res), reply_markup=get_main_menu_keyboard())
+
+    except (ValueError, TypeError):
+        await message.answer("❌ Неверный формат. Введите число (например, <code>1.5</code>).")
     
     await state.clear()
+
+
+# --- КОНЕЦ БЛОКА КАЛЬКУЛЯТОРА ---
 
 
 @router.callback_query(F.data == "menu_quiz")
