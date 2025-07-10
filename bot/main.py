@@ -10,8 +10,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
 from bot.config.settings import settings
-from bot.handlers.admin import admin_menu, stats_handlers
 # 👇 ДОБАВЛЯЕМ НОВЫЙ ИМПОРТ
+from bot.handlers.admin import admin_menu, stats_handlers, data_management_handlers
 from bot.handlers import (common_handlers, info_handlers, 
                           mining_handlers, asic_info_handlers)
 from bot.middlewares.throttling import ThrottlingMiddleware
@@ -52,16 +52,16 @@ async def main():
 
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
 
-    # Инициализация клиентов и сервисов
+    # Инициализация сервисов
+    asic_service = AsicService(redis_client=redis_client)
+    admin_service = AdminService(redis_client=redis_client)
+    # ... остальные сервисы
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
-    # 👇 ИСПРАВЛЕНО: Передаем redis_client в AsicService
-    asic_service = AsicService(redis_client=redis_client)
     news_service = NewsService()
     market_data_service = MarketDataService()
     quiz_service = QuizService(openai_client=openai_client)
-    admin_service = AdminService(redis_client=redis_client)
 
     # Заполнение глобальных зависимостей
     dependencies.bot = bot
@@ -73,9 +73,12 @@ async def main():
     dependencies.admin_service = admin_service
     
     # Регистрация роутеров
+    # Админские роутеры регистрируем первыми
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
-    dp.include_router(asic_info_handlers.router) # <<< ДОБАВЛЕН НОВЫЙ РОУТЕР
+    dp.include_router(data_management_handlers.router) # <<< ДОБАВЛЕН НОВЫЙ РОУТЕР
+    # Пользовательские роутеры
+    dp.include_router(asic_info_handlers.router) 
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
