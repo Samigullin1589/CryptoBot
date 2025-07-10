@@ -2,6 +2,8 @@ import asyncio
 import logging
 import re
 from typing import Union
+from datetime import datetime, timezone
+import redis.asyncio as redis
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ContentType
@@ -13,14 +15,16 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from bot.keyboards.keyboards import (get_main_menu_keyboard,
                                      get_price_keyboard,
                                      get_quiz_keyboard)
+# ИМПОРТИРУЕМ НОВЫЕ СЕРВИСЫ
 from bot.services.asic_service import AsicService
+from bot.services.user_service import UserService
 from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
 from bot.services.admin_service import AdminService
 from bot.utils.helpers import (get_message_and_chat_id, sanitize_html,
-                               show_main_menu)
+                                     show_main_menu)
 from bot.utils.plotting import generate_fng_image
 from bot.utils.states import PriceInquiry, ProfitCalculator
 
@@ -71,28 +75,47 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     await message.edit_text(text, reply_markup=get_main_menu_keyboard())
 
 
+# --- ИСПРАВЛЕННЫЙ БЛОК ---
 @router.callback_query(F.data == "menu_asics")
 @router.message(F.text == "⚙️ Топ ASIC")
-async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service: AsicService, admin_service: AdminService):
+async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service: AsicService, admin_service: AdminService, redis_client: redis.Redis):
+    """
+    ОБНОВЛЕННЫЙ обработчик для кнопки и колбэка "Топ ASIC".
+    Теперь он использует правильный метод get_top_asics и учитывает стоимость э/э.
+    """
     await admin_service.track_command_usage("⚙️ Топ ASIC")
     
     message_to_edit = update.message if isinstance(update, CallbackQuery) else await update.answer("⏳ Загружаю актуальный список...")
     if isinstance(update, CallbackQuery):
+        # Используем безопасную отправку/редактирование
         await safe_edit_or_send(update, "⏳ Загружаю актуальный список...", None, delete_photo=False)
 
-    # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
-    asics = await asic_service.get_all_cached_asics()
+    # Получаем персональную стоимость э/э для пользователя
+    user_service = UserService(redis_client)
+    electricity_cost = await user_service.get_user_electricity_cost(update.from_user.id)
     
-    if not asics:
+    # Вызываем новый, правильный метод
+    top_miners, last_update_time = await asic_service.get_top_asics(count=10, electricity_cost=electricity_cost)
+
+    if not top_miners:
         text = "❌ Не удалось получить список ASIC-майнеров. Попробуйте позже."
     else:
-        text = "🏆 <b>Топ-10 доходных ASIC:</b>\n\n"
-        for miner in asics[:10]:
-            text += (f"<b>{sanitize_html(miner.name)}</b>\n  Доход: <b>${miner.profitability:.2f}/день</b>"
-                     f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
-                     f"{f' | {miner.power}W' if miner.power else ''}\n")
-    
-    await message_to_edit.edit_text(text, reply_markup=get_main_menu_keyboard())
+        text_lines = [f"🏆 <b>Топ-10 доходных ASIC</b> (чистыми, при цене э/э ${electricity_cost:.4f}/кВт·ч)\n"]
+        for miner in top_miners:
+            line = (f"<b>{sanitize_html(miner.name)}</b>\n"
+                    f"   Доход: <b>${miner.profitability:.2f}/день</b>"
+                    f"{f' | {miner.algorithm}' if miner.algorithm and miner.algorithm != 'N/A' else ''}")
+            text_lines.append(line)
+        
+        if last_update_time:
+            now = datetime.now(timezone.utc)
+            minutes_ago = int((now - last_update_time).total_seconds() / 60)
+            text_lines.append(f"\n<i>Данные обновлены {minutes_ago} минут назад.</i>")
+        
+        text = "\n".join(text_lines)
+
+    await message_to_edit.edit_text(text, reply_markup=get_main_menu_keyboard(), disable_web_page_preview=True)
+# --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
 
 
 @router.callback_query(F.data == "menu_price")
@@ -253,6 +276,9 @@ async def process_pool_commission(message: Message, state: FSMContext, market_da
         cost_rub_per_kwh = user_data['electricity_cost_rub']
         
         rate_usd_rub = await market_data_service.get_usd_rub_rate()
+        
+        # ИСПОЛЬЗУЕМ СТАРЫЙ МЕТОД, ТАК КАК КАЛЬКУЛЯТОРУ НУЖНА "ГРЯЗНАЯ" ПРИБЫЛЬ
+        # ДЛЯ РАСЧЕТОВ В РУБЛЯХ. ЭТО ПРАВИЛЬНО.
         asics = await asic_service.get_all_cached_asics()
         
         if not asics or not rate_usd_rub:
