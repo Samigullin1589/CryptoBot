@@ -22,7 +22,6 @@ from bot.services.admin_service import AdminService
 from bot.utils.helpers import (get_message_and_chat_id, sanitize_html,
                                show_main_menu)
 from bot.utils.plotting import generate_fng_image
-# 👇 ИМПОРТИРУЕМ ОБНОВЛЕННЫЕ СОСТОЯНИЯ
 from bot.utils.states import PriceInquiry, ProfitCalculator
 
 router = Router()
@@ -234,7 +233,8 @@ async def process_electricity_cost(message: Message, state: FSMContext):
         await state.update_data(electricity_cost_rub=cost_rub)
         await state.set_state(ProfitCalculator.waiting_for_pool_commission)
         
-        await message.answer(" पूल आयोग के प्रतिशत में दर्ज करें (उदाहरण के लिए, 1 или 1.5):")
+        # <<< ИСПРАВЛЕНО ЗДЕСЬ
+        await message.answer("📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):")
     except (ValueError, TypeError):
         await message.answer("❌ Неверный формат. Введите число (например, <code>4.5</code>).")
         
@@ -252,7 +252,6 @@ async def process_pool_commission(message: Message, state: FSMContext, market_da
         user_data = await state.get_data()
         cost_rub_per_kwh = user_data['electricity_cost_rub']
         
-        # Получаем необходимые данные
         rate_usd_rub = await market_data_service.get_usd_rub_rate()
         asics = await asic_service.get_profitable_asics()
         
@@ -267,7 +266,6 @@ async def process_pool_commission(message: Message, state: FSMContext, market_da
             if not asic.power:
                 continue
 
-            # Расчеты в рублях
             gross_income_usd = asic.profitability
             gross_income_rub = gross_income_usd * rate_usd_rub
             
