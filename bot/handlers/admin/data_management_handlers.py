@@ -1,28 +1,41 @@
-# bot/handlers/admin/data_management_handlers.py
-
 import logging
+import redis.asyncio as redis
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
-from bot.filters.admin_filter import IsAdmin
-from bot.services.asic_service import AsicService
+# Убедитесь, что у вас есть такой фильтр, или временно уберите его для теста
+from bot.filters.admin_filter import AdminFilter 
 
 router = Router()
-router.message.filter(IsAdmin()) # Все команды в этом файле только для админов
 logger = logging.getLogger(__name__)
 
-@router.message(Command("force_update_asics"))
-async def force_update_asics_db(message: Message, asic_service: AsicService):
+# Применяем фильтр, чтобы команда была доступна только админам
+@router.message(Command("force_clear_cache"), AdminFilter())
+async def force_clear_asic_cache(message: Message, redis_client: redis.Redis):
     """
-    Принудительно запускает задачу обновления базы данных ASIC'ов.
+    Принудительно очищает все ключи, связанные с ASIC, из кэша Redis.
     """
-    await message.answer("✅ Принято. Запускаю процесс обновления базы данных ASIC'ов в фоновом режиме. "
-                         "Это может занять до минуты. Вы получите уведомление о завершении.")
+    logger.warning(f"Admin {message.from_user.id} initiated a forced cache clear.")
     
     try:
-        asics = await asic_service.update_asics_db()
-        logger.info("Manual ASIC DB update completed successfully.")
-        await message.answer(f"✅ База данных ASIC успешно обновлена. Найдено и сохранено моделей: {len(asics)}.")
+        # Находим все ключи, связанные с паспортами ASIC
+        keys_to_delete = [key async for key in redis_client.scan_iter("asic_passport:*")]
+        
+        # Добавляем ключ времени последнего обновления
+        last_update_key = "asics_last_update_utc"
+        # Используем await, так как exists может быть асинхронным
+        if await redis_client.exists(last_update_key):
+            keys_to_delete.append(last_update_key)
+        
+        if keys_to_delete:
+            # redis-py > 4.2.0 требует передавать ключи как отдельные аргументы
+            deleted_count = await redis_client.delete(*keys_to_delete)
+            await message.answer(f"✅ Успешно удалено <b>{deleted_count}</b> ключей из кэша Redis.\n\n"
+                                 "При следующем запросе 'Топ ASIC' или 'Калькулятор' база данных будет загружена заново.")
+        else:
+            await message.answer("ℹ️ Кэш ASIC уже был пуст. Удалять нечего.")
+            
     except Exception as e:
-        logger.error(f"Manual ASIC DB update failed: {e}", exc_info=True)
-        await message.answer(f"❌ Произошла ошибка при обновлении базы данных: {e}")
+        logger.error(f"Failed to clear cache: {e}")
+        await message.answer(f"❌ Произошла ошибка при очистке кэша: {e}")
+

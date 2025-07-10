@@ -203,7 +203,10 @@ class AsicService:
         return profitability - daily_cost
 
     async def get_top_asics(self, count: int = 10, electricity_cost: float = 0.0) -> Tuple[List[AsicMiner], Optional[datetime]]:
-        """Достает все ASIC из кэша Redis, рассчитывает чистую прибыль и возвращает топ."""
+        """
+        Достает все ASIC из кэша Redis, рассчитывает чистую прибыль и возвращает топ.
+        Усиленная версия: игнорирует невалидные записи из кэша.
+        """
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
         
         if not keys:
@@ -222,11 +225,27 @@ class AsicService:
         for data in results:
             if not data: continue
             try:
+                # --- ФИНАЛЬНОЕ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
+                # 1. Жестко проверяем наличие имени. Если его нет, это мусор.
+                if b'name' not in data:
+                    logger.warning(f"Skipping invalid entry from Redis cache (no name field): {data}")
+                    continue
+                
+                # 2. Проверяем, что имя не пустое и не "Unknown"
+                name_bytes = data[b'name']
+                name_str = name_bytes.decode('utf-8', 'ignore').strip()
+                if not name_str or name_str.lower() == 'unknown':
+                    logger.warning(f"Skipping invalid/empty name from Redis cache: {data}")
+                    continue
+                # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
                 profitability = float(data.get(b'profitability', b'0.0'))
                 power = int(data.get(b'power', b'0'))
+                
                 net_profit = self.calculate_net_profit(profitability, power, electricity_cost)
+
                 asics.append(AsicMiner(
-                    name=data.get(b'name', b'Unknown').decode('utf-8'),
+                    name=name_str,
                     profitability=net_profit,
                     power=power,
                     algorithm=data.get(b'algorithm', b'Unknown').decode('utf-8'),
