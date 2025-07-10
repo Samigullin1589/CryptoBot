@@ -7,6 +7,7 @@ from aiogram import F, Router, Bot
 from aiogram.types import Message, CallbackQuery
 # 👇 Добавляем CommandObject для работы с аргументами команды
 from aiogram.filters import Command, CommandObject
+from aiogram.exceptions import TelegramBadRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
 
@@ -40,7 +41,8 @@ async def show_shop_page(message: Message, asic_service: AsicService, page: int 
     """
     Отображает страницу магазина с оборудованием.
     """
-    asics = await asic_service.get_profitable_asics()
+    # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
+    asics = await asic_service.get_all_cached_asics()
     if not asics:
         await message.edit_text("К сожалению, список оборудования сейчас недоступен.", reply_markup=get_mining_menu_keyboard())
         return
@@ -56,6 +58,7 @@ async def handle_shop_menu(call: CallbackQuery, asic_service: AsicService, admin
     Обработчик кнопки 'Магазин оборудования'.
     """
     await admin_service.track_command_usage("🏪 Магазин оборудования")
+    await call.message.edit_text("⏳ Загружаю оборудование...")
     await show_shop_page(call.message, asic_service, 0)
 
 
@@ -82,7 +85,8 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
         return
     
     asic_index = int(call.data.split("_")[2])
-    all_asics = await asic_service.get_profitable_asics()
+    # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
+    all_asics = await asic_service.get_all_cached_asics()
 
     if asic_index >= len(all_asics):
         await call.answer("❌ Ошибка. Оборудование не найдено. Попробуйте обновить магазин.", show_alert=True)
