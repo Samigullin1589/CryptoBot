@@ -49,23 +49,19 @@ class AsicService:
         """Сохраняет список ASIC'ов в Redis в виде хэшей."""
         logger.info(f"Caching {len(asics)} ASICs to Redis...")
         async with self.redis.pipeline() as pipe:
-            # Сначала удалим старые записи, чтобы избавиться от неактуальных моделей
             old_keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
             if old_keys:
                 await self.redis.delete(*old_keys)
 
-            # Добавляем новые
             for asic in asics:
-                # Создаем простой ключ для поиска
                 model_key = re.sub(r'[^a-z0-9]', '', asic.name.lower())
                 redis_key = f"asic_passport:{model_key}"
                 
                 asic_dict = {
-                    "name": asic.name,
-                    "profitability": str(asic.profitability),
-                    "algorithm": asic.algorithm,
+                    "name": asic.name or "N/A",
+                    "profitability": str(asic.profitability or 0.0),
+                    "algorithm": asic.algorithm or "N/A",
                     "power": str(asic.power or 0),
-                    # Добавляем доп. поля для "паспорта"
                     "hashrate": asic.hashrate or "N/A",
                     "efficiency": asic.efficiency or "N/A"
                 }
@@ -76,8 +72,7 @@ class AsicService:
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> Optional[List[AsicMiner]]:
         """Получает данные с JSON-эндпоинта WhatToMine."""
         data = await make_request(session, settings.whattomine_asics_url)
-        if not data or "asics" not in data:
-            return None
+        if not data or "asics" not in data: return None
         
         asics = []
         for key, asic_data in data["asics"].items():
@@ -86,10 +81,10 @@ class AsicService:
                 asics.append(AsicMiner(
                     name=key,
                     profitability=float(profitability_str),
-                    algorithm=asic_data.get("algorithm", "Unknown"),
+                    algorithm=asic_data.get("algorithm"),
                     power=parse_power(str(asic_data.get("power", 0))),
-                    hashrate=asic_data.get("hashrate", "N/A"),
-                    efficiency=None # В этом API нет данных по эффективности
+                    hashrate=asic_data.get("hashrate"),
+                    efficiency=None
                 ))
             except (ValueError, TypeError) as e:
                 logger.warning(f"Could not parse WhatToMine ASIC data for key {key}: {e}")
@@ -129,7 +124,6 @@ class AsicService:
         """Достает все ASIC из кэша Redis и сортирует по доходности."""
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
         if not keys:
-            # Если кэш пуст, принудительно обновляем его
             return await self.update_asics_db()
             
         pipe = self.redis.pipeline()
@@ -139,27 +133,28 @@ class AsicService:
         
         asics = [
             AsicMiner(
-                name=data.get('name', 'Unknown'),
-                profitability=float(data.get('profitability', 0.0)),
-                power=int(data.get('power', 0)),
-                algorithm=data.get('algorithm', 'Unknown'),
-                hashrate=data.get('hashrate', 'N/A'),
-                efficiency=data.get('efficiency', 'N/A')
+                name=data.get(b'name', b'Unknown').decode('utf-8'),
+                profitability=float(data.get(b'profitability', b'0.0')),
+                power=int(data.get(b'power', b'0')),
+                algorithm=data.get(b'algorithm', b'Unknown').decode('utf-8'),
+                hashrate=data.get(b'hashrate', b'N/A').decode('utf-8'),
+                efficiency=data.get(b'efficiency', b'N/A').decode('utf-8')
             ) for data in results if data
         ]
         return sorted(asics, key=lambda x: x.profitability, reverse=True)
 
 
-    async def find_asic_by_query(self, model_query: str) -> Optional[AsicMiner]:
-        """Ищет один ASIC в кэше Redis по нечеткому названию модели."""
+    async def find_asic_by_query(self, model_query: str) -> Optional[dict]:
+        """Ищет один ASIC в кэше Redis по нечеткому названию модели и возвращает как словарь."""
         normalized_query = re.sub(r'[^a-z0-9]', '', model_query.lower())
         if not normalized_query: return None
 
+        # ИСПРАВЛЕНИЕ: redis.scan_iter возвращает байты, если decode_responses=False на уровне клиента.
+        # Но у нас decode_responses=True, поэтому key уже должен быть строкой. Убираем .decode()
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
         
         for key in keys:
             # Сравниваем нормализованный запрос с нормализованным ключом
-            if normalized_query in key.decode('utf-8').replace('asicpassport', ''):
-                data = await self.redis.hgetall(key)
-                return AsicMiner(**{k:v for k,v in data.items()})
+            if normalized_query in key.replace('asic_passport:', ''):
+                return await self.redis.hgetall(key)
         return None
