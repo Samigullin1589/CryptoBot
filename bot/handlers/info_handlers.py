@@ -28,7 +28,6 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
-# --- УНИВЕРСАЛЬНЫЙ МЕТОД ОТВЕТА ---
 async def safe_edit_or_send(call: CallbackQuery, text: str, markup, delete_photo: bool = True):
     """
     Безопасно редактирует сообщение, если это текст,
@@ -73,12 +72,13 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     await admin_service.track_command_usage("⚙️ Топ ASIC")
     
     if isinstance(update, CallbackQuery):
-        message = update.message
+        message_to_edit = update.message
         await safe_edit_or_send(update, "⏳ Загружаю актуальный список...", None, delete_photo=False)
     else:
-        message = await update.answer("⏳ Загружаю актуальный список...")
+        message_to_edit = await update.answer("⏳ Загружаю актуальный список...")
 
-    asics = await asic_service.get_profitable_asics()
+    # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
+    asics = await asic_service.get_all_cached_asics()
     
     if not asics:
         text = "❌ Не удалось получить список ASIC-майнеров. Попробуйте позже."
@@ -89,7 +89,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
                      f"{f' | {miner.algorithm}' if miner.algorithm else ''}"
                      f"{f' | {miner.power}W' if miner.power else ''}\n")
     
-    await message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    await message_to_edit.edit_text(text, reply_markup=get_main_menu_keyboard())
 
 
 @router.callback_query(F.data == "menu_price")
@@ -205,7 +205,6 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     temp_msg = await message.answer("⏳ Получаю курс...")
     await send_price_info(temp_msg, message.text, price_service)
 
-# --- БЛОК КАЛЬКУЛЯТОРА (ПОЛНОСТЬЮ ПЕРЕПИСАН) ---
 
 @router.callback_query(F.data == "menu_calculator")
 @router.message(F.text == "⛏️ Калькулятор")
@@ -233,7 +232,6 @@ async def process_electricity_cost(message: Message, state: FSMContext):
         await state.update_data(electricity_cost_rub=cost_rub)
         await state.set_state(ProfitCalculator.waiting_for_pool_commission)
         
-        # <<< ИСПРАВЛЕНО ЗДЕСЬ
         await message.answer("📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):")
     except (ValueError, TypeError):
         await message.answer("❌ Неверный формат. Введите число (например, <code>4.5</code>).")
@@ -253,7 +251,8 @@ async def process_pool_commission(message: Message, state: FSMContext, market_da
         cost_rub_per_kwh = user_data['electricity_cost_rub']
         
         rate_usd_rub = await market_data_service.get_usd_rub_rate()
-        asics = await asic_service.get_profitable_asics()
+        # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
+        asics = await asic_service.get_all_cached_asics()
         
         if not asics or not rate_usd_rub:
             await message.answer("❌ Не удалось получить данные о курсах или ASIC. Попробуйте позже.")
@@ -289,9 +288,6 @@ async def process_pool_commission(message: Message, state: FSMContext, market_da
         await message.answer("❌ Неверный формат. Введите число (например, <code>1.5</code>).")
     
     await state.clear()
-
-
-# --- КОНЕЦ БЛОКА КАЛЬКУЛЯТОРА ---
 
 
 @router.callback_query(F.data == "menu_quiz")
