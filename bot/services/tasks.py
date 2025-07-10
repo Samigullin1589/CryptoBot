@@ -40,31 +40,34 @@ async def update_asics_cache_job():
         logger.error("Error in update_asics_cache_job", exc_info=True)
 
 
+# --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
 async def send_morning_summary_job():
-    """Задача для отправки утренней сводки с подробным логированием."""
+    """Задача для отправки утренней сводки (Курсы + Индекс F&G)."""
     logger.info("--- Starting morning summary job ---")
     try:
         bot = dependencies.bot
-        logger.info(f"Bot dependency: {'OK' if bot else 'Not found'}")
         price_service = dependencies.price_service
-        logger.info(f"Price service dependency: {'OK' if price_service else 'Not found'}")
         market_data_service = dependencies.market_data_service
-        logger.info(f"Market data service dependency: {'OK' if market_data_service else 'Not found'}")
 
         if not all([bot, price_service, market_data_service, settings.news_chat_id]):
-            logger.warning("send_morning_summary_job skipped: critical dependencies or chat_id not available.")
+            logger.warning("send_morning_summary_job skipped: dependencies or chat_id not available.")
             return
 
         logger.info("All dependencies found. Fetching data...")
-        prices = await price_service.get_prices(['BTC', 'ETH'])
-        logger.info(f"Prices fetched: {prices}")
+        
+        # ИСПРАВЛЕНИЕ: Получаем каждую цену отдельно
+        btc_coin = await price_service.get_crypto_price('BTC')
+        eth_coin = await price_service.get_crypto_price('ETH')
+        logger.info(f"Prices fetched: BTC {'OK' if btc_coin else 'Failed'}, ETH {'OK' if eth_coin else 'Failed'}")
+        
         fng_index = await market_data_service.get_fear_and_greed_index()
-        logger.info(f"F&G Index fetched: {fng_index}")
+        logger.info(f"F&G Index fetched: {'OK' if fng_index else 'Failed'}")
 
-        btc_price = prices.get('BTC', 'N/A')
-        eth_price = prices.get('ETH', 'N/A')
-        fng_value = fng_index['value'] if fng_index else 'N/A'
-        fng_text = fng_index['value_classification'] if fng_index else 'N/A'
+        # Формируем текст, проверяя наличие данных
+        btc_price = f"{btc_coin.price:,.2f}" if btc_coin else "N/A"
+        eth_price = f"{eth_coin.price:,.2f}" if eth_coin else "N/A"
+        fng_value = fng_index.get('value', 'N/A') if fng_index else 'N/A'
+        fng_text = fng_index.get('value_classification', 'N/A') if fng_index else 'N/A'
 
         text = (
             "☕️ <b>Доброе утро! Ваша крипто-сводка:</b>\n\n"
@@ -90,6 +93,7 @@ async def send_leaderboard_job():
             return
 
         top_users = await admin_service.get_top_users_by_balance(limit=5)
+        
         if not top_users:
             text = "🏆 <b>Еженедельный лидерборд майнеров</b>\n\nНа этой неделе у нас пока нет лидеров. Начните играть, чтобы попасть в топ!"
         else:
@@ -99,6 +103,7 @@ async def send_leaderboard_job():
                 username = f"@{user_data['username']}" if user_data.get('username') else f"User ID {user_data['user_id']}"
                 balance = user_data['balance']
                 leaderboard_lines.append(f"{medals[i]} {username} - <b>{balance:.2f} монет</b>")
+            
             leaderboard_text = "\n".join(leaderboard_lines)
             text = (
                 "🏆 <b>Еженедельный лидерборд майнеров</b>\n\n"
