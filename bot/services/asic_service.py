@@ -36,17 +36,14 @@ class AsicService:
         final_asics = []
         
         async with aiohttp.ClientSession() as session:
-            # --- Попытка 1: WhatToMine API (основной источник) ---
             logger.info("[Step 1/3] Trying primary source: WhatToMine API...")
             final_asics = await self._fetch_from_whattomine_api(session)
             
-            # --- Попытка 2: AsicMinerValue Parser (вторичный источник) ---
             if not final_asics:
                 logger.warning("[Step 1/3] FAILED. WhatToMine API returned no valid data.")
                 logger.info("[Step 2/3] Trying secondary source: AsicMinerValue Parser...")
                 final_asics = await self._fetch_from_asicminervalue(session)
             
-            # --- Попытка 3: Локальный JSON (аварийный источник) ---
             if not final_asics:
                 logger.warning("[Step 2/3] FAILED. AsicMinerValue Parser returned no valid data.")
                 logger.info("[Step 3/3] Trying final source: Local fallback_asics.json...")
@@ -58,12 +55,10 @@ class AsicService:
                     logger.error("Local fallback_asics.json is empty or invalid.")
                     final_asics = []
 
-        # --- Финальная проверка и кэширование ---
         if not final_asics:
             logger.error("CRITICAL: All data sources failed completely. Cache will not be updated.")
             return []
 
-        # Фильтруем любые потенциально невалидные записи (без имени или доходности)
         valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None]
         
         if not valid_asics:
@@ -105,34 +100,27 @@ class AsicService:
         logger.info(f"Successfully cached {cached_count} ASICs.")
 
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> Optional[List[AsicMiner]]:
-        """Получает данные с JSON-эндпоинта WhatToMine. Более надежный источник."""
         try:
             data = await make_request(session, settings.whattomine_asics_url)
             if not data or "asics" not in data:
                 logger.warning("WTM fetch failed: Invalid data structure or empty response.")
                 return None
-            
             asics = []
             for key, asic_data in data["asics"].items():
                 try:
                     if "revenue" not in asic_data: continue
                     profitability_str = asic_data.get("revenue", "0").replace("$", "").strip()
                     asics.append(AsicMiner(
-                        name=key,
-                        profitability=float(profitability_str),
-                        algorithm=asic_data.get("algorithm"),
-                        power=parse_power(str(asic_data.get("power", 0))),
-                        hashrate=asic_data.get("hashrate"),
-                        efficiency=None
+                        name=key, profitability=float(profitability_str),
+                        algorithm=asic_data.get("algorithm"), power=parse_power(str(asic_data.get("power", 0))),
+                        hashrate=asic_data.get("hashrate"), efficiency=None
                     ))
                 except (ValueError, TypeError) as e:
                     logger.warning(f"Could not parse WTM ASIC data for key '{key}': {e}. Skipping.")
                     continue
-            
             if not asics:
                 logger.warning("WTM parsing resulted in an empty list, though API responded.")
                 return None
-
             logger.info(f"Successfully fetched {len(asics)} ASICs from WhatToMine.")
             return asics
         except Exception as e:
@@ -140,19 +128,16 @@ class AsicService:
             return None
 
     async def _fetch_from_asicminervalue(self, session: aiohttp.ClientSession) -> Optional[List[AsicMiner]]:
-        """Парсит данные с сайта asicminervalue.com. Менее надежный источник."""
         try:
             html_content = await make_request(session, settings.asicminervalue_url, response_type='text')
             if not html_content:
                 logger.warning("AMV fetch failed: Could not download HTML.")
                 return None
-            
             soup = BeautifulSoup(html_content, 'lxml')
             table = soup.find('table', {'id': 'datatable'})
             if not table or not table.find('tbody'):
                 logger.warning("AMV parsing failed: Could not find data table. Site structure may have changed.")
                 return None
-
             asics = []
             for row in table.tbody.find_all('tr'):
                 try:
@@ -162,23 +147,17 @@ class AsicService:
                     profitability_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
                     power_text = cols[4].text.strip().replace('W', '').strip()
                     if not name or not profitability_text or not power_text: continue
-                    
                     asics.append(AsicMiner(
-                        name=name,
-                        profitability=float(profitability_text),
-                        power=int(power_text),
-                        hashrate=cols[2].text.strip(),
-                        efficiency=cols[5].text.strip(),
-                        algorithm="Unknown"
+                        name=name, profitability=float(profitability_text),
+                        power=int(power_text), hashrate=cols[2].text.strip(),
+                        efficiency=cols[5].text.strip(), algorithm="Unknown"
                     ))
                 except (AttributeError, ValueError, IndexError, TypeError) as e:
                     logger.warning(f"Could not parse a row on AMV: {e}. Skipping row.")
                     continue
-            
             if not asics:
                 logger.warning("AMV parsing resulted in an empty list, though table was found.")
                 return None
-
             logger.info(f"Successfully fetched {len(asics)} ASICs from AsicMinerValue.")
             return asics
         except Exception as e:
@@ -191,7 +170,8 @@ class AsicService:
         """Возвращает время последнего обновления базы из Redis."""
         last_update_iso = await self.redis.get(self.LAST_UPDATE_KEY)
         if last_update_iso:
-            return datetime.fromisoformat(last_update_iso.decode('utf-8'))
+            # ИСПРАВЛЕНИЕ: last_update_iso уже является строкой из-за decode_responses=True
+            return datetime.fromisoformat(last_update_iso)
         return None
 
     @staticmethod
@@ -205,7 +185,7 @@ class AsicService:
     async def get_top_asics(self, count: int = 10, electricity_cost: float = 0.0) -> Tuple[List[AsicMiner], Optional[datetime]]:
         """
         Достает все ASIC из кэша Redis, рассчитывает чистую прибыль и возвращает топ.
-        Усиленная версия: игнорирует невалидные записи из кэша.
+        ФИНАЛЬНАЯ ВЕРСИЯ: работает со строками (str) из-за decode_responses=True.
         """
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
         
@@ -225,22 +205,20 @@ class AsicService:
         for data in results:
             if not data: continue
             try:
-                # --- ФИНАЛЬНОЕ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ---
-                # 1. Жестко проверяем наличие имени. Если его нет, это мусор.
-                if b'name' not in data:
-                    logger.warning(f"Skipping invalid entry from Redis cache (no name field): {data}")
+                # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ---
+                # Работаем со строками ('name'), а не с байтами (b'name')
+                if 'name' not in data:
+                    logger.warning(f"Skipping invalid entry from Redis cache (no 'name' field): {data}")
                     continue
                 
-                # 2. Проверяем, что имя не пустое и не "Unknown"
-                name_bytes = data[b'name']
-                name_str = name_bytes.decode('utf-8', 'ignore').strip()
+                name_str = data['name'].strip()
                 if not name_str or name_str.lower() == 'unknown':
                     logger.warning(f"Skipping invalid/empty name from Redis cache: {data}")
                     continue
                 # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-                profitability = float(data.get(b'profitability', b'0.0'))
-                power = int(data.get(b'power', b'0'))
+                profitability = float(data.get('profitability', '0.0'))
+                power = int(data.get('power', '0'))
                 
                 net_profit = self.calculate_net_profit(profitability, power, electricity_cost)
 
@@ -248,11 +226,11 @@ class AsicService:
                     name=name_str,
                     profitability=net_profit,
                     power=power,
-                    algorithm=data.get(b'algorithm', b'Unknown').decode('utf-8'),
-                    hashrate=data.get(b'hashrate', b'N/A').decode('utf-8'),
-                    efficiency=data.get(b'efficiency', b'N/A').decode('utf-8')
+                    algorithm=data.get('algorithm', 'Unknown'),
+                    hashrate=data.get('hashrate', 'N/A'),
+                    efficiency=data.get('efficiency', 'N/A')
                 ))
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError, KeyError) as e:
                 logger.warning(f"Could not process cached ASIC data: {data}. Error: {e}")
                 continue
         
@@ -266,9 +244,7 @@ class AsicService:
         normalized_query = re.sub(r'[^a-z0-9]', '', model_query.lower())
         if not normalized_query: return None
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
-        for key_bytes in keys:
-            key_str = key_bytes.decode('utf-8')
+        for key_str in keys:
             if normalized_query in key_str.replace('asic_passport:', ''):
-                raw_data = await self.redis.hgetall(key_bytes)
-                return {k.decode('utf-8'): v.decode('utf-8') for k, v in raw_data.items()}
+                return await self.redis.hgetall(key_str)
         return None
