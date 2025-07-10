@@ -41,8 +41,11 @@ async def show_shop_page(message: Message, asic_service: AsicService, page: int 
     """
     Отображает страницу магазина с оборудованием.
     """
-    # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
-    asics = await asic_service.get_all_cached_asics()
+    # --- ИСПРАВЛЕНИЕ 1 ---
+    # Вызываем новый метод get_top_asics и распаковываем кортеж
+    asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     if not asics:
         await message.edit_text("К сожалению, список оборудования сейчас недоступен.", reply_markup=get_mining_menu_keyboard())
         return
@@ -85,8 +88,11 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
         return
     
     asic_index = int(call.data.split("_")[2])
-    # ИСПРАВЛЕНО: Вызываем новый метод для получения данных из кэша
-    all_asics = await asic_service.get_all_cached_asics()
+    
+    # --- ИСПРАВЛЕНИЕ 2 ---
+    # Вызываем новый метод get_top_asics и распаковываем кортеж
+    all_asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     if asic_index >= len(all_asics):
         await call.answer("❌ Ошибка. Оборудование не найдено. Попробуйте обновить магазин.", show_alert=True)
