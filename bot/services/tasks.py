@@ -4,6 +4,7 @@ from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+
 async def send_news_job():
     """Задача для отправки новостей."""
     logger.info("Executing scheduled news job...")
@@ -28,19 +29,19 @@ async def send_news_job():
 
 
 async def update_asics_cache_job():
-    """Задача для обновления кэша ASIC."""
-    logger.info("Executing scheduled ASIC cache update job...")
+    """Задача для обновления базы данных ASIC в Redis."""
+    logger.info("Executing scheduled ASIC DB update job...")
     try:
         asic_service = dependencies.asic_service
         if not asic_service:
             logger.warning("update_asics_cache_job skipped: asic_service not initialized.")
             return
-        await asic_service.get_profitable_asics()
+        # ИСПРАВЛЕНО: Вызываем новую функцию для обновления всей базы
+        await asic_service.update_asics_db()
     except Exception as e:
         logger.error("Error in update_asics_cache_job", exc_info=True)
 
 
-# --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
 async def send_morning_summary_job():
     """Задача для отправки утренней сводки (Курсы + Индекс F&G)."""
     logger.info("--- Starting morning summary job ---")
@@ -53,17 +54,10 @@ async def send_morning_summary_job():
             logger.warning("send_morning_summary_job skipped: dependencies or chat_id not available.")
             return
 
-        logger.info("All dependencies found. Fetching data...")
-        
-        # ИСПРАВЛЕНИЕ: Получаем каждую цену отдельно
         btc_coin = await price_service.get_crypto_price('BTC')
         eth_coin = await price_service.get_crypto_price('ETH')
-        logger.info(f"Prices fetched: BTC {'OK' if btc_coin else 'Failed'}, ETH {'OK' if eth_coin else 'Failed'}")
-        
         fng_index = await market_data_service.get_fear_and_greed_index()
-        logger.info(f"F&G Index fetched: {'OK' if fng_index else 'Failed'}")
 
-        # Формируем текст, проверяя наличие данных
         btc_price = f"{btc_coin.price:,.2f}" if btc_coin else "N/A"
         eth_price = f"{eth_coin.price:,.2f}" if eth_coin else "N/A"
         fng_value = fng_index.get('value', 'N/A') if fng_index else 'N/A'
