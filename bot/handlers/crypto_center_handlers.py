@@ -3,6 +3,7 @@ import redis.asyncio as redis
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.services.crypto_center_service import CryptoCenterService
 from bot.services.admin_service import AdminService
@@ -21,7 +22,6 @@ AI_DISCLAIMER = "\n\n<i>⚠️ Информация сгенерирована �
 
 # --- ГЛАВНОЕ МЕНЮ КРИПТО-ЦЕНТРА ---
 
-# --- ИСПРАВЛЕНИЕ: Ловим не текст, а callback_data от инлайн-кнопки ---
 @router.callback_query(F.data == "menu_crypto_center")
 async def handle_crypto_center_menu(call: CallbackQuery, admin_service: AdminService):
     """Отображает главное меню Крипто-Центра с выбором разделов."""
@@ -31,17 +31,33 @@ async def handle_crypto_center_menu(call: CallbackQuery, admin_service: AdminSer
         "Эксклюзивный раздел с информацией, которая может принести прибыль.\n\n"
         "Выберите направление:"
     )
-    # Используем call.message.edit_text для инлайн-кнопок
     await call.message.edit_text(text, reply_markup=get_crypto_center_main_menu_keyboard())
     await call.answer()
 
+# --- ИСПРАВЛЕННЫЙ БЛОК ---
 @router.callback_query(F.data == "back_to_main_menu")
 async def back_to_main_menu(call: CallbackQuery):
-    """Возвращает пользователя в главное меню."""
+    """
+    Возвращает пользователя в главное меню.
+    Удаляет предыдущее сообщение (особенно важно для опросов) и отправляет новое.
+    """
     text = "Возвращаю вас в главное меню..."
-    # Здесь мы редактируем сообщение, чтобы показать главное меню
-    await call.message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    try:
+        # Пытаемся удалить сообщение, к которому привязана кнопка (опрос)
+        await call.message.delete()
+    except TelegramBadRequest as e:
+        # Если не получилось (например, сообщение слишком старое), просто логируем
+        logger.error(f"Could not delete message on back_to_main_menu: {e}")
+        # И попробуем хотя бы убрать кнопки
+        try:
+            await call.message.edit_reply_markup(reply_markup=None)
+        except Exception as e2:
+            logger.error(f"Could not even edit reply markup: {e2}")
+    
+    # Отправляем новое сообщение с главным меню
+    await call.message.answer(text, reply_markup=get_main_menu_keyboard())
     await call.answer()
+# --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
 
 
 @router.callback_query(F.data == "back_to_crypto_center_main")
@@ -81,7 +97,6 @@ async def handle_airdrops_list(call: CallbackQuery, crypto_center_service: Crypt
     user_id = call.from_user.id
     airdrops_with_progress = []
     for airdrop in all_airdrops:
-        # Для отслеживания прогресса нам нужен стабильный ID, который генерирует AI
         airdrop_id = airdrop.get('id', airdrop['name'].lower().replace(' ', '_'))
         progress = await crypto_center_service.get_user_progress(user_id, airdrop_id)
         total_tasks = len(airdrop.get('tasks', []))
