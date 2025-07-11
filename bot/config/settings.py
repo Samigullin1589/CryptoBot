@@ -17,14 +17,8 @@ def load_fallback_asics() -> List[Dict[str, Any]]:
 class AppSettings(BaseSettings):
     bot_token: str
     redis_url: str 
-    
-    # --- ИСПРАВЛЕННЫЙ БЛОК API-КЛЮЧЕЙ ---
-    # Возвращаем openai_api_key для викторины
     openai_api_key: str = ""
-    # Добавляем gemini_api_key для Крипто-Центра
     gemini_api_key: str = "" 
-    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
-
     admin_chat_id: int
     news_chat_id: int
     cmc_api_key: str = ""
@@ -60,8 +54,16 @@ class AppSettings(BaseSettings):
     }
     DEFAULT_ELECTRICITY_TARIFF: str = "Домашний 💡"
 
+    # --- НОВЫЙ БЛОК ---
     # Crypto Center Settings
-    crypto_center_news_api_url: str = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=Airdrop,Mining,DeFi,L1,L2"
+    crypto_center_news_api_url: str = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=Airdrop,Mining,DeFi,L1,L2,Altcoin"
+    # Дополнительные источники для AI-анализа
+    alpha_rss_feeds: List[str] = [
+        "https://thedefiant.io/feed",
+        "https://bankless.substack.com/feed",
+        "https://www.theblock.co/rss.xml"
+    ]
+    # --- КОНЕЦ НОВОГО БЛОКА ---
 
     # Moderation Settings
     STOP_WORDS: List[str] = ["казино", "ставки", "бонус", "фриспин", "депозит", "работа", "вакансия", "зарплата", "заработок"]

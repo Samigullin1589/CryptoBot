@@ -4,6 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 import redis.asyncio as redis
 import aiohttp
+import feedparser
 from async_lru import alru_cache
 
 from bot.config.settings import settings
@@ -19,180 +20,107 @@ class CryptoCenterService:
 
     # --- AI-POWERED, SELF-UPDATING METHODS ---
 
-    async def _get_ai_summary(self, article_body: str) -> str:
-        """Отправляет текст статьи в Gemini для получения краткой выжимки на русском."""
+    async def _gather_live_data(self) -> str:
+        """Собирает данные из новостных API и RSS-лент для анализа."""
+        logger.info("Gathering live data for AI analysis...")
+        all_text_content = ""
+        
+        # 1. Сбор данных из CryptoCompare API
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(settings.crypto_center_news_api_url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        articles = data.get("Data", [])
+                        for article in articles[:10]: # Берем 10 свежих
+                            all_text_content += f"Title: {article.get('title', '')}\nBody: {article.get('body', '')}\n\n"
+        except Exception as e:
+            logger.error(f"Failed to fetch from CryptoCompare: {e}")
+
+        # 2. Сбор данных из RSS-лент
+        for feed_url in settings.alpha_rss_feeds:
+            try:
+                feed = await asyncio.to_thread(feedparser.parse, feed_url)
+                for entry in feed.entries[:3]: # Берем 3 свежих из каждой ленты
+                    all_text_content += f"Title: {entry.title}\nSummary: {entry.summary}\n\n"
+            except Exception as e:
+                logger.error(f"Failed to parse RSS feed {feed_url}: {e}")
+        
+        logger.info(f"Gathered {len(all_text_content)} characters of live data for analysis.")
+        return all_text_content
+
+
+    async def _generate_alpha_from_ai(self, prompt: str, json_schema: Dict) -> List[Dict[str, Any]]:
+        """Универсальная функция для запроса к Gemini API."""
         if not settings.gemini_api_key:
-            logger.warning("GEMINI_API_KEY is not set. Skipping AI summary.")
-            return "AI-анализ недоступен."
+            logger.error("GEMINI_API_KEY is not set. Cannot generate AI alpha.")
+            return []
 
-        prompt = (
-            "You are a crypto news analyst. Read the following news article and provide a very short, "
-            "one-sentence summary in Russian (10-15 words max) that captures the main point. "
-            "Be concise and informative. Here is the article: \n\n"
-            f"{article_body}"
-        )
-        
         try:
             api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
-            payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-            
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                "generationConfig": {"responseMimeType": "application/json", "responseSchema": json_schema}
+            }
             async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json=payload, timeout=20) as response:
+                async with session.post(api_url, json=payload, timeout=45) as response:
                     if response.status != 200:
-                        logger.error(f"Gemini Summary API returned status {response.status}: {await response.text()}")
-                        return "Не удалось проанализировать."
-                    
+                        logger.error(f"Gemini API returned status {response.status}: {await response.text()}")
+                        return []
                     result = await response.json()
-                    summary = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                    return summary.strip() if summary else "Не удалось проанализировать."
-
-        except asyncio.TimeoutError:
-            logger.error("Gemini Summary API request timed out.")
-            return "Анализ занял слишком много времени."
+                    text_content = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
+                    parsed_json = json.loads(text_content)
+                    return parsed_json
         except Exception as e:
-            logger.error(f"An error occurred during AI summary generation: {e}")
-            return "Ошибка анализа."
+            logger.error(f"An error occurred during AI Alpha generation: {e}")
+            return []
 
-
-    @alru_cache(maxsize=1, ttl=60 * 15)  # Кэшируем результат на 15 минут
-    async def fetch_live_feed_with_summary(self) -> Optional[List[Dict[str, Any]]]:
-        """
-        Запрашивает свежие новости, получает для каждой краткую выжимку от AI и возвращает.
-        """
-        logger.info("Fetching fresh crypto news feed for AI analysis...")
-        headers = {'Authorization': f'Apikey {settings.cmc_api_key}'} if settings.cmc_api_key else {}
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(settings.crypto_center_news_api_url, headers=headers) as response:
-                    if response.status != 200:
-                        logger.error(f"Crypto News API returned status {response.status}")
-                        return None
-                    data = await response.json()
-                    
-                    if "Data" not in data or not isinstance(data["Data"], list):
-                        logger.error("Crypto News API response has unexpected structure.")
-                        return None
-                    
-                    news_articles = data["Data"][:5] # Анализируем только 5 свежих новостей, чтобы не было долго
-                    logger.info(f"Successfully fetched {len(news_articles)} articles for analysis.")
-
-                    analysis_tasks = [self._get_ai_summary(article['body']) for article in news_articles]
-                    summaries = await asyncio.gather(*analysis_tasks)
-                    
-                    for article, summary in zip(news_articles, summaries):
-                        article['ai_summary'] = summary
-                        
-                    return news_articles
-
-        except Exception as e:
-            logger.error(f"An error occurred while fetching crypto news feed: {e}")
-            return None
-
-    # --- ПОЛНЫЙ КОД ДЛЯ ГЕНЕРАЦИИ ГАЙДОВ ---
-    
-    @alru_cache(maxsize=2, ttl=3600 * 6)
+    @alru_cache(maxsize=2, ttl=3600 * 4)  # Кэшируем на 4 часа
     async def generate_airdrop_alpha(self) -> List[Dict[str, Any]]:
-        """
-        Генерирует актуальный список Airdrop-проектов с помощью Gemini API.
-        """
-        logger.info("Generating new Airdrop Alpha using Gemini API...")
-        prompt = (
-            "Act as a crypto researcher. Identify the top 3 most promising, unreleased projects that are highly likely to have an airdrop in the near future. "
-            "For each project, provide a name, a short compelling description, its current status (e.g., 'Active Testnet', 'Confirmed Airdrop'), "
-            "a list of 5 concrete actions a user should take to qualify, and a link to an official guide or announcement. "
-            "Ensure the information is relevant for the current date. Format the output as a JSON array."
-        )
-        
-        json_schema = {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "id": {"type": "STRING"}, "name": {"type": "STRING"},
-                    "description": {"type": "STRING"}, "status": {"type": "STRING"},
-                    "tasks": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "guide_url": {"type": "STRING"}
-                },
-                "required": ["id", "name", "description", "status", "tasks", "guide_url"]
-            }
-        }
-
-        try:
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"responseMimeType": "application/json", "responseSchema": json_schema}
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json=payload) as response:
-                    if response.status != 200:
-                        logger.error(f"Gemini API returned status {response.status}: {await response.text()}")
-                        return []
-                    result = await response.json()
-                    text_content = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
-                    parsed_json = json.loads(text_content)
-                    logger.info(f"Successfully generated {len(parsed_json)} airdrop opportunities.")
-                    return parsed_json
-        except Exception as e:
-            logger.error(f"An error occurred during Airdrop Alpha generation: {e}")
+        """Генерирует актуальный список Airdrop-проектов на основе живых данных."""
+        live_data = await self._gather_live_data()
+        if not live_data:
+            logger.warning("No live data gathered for airdrop analysis.")
             return []
+        
+        prompt = (
+            "You are a crypto researcher. Based ONLY on the provided recent news and articles below, identify the top 3 most promising airdrop opportunities. "
+            "For each, extract the project name, a short summary of why it's a hot opportunity right now, a list of 3-5 concrete actions to take, and an official link if available. "
+            "If the context doesn't contain enough information, return an empty array. Context:\n\n"
+            f"{live_data}"
+        )
+        json_schema = { "type": "ARRAY", "items": { "type": "OBJECT", "properties": { "id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"} }, "required": ["id", "name", "description", "status", "tasks"] } }
+        
+        result = await self._generate_alpha_from_ai(prompt, json_schema)
+        logger.info(f"AI analysis resulted in {len(result)} airdrop opportunities.")
+        return result
 
-    @alru_cache(maxsize=2, ttl=3600 * 6)
+    @alru_cache(maxsize=2, ttl=3600 * 4)
     async def generate_mining_alpha(self) -> List[Dict[str, Any]]:
-        """
-        Генерирует актуальные майнинг-сигналы с помощью Gemini API.
-        """
-        logger.info("Generating new Mining Alpha using Gemini API...")
-        prompt = (
-            "Act as a mining analyst. Identify the top 3 most relevant and potentially profitable mining opportunities right now, considering different hardware types (ASIC, GPU, CPU). "
-            "Focus on emerging trends like DePIN, privacy coins, or new promising algorithms. For each opportunity, provide a name, a short description of why it's relevant now, "
-            "the algorithm, recommended hardware, its current status (e.g., 'High Potential', 'Situational'), and a link to an official guide or pool. "
-            "Ensure the information is relevant for the current date. Format the output as a JSON array."
-        )
-        
-        json_schema = {
-            "type": "ARRAY",
-            "items": {
-                "type": "OBJECT",
-                "properties": {
-                    "id": {"type": "STRING"}, "name": {"type": "STRING"},
-                    "description": {"type": "STRING"}, "algorithm": {"type": "STRING"},
-                    "hardware": {"type": "STRING"}, "status": {"type": "STRING"},
-                    "guide_url": {"type": "STRING"}
-                },
-                "required": ["id", "name", "description", "algorithm", "hardware", "status", "guide_url"]
-            }
-        }
-
-        try:
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"responseMimeType": "application/json", "responseSchema": json_schema}
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json=payload) as response:
-                    if response.status != 200:
-                        logger.error(f"Gemini API returned status {response.status}: {await response.text()}")
-                        return []
-                    result = await response.json()
-                    text_content = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '[]')
-                    parsed_json = json.loads(text_content)
-                    logger.info(f"Successfully generated {len(parsed_json)} mining opportunities.")
-                    return parsed_json
-        except Exception as e:
-            logger.error(f"An error occurred during Mining Alpha generation: {e}")
+        """Генерирует актуальные майнинг-сигналы на основе живых данных."""
+        live_data = await self._gather_live_data()
+        if not live_data:
+            logger.warning("No live data gathered for mining analysis.")
             return []
+            
+        prompt = (
+            "You are a mining analyst. Based ONLY on the provided recent news and articles below, identify the top 3 most relevant mining opportunities (for ASIC, GPU, or CPU). "
+            "Focus on emerging trends. For each, extract the opportunity name, a short summary of why it's relevant, the algorithm, recommended hardware, and an official link if available. "
+            "If the context doesn't contain enough information, return an empty array. Context:\n\n"
+            f"{live_data}"
+        )
+        json_schema = { "type": "ARRAY", "items": { "type": "OBJECT", "properties": { "id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "algorithm": {"type": "STRING"}, "hardware": {"type": "STRING"}, "status": {"type": "STRING"}, "guide_url": {"type": "STRING"} }, "required": ["id", "name", "description", "algorithm", "hardware"] } }
+        
+        result = await self._generate_alpha_from_ai(prompt, json_schema)
+        logger.info(f"AI analysis resulted in {len(result)} mining opportunities.")
+        return result
 
     # --- Методы для работы с прогрессом пользователя ---
     
     def _get_user_progress_key(self, user_id: int, airdrop_id: str) -> str:
         return f"user:{user_id}:airdrop:{airdrop_id}:completed_tasks"
 
-    async def get_user_progress(self, user_id: int, airdrop_id: str, all_airdrops: List[Dict[str, Any]]) -> List[int]:
-        airdrop = self.get_airdrop_by_id(airdrop_id, all_airdrops)
-        if not airdrop: return []
+    async def get_user_progress(self, user_id: int, airdrop_id: str) -> List[int]:
         progress_key = self._get_user_progress_key(user_id, airdrop_id)
         completed_tasks_str = await self.redis.smembers(progress_key)
         return sorted([int(task_idx) for task_idx in completed_tasks_str])
@@ -206,9 +134,3 @@ class CryptoCenterService:
         else:
             await self.redis.sadd(progress_key, task_index_str)
             return True
-            
-    def get_airdrop_by_id(self, airdrop_id: str, all_airdrops: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        for airdrop in all_airdrops:
-            if airdrop['id'] == airdrop_id:
-                return airdrop
-        return None

@@ -16,7 +16,7 @@ from bot.keyboards.keyboards import (
 router = Router()
 logger = logging.getLogger(__name__)
 
-AI_DISCLAIMER = "\n\n<i>⚠️ Информация сгенерирована ИИ и может содержать неточности. Всегда проводите собственное исследование (DYOR).</i>"
+AI_DISCLAIMER = "\n\n<i>⚠️ Информация сгенерирована ИИ на основе свежих данных и может содержать неточности. Всегда проводите собственное исследование (DYOR).</i>"
 
 # --- ГЛАВНОЕ МЕНЮ КРИПТО-ЦЕНТРА ---
 
@@ -40,40 +40,11 @@ async def back_to_crypto_center_main_menu(call: CallbackQuery):
     await call.message.edit_text(text, reply_markup=get_crypto_center_main_menu_keyboard())
     await call.answer()
     
-# --- РАЗДЕЛ: ЛЕНТА НОВОСТЕЙ С AI-АНАЛИЗОМ ---
-
-@router.callback_query(F.data == "crypto_center_feed")
-async def handle_live_feed(call: CallbackQuery, crypto_center_service: CryptoCenterService):
-    """Отображает самообновляемую ленту новостей с AI-выжимкой."""
-    await call.message.edit_text("⏳ AI анализирует свежие новости... Это может занять несколько секунд.")
-    
-    analyzed_feed = await crypto_center_service.fetch_live_feed_with_summary()
-    
-    if not analyzed_feed:
-        text = "😕 Не удалось загрузить и проанализировать ленту новостей. Попробуйте позже."
-    else:
-        text = "<b>⚡️ Лента Крипто-Новостей (AI-Анализ)</b>\n"
-        for item in analyzed_feed:
-            summary = item.get('ai_summary', 'Не удалось проанализировать.')
-            text += (
-                f"\n➖➖➖➖➖➖➖➖➖➖\n"
-                f"▪️ <b>Кратко:</b> <i>{summary}</i>\n"
-                f"▪️ <a href='{item['url']}'>{item['title']}</a>"
-            )
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Обновить и проанализировать", callback_data="crypto_center_feed")
-    builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="back_to_crypto_center_main")
-    builder.adjust(1)
-    
-    await call.message.edit_text(text, reply_markup=builder.as_markup(), disable_web_page_preview=True)
-    await call.answer()
-
 # --- РАЗДЕЛ "АНАЛИТИКА ОТ AI" ---
 
 @router.callback_query(F.data == "crypto_center_guides")
 async def handle_guides_menu(call: CallbackQuery):
-    text = "<b>🤖 Аналитика от AI</b>\n\nВыберите категорию:"
+    text = "<b>🤖 Аналитика от AI</b>\n\nAI проанализирует последние новости и данные, чтобы выделить самые горячие возможности."
     await call.message.edit_text(text, reply_markup=get_crypto_center_guides_menu_keyboard())
     await call.answer()
 
@@ -81,23 +52,25 @@ async def handle_guides_menu(call: CallbackQuery):
 
 @router.callback_query(F.data == "guides_airdrops")
 async def handle_airdrops_list(call: CallbackQuery, crypto_center_service: CryptoCenterService, redis_client: redis.Redis):
-    await call.message.edit_text("⏳ AI анализирует Airdrop-возможности...")
+    await call.message.edit_text("⏳ AI анализирует Airdrop-возможности на основе последних данных... Это может занять до 45 секунд.")
     all_airdrops = await crypto_center_service.generate_airdrop_alpha()
 
     if not all_airdrops:
-        await call.message.edit_text("😕 AI не смог сгенерировать список. Попробуйте позже.", reply_markup=get_crypto_center_guides_menu_keyboard())
+        await call.message.edit_text("😕 AI не нашел актуальных Airdrop-возможностей в свежих данных. Попробуйте обновить позже.", reply_markup=get_crypto_center_guides_menu_keyboard())
         await call.answer()
         return
 
-    text = "<b>💧 Охота за Airdrop'ами (AI)</b>\n\nВыберите проект, чтобы увидеть чеклист:"
+    text = "<b>💧 Охота за Airdrop'ами (AI-Анализ)</b>\n\nВыберите проект, чтобы увидеть чеклист:"
     user_id = call.from_user.id
     airdrops_with_progress = []
     for airdrop in all_airdrops:
-        progress = await crypto_center_service.get_user_progress(user_id, airdrop['id'], all_airdrops)
+        # Для отслеживания прогресса нам нужен стабильный ID, который генерирует AI
+        airdrop_id = airdrop.get('id', airdrop['name'].lower().replace(' ', '_'))
+        progress = await crypto_center_service.get_user_progress(user_id, airdrop_id)
         total_tasks = len(airdrop.get('tasks', []))
         progress_text = f"✅ {len(progress)}/{total_tasks}"
         airdrops_with_progress.append({
-            "name": airdrop['name'], "id": airdrop['id'], "progress_text": progress_text
+            "name": airdrop['name'], "id": airdrop_id, "progress_text": progress_text
         })
     keyboard = await get_airdrops_list_keyboard(airdrops_with_progress)
     await call.message.edit_text(text + AI_DISCLAIMER, reply_markup=keyboard)
@@ -107,14 +80,15 @@ async def handle_airdrops_list(call: CallbackQuery, crypto_center_service: Crypt
 @router.callback_query(F.data.startswith("airdrop_details_"))
 async def show_airdrop_details(call: CallbackQuery, crypto_center_service: CryptoCenterService, redis_client: redis.Redis):
     airdrop_id = call.data.split("_")[2]
-    all_airdrops = await crypto_center_service.generate_airdrop_alpha() # Получаем свежие данные
-    airdrop = crypto_center_service.get_airdrop_by_id(airdrop_id, all_airdrops)
+    all_airdrops = await crypto_center_service.generate_airdrop_alpha()
+    
+    airdrop = next((p for p in all_airdrops if p.get('id', p['name'].lower().replace(' ', '_')) == airdrop_id), None)
 
     if not airdrop:
         await call.answer("❌ Проект не найден. Возможно, он уже не актуален.", show_alert=True)
         return
 
-    user_progress = await crypto_center_service.get_user_progress(call.from_user.id, airdrop_id, all_airdrops)
+    user_progress = await crypto_center_service.get_user_progress(call.from_user.id, airdrop_id)
     keyboard = await get_airdrop_details_keyboard(airdrop, user_progress)
     text = (
         f"<b>Проект: {airdrop['name']}</b> ({airdrop.get('status', 'N/A')})\n\n"
@@ -135,13 +109,14 @@ async def toggle_task(call: CallbackQuery, crypto_center_service: CryptoCenterSe
         return
 
     all_airdrops = await crypto_center_service.generate_airdrop_alpha()
-    airdrop = crypto_center_service.get_airdrop_by_id(airdrop_id, all_airdrops)
+    airdrop = next((p for p in all_airdrops if p.get('id', p['name'].lower().replace(' ', '_')) == airdrop_id), None)
+    
     if not airdrop or task_index >= len(airdrop.get('tasks', [])):
         await call.answer("❌ Задача или проект не найдены.", show_alert=True)
         return
 
     await crypto_center_service.toggle_task_status(call.from_user.id, airdrop_id, task_index)
-    user_progress = await crypto_center_service.get_user_progress(call.from_user.id, airdrop_id, all_airdrops)
+    user_progress = await crypto_center_service.get_user_progress(call.from_user.id, airdrop_id)
     new_keyboard = await get_airdrop_details_keyboard(airdrop, user_progress)
     await call.message.edit_reply_markup(reply_markup=new_keyboard)
     await call.answer("Статус задачи обновлен!")
@@ -155,11 +130,11 @@ async def back_to_airdrops_list(call: CallbackQuery, crypto_center_service: Cryp
 
 @router.callback_query(F.data == "guides_mining")
 async def handle_mining_signals_list(call: CallbackQuery, crypto_center_service: CryptoCenterService):
-    await call.message.edit_text("⏳ AI анализирует майнинг-сигналы...")
+    await call.message.edit_text("⏳ AI анализирует майнинг-сигналы на основе последних данных...")
     signals = await crypto_center_service.generate_mining_alpha()
     
     if not signals:
-        text = "<b>⛏️ Сигналы для майнеров (AI)</b>\n\n😕 AI не смог сгенерировать список. Попробуйте позже."
+        text = "<b>⛏️ Сигналы для майнеров (AI)</b>\n\n😕 AI не смог найти актуальных сигналов в свежих данных. Попробуйте позже."
     else:
         text = "<b>⛏️ Сигналы для майнеров (AI)</b>\n"
         for signal in signals:
