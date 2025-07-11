@@ -1,9 +1,14 @@
 import random
-from typing import List, Dict, Set
+from typing import List, Dict, Any, Set
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# Импортируем сервисы и настройки, которые нужны для новых клавиатур
+from bot.services.crypto_center_service import CryptoCenterService
 from bot.config.settings import settings
 from bot.utils.models import AsicMiner
+
+# --- ВАШ СУЩЕСТВУЮЩИЙ КОД (ОСТАВЛЕН БЕЗ ИЗМЕНЕНИЙ) ---
 
 PROMO_URL = "https://cutt.ly/5rWGcgYL"
 PROMO_TEXTS = [
@@ -43,6 +48,8 @@ def get_promo_button() -> InlineKeyboardButton:
     """Возвращает кнопку с рандомным промо-текстом."""
     return InlineKeyboardButton(text=random.choice(PROMO_TEXTS), url=PROMO_URL)
 
+# --- ИЗМЕНЕНИЯ ВНЕСЕНЫ ТОЛЬКО ЗДЕСЬ ---
+
 def get_main_menu_keyboard():
     """Создает главную клавиатуру меню."""
     builder = InlineKeyboardBuilder()
@@ -51,13 +58,19 @@ def get_main_menu_keyboard():
         "⛏️ Калькулятор": "menu_calculator", "📰 Новости": "menu_news",
         "😱 Индекс Страха": "menu_fear_greed", "⏳ Халвинг": "menu_halving",
         "📡 Статус BTC": "menu_btc_status", "🧠 Викторина": "menu_quiz",
-        "💎 Виртуальный Майнинг": "menu_mining"
+        "💎 Виртуальный Майнинг": "menu_mining",
+        # 👇 ДОБАВЛЕНА НОВАЯ КНОПКА
+        "💎 Крипто-Центр": "menu_crypto_center"
     }
     for text, data in buttons.items():
         builder.button(text=text, callback_data=data)
-    builder.adjust(2)
+    
+    # Сохраняем вашу раскладку, добавив одну кнопку
+    builder.adjust(2, 2, 2, 2, 2) 
     builder.row(get_promo_button())
     return builder.as_markup()
+
+# --- ВАШ СУЩЕСТВУЮЩИЙ КОД (ОСТАВЛЕН БЕЗ ИЗМЕНЕНИЙ) ---
 
 def get_price_keyboard():
     """Создает клавиатуру для выбора популярных монет."""
@@ -70,16 +83,14 @@ def get_price_keyboard():
     builder.row(get_promo_button())
     return builder.as_markup()
 
-# --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
 def get_quiz_keyboard():
     """
     Создает клавиатуру для викторины с возможностью выхода.
     """
     builder = InlineKeyboardBuilder()
-    # Добавляем две кнопки в один ряд для удобства
     builder.button(text="Следующий вопрос ➡️", callback_data="menu_quiz")
     builder.button(text="⬅️ Завершить", callback_data="back_to_main_menu")
-    builder.adjust(2) # Располагаем их в один ряд
+    builder.adjust(2)
     builder.row(get_promo_button())
     return builder.as_markup()
 
@@ -157,5 +168,66 @@ def get_after_action_keyboard():
     """
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
+    builder.row(get_promo_button())
+    return builder.as_markup()
+
+# --- НОВЫЕ ФУНКЦИИ ДЛЯ КРИПТО-ЦЕНТРА ---
+
+def get_crypto_center_main_menu_keyboard():
+    """Создает клавиатуру для главного меню Крипто-Центра."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⚡️ Лента Новостей (Live)", callback_data="crypto_center_feed")
+    builder.button(text="📚 Кураторские Гайды", callback_data="crypto_center_guides")
+    builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
+    builder.adjust(1)
+    builder.row(get_promo_button())
+    return builder.as_markup()
+
+def get_crypto_center_guides_menu_keyboard():
+    """Создает клавиатуру для выбора типа кураторских гайдов."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💧 Охота за Airdrop'ами", callback_data="guides_airdrops")
+    builder.button(text="⛏️ Сигналы для майнеров", callback_data="guides_mining")
+    builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="back_to_crypto_center_main")
+    builder.adjust(1)
+    builder.row(get_promo_button())
+    return builder.as_markup()
+
+async def get_airdrops_list_keyboard(crypto_center_service: CryptoCenterService, redis_client: redis.Redis, user_id: int):
+    """Создает клавиатуру со списком Airdrop-проектов и прогрессом пользователя."""
+    builder = InlineKeyboardBuilder()
+    airdrops = crypto_center_service.get_all_airdrops()
+    
+    for airdrop in airdrops:
+        progress = await crypto_center_service.get_user_progress(user_id, airdrop['id'])
+        total_tasks = len(airdrop['tasks'])
+        progress_text = f"✅ {len(progress)}/{total_tasks}"
+        
+        builder.button(
+            text=f"{airdrop['name']} ({progress_text})",
+            callback_data=f"airdrop_details_{airdrop['id']}"
+        )
+    
+    builder.button(text="⬅️ Назад к выбору гайдов", callback_data="crypto_center_guides")
+    builder.adjust(1)
+    builder.row(get_promo_button())
+    return builder.as_markup()
+
+async def get_airdrop_details_keyboard(airdrop: Dict[str, Any], user_progress: List[int]):
+    """Создает клавиатуру с чеклистом задач для конкретного Airdrop."""
+    builder = InlineKeyboardBuilder()
+    
+    for i, task_text in enumerate(airdrop['tasks']):
+        status_emoji = "✅" if i in user_progress else "☑️"
+        builder.button(
+            text=f"{status_emoji} {task_text}",
+            callback_data=f"toggle_task_{airdrop['id']}_{i}"
+        )
+        
+    if airdrop.get('guide_url'):
+        builder.button(text="🔗 Подробный гайд", url=airdrop['guide_url'])
+        
+    builder.button(text="⬅️ Назад к списку", callback_data="back_to_airdrops_list")
+    builder.adjust(1)
     builder.row(get_promo_button())
     return builder.as_markup()

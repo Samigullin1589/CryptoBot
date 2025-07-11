@@ -53,6 +53,11 @@ class AppSettings(BaseSettings):
     }
     DEFAULT_ELECTRICITY_TARIFF: str = "Домашний 💡"
 
+    # --- НОВЫЙ БЛОК ---
+    # Crypto Center Settings
+    crypto_center_news_api_url: str = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=Airdrop,Mining,DeFi,L1,L2"
+    # --- КОНЕЦ НОВОГО БЛОКА ---
+
     # Moderation Settings
     STOP_WORDS: List[str] = ["казино", "ставки", "бонус", "фриспин", "депозит", "работа", "вакансия", "зарплата", "заработок"]
     # ИЗМЕНЕНИЕ: Мы определяем это поле пустым, а заполним его ниже

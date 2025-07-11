@@ -13,7 +13,7 @@ from bot.config.settings import settings
 # Импорты сгруппированы для наглядности
 from bot.handlers.admin import admin_menu, stats_handlers, data_management_handlers
 from bot.handlers import (common_handlers, info_handlers, 
-                          mining_handlers, asic_info_handlers)
+                          mining_handlers, asic_info_handlers, crypto_center_handlers)
 from bot.middlewares.throttling import ThrottlingMiddleware
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
@@ -22,6 +22,7 @@ from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
 from bot.services.admin_service import AdminService
+from bot.services.crypto_center_service import CryptoCenterService
 from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
 from bot.utils.helpers import setup_logging
@@ -55,6 +56,7 @@ async def main():
     # Инициализация сервисов
     asic_service = AsicService(redis_client=redis_client)
     admin_service = AdminService(redis_client=redis_client)
+    crypto_center_service = CryptoCenterService(redis_client=redis_client)
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
@@ -72,13 +74,13 @@ async def main():
     dependencies.admin_service = admin_service
     
     # Регистрация роутеров
-    # Админские роутеры регистрируем первыми для приоритета
+    # Админские роутеры
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
-    # 👇 ВОТ РЕГИСТРАЦИЯ НОВОГО РОУТЕРА ДЛЯ ОЧИСТКИ КЭША
     dp.include_router(data_management_handlers.router)
     
     # Пользовательские роутеры
+    dp.include_router(crypto_center_handlers.router)
     dp.include_router(asic_info_handlers.router) 
     dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
@@ -92,6 +94,7 @@ async def main():
         "quiz_service": quiz_service,
         "redis_client": redis_client,
         "admin_service": admin_service,
+        "crypto_center_service": crypto_center_service,
     }
 
     scheduler = setup_scheduler(context_data)
