@@ -82,7 +82,25 @@ async def handle_airdrops_list(call: CallbackQuery, crypto_center_service: Crypt
         "<b>💧 Охота за Airdrop'ами</b>\n\n"
         "Выберите проект, чтобы увидеть чеклист и отследить свой прогресс."
     )
-    keyboard = await get_airdrops_list_keyboard(crypto_center_service, redis_client, call.from_user.id)
+    
+    # --- ЛОГИКА ПОДГОТОВКИ ДАННЫХ ПЕРЕНЕСЕНА СЮДА ИЗ KEYBOARDS.PY ---
+    user_id = call.from_user.id
+    all_airdrops = crypto_center_service.get_all_airdrops()
+    airdrops_with_progress = []
+    for airdrop in all_airdrops:
+        progress = await crypto_center_service.get_user_progress(user_id, airdrop['id'])
+        total_tasks = len(airdrop['tasks'])
+        progress_text = f"✅ {len(progress)}/{total_tasks}"
+        airdrops_with_progress.append({
+            "name": airdrop['name'],
+            "id": airdrop['id'],
+            "progress_text": progress_text
+        })
+    # --- КОНЕЦ ЛОГИКИ ПОДГОТОВКИ ДАННЫХ ---
+
+    # Передаем уже готовые данные в функцию клавиатуры
+    keyboard = await get_airdrops_list_keyboard(airdrops_with_progress)
+    
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()
 
