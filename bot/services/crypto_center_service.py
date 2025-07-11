@@ -25,7 +25,6 @@ class CryptoCenterService:
         logger.info("Gathering live data for AI analysis...")
         all_text_content = ""
         
-        # 1. Сбор данных из CryptoCompare API
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(settings.crypto_center_news_api_url) as response:
@@ -37,7 +36,6 @@ class CryptoCenterService:
         except Exception as e:
             logger.error(f"Failed to fetch from CryptoCompare: {e}")
 
-        # 2. Сбор данных из RSS-лент
         for feed_url in settings.alpha_rss_feeds:
             try:
                 feed = await asyncio.to_thread(feedparser.parse, feed_url)
@@ -75,18 +73,17 @@ class CryptoCenterService:
             logger.error(f"An error occurred during AI Alpha generation: {e}")
             return []
 
-    @alru_cache(maxsize=2, ttl=3600 * 4)  # Кэшируем на 4 часа
+    @alru_cache(maxsize=2, ttl=3600 * 4)
     async def generate_airdrop_alpha(self) -> List[Dict[str, Any]]:
-        """Генерирует актуальный список Airdrop-проектов на основе живых данных."""
+        """Генерирует актуальный список Airdrop-проектов на русском языке."""
         live_data = await self._gather_live_data()
-        if not live_data:
-            logger.warning("No live data gathered for airdrop analysis.")
-            return []
+        if not live_data: return []
         
         prompt = (
-            "You are a crypto researcher. Based ONLY on the provided recent news and articles below, identify the top 3 most promising airdrop opportunities. "
-            "For each, extract the project name, a short summary of why it's a hot opportunity right now, a list of 3-5 concrete actions to take, and an official link if available. "
-            "If the context doesn't contain enough information, return an empty array. Context:\n\n"
+            "Действуй как крипто-исследователь. На основе предоставленных ниже новостей и статей, определи 3 самых перспективных проекта без токена, у которых вероятен airdrop. "
+            "Для каждого проекта предоставь: 'id' (уникальный идентификатор в одно слово, например 'zksync'), 'name' (название), 'description' (короткое описание, почему это актуально), 'status' (например, 'Активный Testnet'), "
+            "'tasks' (список из 3-5 конкретных действий для пользователя) и 'guide_url' (официальная ссылка, если есть). "
+            "ВСЯ ТЕКСТОВАЯ ИНФОРМАЦИЯ ДОЛЖНА БЫТЬ НА РУССКОМ ЯЗЫКЕ. Если информации недостаточно, верни пустой массив. Контекст:\n\n"
             f"{live_data}"
         )
         json_schema = { "type": "ARRAY", "items": { "type": "OBJECT", "properties": { "id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"} }, "required": ["id", "name", "description", "status", "tasks"] } }
@@ -97,16 +94,14 @@ class CryptoCenterService:
 
     @alru_cache(maxsize=2, ttl=3600 * 4)
     async def generate_mining_alpha(self) -> List[Dict[str, Any]]:
-        """Генерирует актуальные майнинг-сигналы на основе живых данных."""
+        """Генерирует актуальные майнинг-сигналы на русском языке."""
         live_data = await self._gather_live_data()
-        if not live_data:
-            logger.warning("No live data gathered for mining analysis.")
-            return []
+        if not live_data: return []
             
         prompt = (
-            "You are a mining analyst. Based ONLY on the provided recent news and articles below, identify the top 3 most relevant mining opportunities (for ASIC, GPU, or CPU). "
-            "Focus on emerging trends. For each, extract the opportunity name, a short summary of why it's relevant, the algorithm, recommended hardware, and an official link if available. "
-            "If the context doesn't contain enough information, return an empty array. Context:\n\n"
+            "Действуй как майнинг-аналитик. На основе предоставленных ниже новостей и статей, определи 3 самых актуальных майнинг-возможности (для ASIC, GPU, или CPU). "
+            "Сфокусируйся на новых трендах. Для каждой возможности предоставь: 'id' (уникальный идентификатор), 'name' (название), 'description' (короткое описание актуальности), 'algorithm', 'hardware' (рекомендуемое оборудование), 'status' ('Высокий потенциал', 'Ситуативно') и 'guide_url' (ссылка на гайд или пул). "
+            "ВСЯ ТЕКСТОВАЯ ИНФОРМАЦИЯ ДОЛЖНА БЫТЬ НА РУССКОМ ЯЗЫКЕ. Если информации недостаточно, верни пустой массив. Контекст:\n\n"
             f"{live_data}"
         )
         json_schema = { "type": "ARRAY", "items": { "type": "OBJECT", "properties": { "id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "algorithm": {"type": "STRING"}, "hardware": {"type": "STRING"}, "status": {"type": "STRING"}, "guide_url": {"type": "STRING"} }, "required": ["id", "name", "description", "algorithm", "hardware"] } }
@@ -114,6 +109,55 @@ class CryptoCenterService:
         result = await self._generate_alpha_from_ai(prompt, json_schema)
         logger.info(f"AI analysis resulted in {len(result)} mining opportunities.")
         return result
+
+    @alru_cache(maxsize=1, ttl=60 * 15)
+    async def fetch_live_feed_with_summary(self) -> Optional[List[Dict[str, Any]]]:
+        """Запрашивает свежие новости, получает для каждой краткую выжимку от AI и возвращает."""
+        logger.info("Fetching fresh crypto news feed for AI analysis...")
+        headers = {'Authorization': f'Apikey {settings.cmc_api_key}'} if settings.cmc_api_key else {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(settings.crypto_center_news_api_url, headers=headers) as response:
+                    if response.status != 200:
+                        logger.error(f"Crypto News API returned status {response.status}")
+                        return None
+                    data = await response.json()
+                    if "Data" not in data or not isinstance(data["Data"], list):
+                        logger.error("Crypto News API response has unexpected structure.")
+                        return None
+                    
+                    news_articles = data["Data"][:5]
+                    logger.info(f"Successfully fetched {len(news_articles)} articles for analysis.")
+
+                    analysis_tasks = [self._get_ai_summary(article['body']) for article in news_articles]
+                    summaries = await asyncio.gather(*analysis_tasks)
+                    
+                    for article, summary in zip(news_articles, summaries):
+                        article['ai_summary'] = summary
+                    return news_articles
+        except Exception as e:
+            logger.error(f"An error occurred while fetching crypto news feed: {e}")
+            return None
+
+    async def _get_ai_summary(self, article_body: str) -> str:
+        """Отправляет текст статьи в Gemini для получения краткой выжимки на русском."""
+        if not settings.gemini_api_key:
+            return "AI-анализ недоступен (ключ не настроен)."
+        prompt = (
+            "You are a crypto news analyst. Read the following news article and provide a very short, "
+            "one-sentence summary in Russian (10-15 words max) that captures the main point. "
+            f"Be concise and informative. Here is the article: \n\n{article_body}"
+        )
+        try:
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
+            payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+            async with aiohttp.ClientSession() as session:
+                async with session.post(api_url, json=payload, timeout=20) as response:
+                    if response.status != 200: return "Не удалось проанализировать."
+                    result = await response.json()
+                    summary = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+                    return summary.strip() if summary else "Не удалось проанализировать."
+        except Exception: return "Ошибка анализа."
 
     # --- Методы для работы с прогрессом пользователя ---
     
@@ -134,3 +178,16 @@ class CryptoCenterService:
         else:
             await self.redis.sadd(progress_key, task_index_str)
             return True
+            
+    # --- НОВЫЙ МЕТОД, КОТОРОГО НЕ ХВАТАЛО ---
+    def get_airdrop_by_id(self, airdrop_id: str, all_airdrops: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Ищет аирдроп в предоставленном списке по ID.
+        Это необходимо, так как список генерируется динамически.
+        """
+        for airdrop in all_airdrops:
+            # AI должен генерировать 'id', но на всякий случай делаем бэкап из имени
+            current_id = airdrop.get('id', airdrop.get('name', '').lower().replace(' ', '_'))
+            if current_id == airdrop_id:
+                return airdrop
+        return None
