@@ -3,11 +3,8 @@ from typing import List, Dict, Any, Set
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# Импортируем только то, что нужно для работы
 from bot.config.settings import settings
 from bot.utils.models import AsicMiner
-
-# --- ВАШ СУЩЕСТВУЮЩИЙ КОД (ОСТАВЛЕН БЕЗ ИЗМЕНЕНИЙ) ---
 
 PROMO_URL = "https://cutt.ly/5rWGcgYL"
 PROMO_TEXTS = [
@@ -16,25 +13,13 @@ PROMO_TEXTS = [
     "💎 VIP-прайс со скидкой 40%", "🚀 Обвал цен: ASIC от 70% MSRP",
     "🏷️ MEGA-Sale: ASIC по оптовой цене", "💣 Ценовой взрыв: скидка до 60%",
     "💥 Флеш-продажа: ASIC по цене прошлого года", "🚨 Срочно: прайс-ловушка – не пропусти!",
-    "🕵️ Тайные скидки на ASIC внутри", "🎯 Меткий прайс: цены снижены на 35%",
-    "🤑 ASIC по ценам Чёрной пятницы", "🔓 Узнай секретную цену – минус 45%",
-    "🚪 Закрытая распродажа ASIC – вход по ссылке", "💌 Прайс-лист VIP с бонусом внутри",
-    "🥷 Ниндзя-прайс: секретная скидка 40%", "🎉 Crazy Sale: ASIC по супер-ценам",
-    "🌪️ Ценовой шторм: скидки до 55%", "⏰ Время скидок на ASIC истекает!",
-    "💼 PRO-прайс для майнинг-профи", "🧨 Бомба-скидка: ASIC дешевле рынка",
-    "🏃 Успей поймать выгодную цену!", "📅 Только сегодня: ASIC по спеццене",
-    "🎲 ASIC-рулетка: цены упали на 50%", "🔐 Скрытая распродажа ASIC",
-    "🎈 Лёгкий вход в майнинг: ASIC дешевле", "🥳 Праздничный прайс-шок на ASIC",
-    "💹 Bull-прайс: мощные ASIC по выгодной цене"
 ]
 ITEMS_PER_PAGE = 5
 
 def get_promo_button() -> InlineKeyboardButton:
-    """Возвращает кнопку с рандомным промо-текстом."""
     return InlineKeyboardButton(text=random.choice(PROMO_TEXTS), url=PROMO_URL)
 
 def get_main_menu_keyboard():
-    """Создает главную клавиатуру меню."""
     builder = InlineKeyboardBuilder()
     buttons = {
         "💹 Курс": "menu_price", "⚙️ Топ ASIC": "menu_asics",
@@ -46,13 +31,11 @@ def get_main_menu_keyboard():
     }
     for text, data in buttons.items():
         builder.button(text=text, callback_data=data)
-    
     builder.adjust(2, 2, 2, 2, 2) 
     builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_price_keyboard():
-    """Создает клавиатуру для выбора популярных монет."""
     builder = InlineKeyboardBuilder()
     for ticker in settings.popular_tickers:
         builder.button(text=ticker, callback_data=f"price_{ticker}")
@@ -63,7 +46,6 @@ def get_price_keyboard():
     return builder.as_markup()
 
 def get_quiz_keyboard():
-    """Создает клавиатуру для викторины с возможностью выхода."""
     builder = InlineKeyboardBuilder()
     builder.button(text="Следующий вопрос ➡️", callback_data="menu_quiz")
     builder.button(text="⬅️ Завершить", callback_data="back_to_main_menu")
@@ -72,7 +54,6 @@ def get_quiz_keyboard():
     return builder.as_markup()
 
 def get_mining_menu_keyboard():
-    """Создает клавиатуру для главного меню раздела 'Виртуальный Майнинг'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🏪 Магазин оборудования", callback_data="mining_shop")
     builder.button(text="🖥️ Моя ферма", callback_data="mining_my_farm")
@@ -86,7 +67,6 @@ def get_mining_menu_keyboard():
     return builder.as_markup()
 
 def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
-    """Создает клавиатуру для магазина ASIC с пагинацией."""
     builder = InlineKeyboardBuilder()
     start_index = page * ITEMS_PER_PAGE
     end_index = start_index + ITEMS_PER_PAGE
@@ -107,14 +87,12 @@ def get_asic_shop_keyboard(asics: List[AsicMiner], page: int = 0):
     return builder.as_markup()
 
 def get_my_farm_keyboard():
-    """Создает клавиатуру для раздела 'Моя ферма'."""
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
     builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_withdraw_keyboard():
-    """Создает клавиатуру для сообщения о выводе средств."""
     builder = InlineKeyboardBuilder()
     builder.button(text="🎉 Получить у партнера", url=PROMO_URL)
     builder.button(text="⬅️ В меню майнинга", callback_data="menu_mining")
@@ -122,7 +100,6 @@ def get_withdraw_keyboard():
     return builder.as_markup()
 
 def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Set[str]):
-    """Создает клавиатуру для меню выбора тарифа на электроэнергию."""
     builder = InlineKeyboardBuilder()
     for name, details in settings.ELECTRICITY_TARIFFS.items():
         if name in unlocked_tariffs:
@@ -140,66 +117,54 @@ def get_electricity_menu_keyboard(current_tariff_name: str, unlocked_tariffs: Se
     return builder.as_markup()
 
 def get_after_action_keyboard():
-    """Клавиатура, отображаемая после выполнения действия (например, показа курса)."""
     builder = InlineKeyboardBuilder()
     builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
     builder.row(get_promo_button())
     return builder.as_markup()
 
-# --- НОВЫЕ ФУНКЦИИ ДЛЯ КРИПТО-ЦЕНТРА ---
+# --- КЛАВИАТУРЫ ДЛЯ КРИПТО-ЦЕНТРА ---
 
 def get_crypto_center_main_menu_keyboard():
-    """Создает клавиатуру для главного меню Крипто-Центра."""
     builder = InlineKeyboardBuilder()
     builder.button(text="⚡️ Лента Новостей (Live)", callback_data="crypto_center_feed")
-    builder.button(text="📚 Кураторские Гайды", callback_data="crypto_center_guides")
+    builder.button(text="🤖 Аналитика от AI", callback_data="crypto_center_guides")
     builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
     builder.adjust(1)
     builder.row(get_promo_button())
     return builder.as_markup()
 
 def get_crypto_center_guides_menu_keyboard():
-    """Создает клавиатуру для выбора типа кураторских гайдов."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="💧 Охота за Airdrop'ами", callback_data="guides_airdrops")
-    builder.button(text="⛏️ Сигналы для майнеров", callback_data="guides_mining")
+    builder.button(text="💧 Охота за Airdrop'ами (AI)", callback_data="guides_airdrops")
+    builder.button(text="⛏️ Сигналы для майнеров (AI)", callback_data="guides_mining")
     builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="back_to_crypto_center_main")
     builder.adjust(1)
     builder.row(get_promo_button())
     return builder.as_markup()
 
 async def get_airdrops_list_keyboard(airdrops_with_progress: List[Dict[str, Any]]):
-    """
-    Создает клавиатуру со списком Airdrop-проектов.
-    Принимает готовый список с данными о прогрессе.
-    """
     builder = InlineKeyboardBuilder()
-    
     for airdrop_data in airdrops_with_progress:
         builder.button(
             text=f"{airdrop_data['name']} ({airdrop_data['progress_text']})",
             callback_data=f"airdrop_details_{airdrop_data['id']}"
         )
-    
-    builder.button(text="⬅️ Назад к выбору гайдов", callback_data="crypto_center_guides")
+    builder.button(text="⬅️ Назад к выбору аналитики", callback_data="crypto_center_guides")
     builder.adjust(1)
     builder.row(get_promo_button())
     return builder.as_markup()
 
 async def get_airdrop_details_keyboard(airdrop: Dict[str, Any], user_progress: List[int]):
-    """Создает клавиатуру с чеклистом задач для конкретного Airdrop."""
     builder = InlineKeyboardBuilder()
-    
-    for i, task_text in enumerate(airdrop['tasks']):
+    tasks = airdrop.get('tasks', [])
+    for i, task_text in enumerate(tasks):
         status_emoji = "✅" if i in user_progress else "☑️"
         builder.button(
             text=f"{status_emoji} {task_text}",
             callback_data=f"toggle_task_{airdrop['id']}_{i}"
         )
-        
     if airdrop.get('guide_url'):
         builder.button(text="🔗 Подробный гайд", url=airdrop['guide_url'])
-        
     builder.button(text="⬅️ Назад к списку", callback_data="back_to_airdrops_list")
     builder.adjust(1)
     builder.row(get_promo_button())
