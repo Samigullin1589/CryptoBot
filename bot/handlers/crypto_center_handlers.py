@@ -10,7 +10,8 @@ from bot.keyboards.keyboards import (
     get_crypto_center_main_menu_keyboard, 
     get_crypto_center_guides_menu_keyboard,
     get_airdrops_list_keyboard, 
-    get_airdrop_details_keyboard
+    get_airdrop_details_keyboard,
+    get_main_menu_keyboard # Добавляем импорт главного меню для возврата
 )
 
 router = Router()
@@ -20,18 +21,32 @@ AI_DISCLAIMER = "\n\n<i>⚠️ Информация сгенерирована �
 
 # --- ГЛАВНОЕ МЕНЮ КРИПТО-ЦЕНТРА ---
 
-@router.message(F.text == "💎 Крипто-Центр")
-async def handle_crypto_center_menu(message: Message, admin_service: AdminService):
+# --- ИСПРАВЛЕНИЕ: Ловим не текст, а callback_data от инлайн-кнопки ---
+@router.callback_query(F.data == "menu_crypto_center")
+async def handle_crypto_center_menu(call: CallbackQuery, admin_service: AdminService):
+    """Отображает главное меню Крипто-Центра с выбором разделов."""
     await admin_service.track_command_usage("💎 Крипто-Центр")
     text = (
         "<b>💎 Крипто-Центр</b>\n\n"
         "Эксклюзивный раздел с информацией, которая может принести прибыль.\n\n"
         "Выберите направление:"
     )
-    await message.answer(text, reply_markup=get_crypto_center_main_menu_keyboard())
+    # Используем call.message.edit_text для инлайн-кнопок
+    await call.message.edit_text(text, reply_markup=get_crypto_center_main_menu_keyboard())
+    await call.answer()
+
+@router.callback_query(F.data == "back_to_main_menu")
+async def back_to_main_menu(call: CallbackQuery):
+    """Возвращает пользователя в главное меню."""
+    text = "Возвращаю вас в главное меню..."
+    # Здесь мы редактируем сообщение, чтобы показать главное меню
+    await call.message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    await call.answer()
+
 
 @router.callback_query(F.data == "back_to_crypto_center_main")
 async def back_to_crypto_center_main_menu(call: CallbackQuery):
+    """Возвращает в главное меню Крипто-Центра."""
     text = (
         "<b>💎 Крипто-Центр</b>\n\n"
         "Эксклюзивный раздел с информацией, которая может принести прибыль.\n\n"
@@ -44,18 +59,23 @@ async def back_to_crypto_center_main_menu(call: CallbackQuery):
 
 @router.callback_query(F.data == "crypto_center_feed")
 async def handle_live_feed(call: CallbackQuery, crypto_center_service: CryptoCenterService):
+    """Отображает самообновляемую ленту новостей."""
     await call.message.edit_text("⏳ Загружаю свежие новости...")
+    
     news_feed = await crypto_center_service.fetch_live_feed()
+    
     if not news_feed:
         text = "😕 Не удалось загрузить ленту новостей. Попробуйте позже."
     else:
         text = "<b>⚡️ Лента Крипто-Новостей (Live)</b>\n\n"
         for item in news_feed:
             text += f"▪️ <a href='{item['url']}'>{item['title']}</a>\n"
+    
     builder = InlineKeyboardBuilder()
     builder.button(text="🔄 Обновить ленту", callback_data="crypto_center_feed")
     builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="back_to_crypto_center_main")
     builder.adjust(1)
+    
     await call.message.edit_text(text, reply_markup=builder.as_markup(), disable_web_page_preview=True)
     await call.answer()
 
@@ -63,6 +83,7 @@ async def handle_live_feed(call: CallbackQuery, crypto_center_service: CryptoCen
 
 @router.callback_query(F.data == "crypto_center_guides")
 async def handle_guides_menu(call: CallbackQuery):
+    """Показывает меню выбора типа гайдов."""
     text = "<b>🤖 Аналитика от AI</b>\n\nВыберите категорию:"
     await call.message.edit_text(text, reply_markup=get_crypto_center_guides_menu_keyboard())
     await call.answer()
