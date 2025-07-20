@@ -2,7 +2,7 @@ import time
 import json
 import logging
 from dataclasses import dataclass, asdict, fields
-from typing import Optional
+from typing import Optional, List, Dict
 
 import redis.asyncio as redis
 from aiogram import Bot
@@ -25,10 +25,13 @@ class UserProfile:
     violations_count: int = 0
     electricity_cost: Optional[float] = None
     
-    # --- НОВЫЕ ПОЛЯ ДЛЯ СИСТЕМЫ АКТИВНОСТИ ---
+    # Поля для системы активности
     last_activity_timestamp: float = 0.0
     message_count: int = 0
-    # ------------------------------------------
+    
+    # --- НОВОЕ ПОЛЕ ДЛЯ ИСТОРИИ ДИАЛОГОВ ---
+    conversation_history_json: str = "[]" # История в виде JSON-строки
+    # ---------------------------------------
     
     # Эти поля не хранятся в Redis, а определяются динамически при запросе
     is_admin: bool = False
@@ -36,13 +39,12 @@ class UserProfile:
 
 class UserService:
     """
-    Сервис для управления данными пользователей: репутация, статусы, нарушения, активность.
+    Сервис для управления данными пользователей: репутация, статусы, нарушения, активность и диалоги.
     Использует Redis для персистентного хранения данных.
     """
-    # --- КОНСТАНТЫ ДЛЯ СИСТЕМЫ ПООЩРЕНИЯ ---
+    # Константы для системы поощрения
     ACTIVITY_REWARD_THRESHOLD: int = 50  # Сколько сообщений нужно отправить для получения награды
     ACTIVITY_REWARD_POINTS: int = 5      # Сколько очков доверия дается в награду
-    # ------------------------------------------
 
     def __init__(self, redis_client: redis.Redis, bot: Bot, admin_user_ids: list[int]):
         """
@@ -68,7 +70,6 @@ class UserService:
         profile_key = self._get_user_profile_key(user_id, chat_id)
         saved_profile_data = await self.redis.hgetall(profile_key)
 
-        # Инициализируем профиль значениями по умолчанию
         profile_dict = {
             "user_id": user_id,
             "chat_id": chat_id,
@@ -76,7 +77,6 @@ class UserService:
         }
 
         if saved_profile_data:
-            # Преобразуем данные из Redis (которые всегда байты) в нужные типы
             decoded_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in saved_profile_data.items()}
             
             for field in fields(UserProfile):
@@ -95,7 +95,6 @@ class UserService:
         if not saved_profile_data:
             await self._save_user_profile(user_profile)
 
-        # Динамическая проверка статуса администратора (самый надежный способ)
         try:
             chat_member = await self.bot.get_chat_member(chat_id, user_id)
             if chat_member.status in [ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR]:
@@ -137,24 +136,44 @@ class UserService:
         user_profile.mute_until_timestamp = mute_until
         await self._save_user_profile(user_profile)
 
-    # --- НОВЫЙ МЕТОД, ВЫЗЫВАЕМЫЙ ИЗ ACTIVITYMIDDLEWARE ---
     async def update_user_activity(self, user_id: int, chat_id: int):
         """
         Обновляет данные об активности пользователя и поощряет его за нее.
         """
         profile = await self.get_or_create_user(user_id, chat_id)
-
         profile.last_activity_timestamp = time.time()
         profile.message_count += 1
-
-        # Если пользователь набрал достаточно сообщений, награждаем его
         if profile.message_count >= self.ACTIVITY_REWARD_THRESHOLD:
             profile.trust_score += self.ACTIVITY_REWARD_POINTS
-            profile.message_count = 0  # Сбрасываем счетчик для следующей награды
+            profile.message_count = 0
             logger.info(f"Пользователь {user_id} награжден за активность в чате {chat_id}. Новый рейтинг: {profile.trust_score}")
-
         await self._save_user_profile(profile)
-    # ----------------------------------------------------
+
+    # --- НОВЫЕ МЕТОДЫ ДЛЯ ИСТОРИИ ДИАЛОГОВ ---
+    async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict[str, str]]:
+        """Получает и десериализует историю диалога пользователя."""
+        profile = await self.get_or_create_user(user_id, chat_id)
+        try:
+            return json.loads(profile.conversation_history_json)
+        except json.JSONDecodeError:
+            logger.error(f"Не удалось декодировать историю диалога для пользователя {user_id}")
+            return []
+
+    async def add_to_conversation_history(self, user_id: int, chat_id: int, user_text: str, model_text: str, max_history_len: int = 10):
+        """Добавляет вопрос и ответ в историю, обрезая ее до max_history_len."""
+        history = await self.get_conversation_history(user_id, chat_id)
+        
+        history.append({"role": "user", "parts": [{"text": user_text}]})
+        history.append({"role": "model", "parts": [{"text": model_text}]})
+        
+        # Обрезаем историю, чтобы она не росла бесконечно
+        if len(history) > max_history_len * 2:
+            history = history[-max_history_len * 2:]
+            
+        profile = await self.get_or_create_user(user_id, chat_id)
+        profile.conversation_history_json = json.dumps(history, ensure_ascii=False)
+        await self._save_user_profile(profile)
+    # ---------------------------------------------
 
     async def get_user_electricity_cost(self, user_id: int, chat_id: int, default_cost: float) -> float:
         """Получает стоимость электроэнергии для пользователя."""
