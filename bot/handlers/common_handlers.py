@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
@@ -17,6 +18,34 @@ from bot.utils.helpers import get_message_and_chat_id
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# --- НОВЫЕ КЛАВИАТУРЫ ДЛЯ ОНБОРДИНГА ---
+
+def get_onboarding_start_keyboard():
+    """Создает клавиатуру для начала онбординга."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🚀 Начать знакомство", callback_data="onboarding_start")
+    builder.button(text="Пропустить", callback_data="onboarding_skip")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_onboarding_step_keyboard(step: int):
+    """Создает клавиатуру для шагов онбординга."""
+    builder = InlineKeyboardBuilder()
+    if step == 1:
+        builder.button(text="💹 Узнать курс BTC", callback_data="menu_price")
+        builder.button(text="Далее ➡️", callback_data="onboarding_step_2")
+    elif step == 2:
+        builder.button(text="⚙️ Показать Топ ASIC", callback_data="menu_asics")
+        builder.button(text="Далее ➡️", callback_data="onboarding_step_3")
+    elif step == 3:
+        builder.button(text="💎 Войти в Крипто-Центр", callback_data="menu_crypto_center")
+        builder.button(text="✅ Все понятно!", callback_data="onboarding_finish")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+# --- СУЩЕСТВУЮЩИЙ КОД (БЕЗ ИЗМЕНЕНИЙ) ---
 
 HELP_TEXT = """
 👋 <b>Добро пожаловать в CryptoBot!</b>
@@ -82,41 +111,93 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
     except Exception as e:
         logger.error(f"Failed to send referral notification to user {referrer_id}: {e}")
 
+# --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ ОБРАБОТЧИК /start ---
 
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService):
-    """Обработчик команды /start с поддержкой рефералов и записью статистики."""
+    """
+    Обработчик команды /start с онбордингом для новых пользователей.
+    """
     await admin_service.track_command_usage("/start")
     await state.clear()
     
     user_id = message.from_user.id
     
-    # --- НОВЫЙ БЛОК: ЗАПИСЬ СТАТИСТИКИ ---
-    # SADD возвращает 1, если пользователь новый, и 0, если он уже был в множестве.
     is_new_user = await redis_client.sadd("users:known", user_id)
     
     if is_new_user:
         current_timestamp = int(datetime.now().timestamp())
-        # ZADD добавляет пользователя в отсортированное множество по времени первого визита.
         await redis_client.zadd("stats:user_first_seen", {str(user_id): current_timestamp})
-        logger.info(f"New user {user_id} has been registered.")
-    # --- КОНЕЦ НОВОГО БЛОКА ---
+        logger.info(f"New user {user_id} has been registered. Starting onboarding.")
+        
+        # Для новых пользователей запускаем онбординг
+        text = (
+            f"👋 <b>Привет, {message.from_user.full_name}!</b>\n\n"
+            "Я ваш персональный ассистент в мире криптовалют и майнинга. "
+            "Давайте я быстро покажу, что я умею!"
+        )
+        await message.answer(text, reply_markup=get_onboarding_start_keyboard())
+
+    else:
+        # Для старых пользователей просто показываем главное меню
+        logger.info(f"User {user_id} started the bot.")
+        await message.answer(
+            "👋 С возвращением! Выберите одну из опций в меню ниже.",
+            reply_markup=get_main_menu_keyboard()
+        )
 
     if command.args:
         await handle_referral(message, command, redis_client, bot)
-    
-    logger.info(f"User {user_id} started the bot.")
 
-    await message.answer(
-        "Загружаю меню...",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    
-    await message.answer(
-        "👋 Добро пожаловать в CryptoBot! Выберите одну из опций в меню ниже, чтобы начать.",
-        reply_markup=get_main_menu_keyboard()
-    )
+# --- НОВЫЕ ОБРАБОТЧИКИ ДЛЯ КНОПОК ОНБОРДИНГА ---
 
+@router.callback_query(F.data == "onboarding_start" or F.data == "onboarding_step_1")
+async def onboarding_step_1(call: CallbackQuery):
+    text = (
+        "<b>Шаг 1: Курсы валют 💹</b>\n\n"
+        "Первая и главная функция — актуальные курсы. Вы можете просто отправить мне тикер "
+        "(например, <code>btc</code> или <code>эфир</code>) или воспользоваться кнопкой в меню."
+    )
+    await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(1))
+    await call.answer()
+
+
+@router.callback_query(F.data == "onboarding_step_2")
+async def onboarding_step_2(call: CallbackQuery):
+    text = (
+        "<b>Шаг 2: Все для майнеров ⚙️</b>\n\n"
+        "В разделе 'Топ ASIC' вы всегда найдете свежий список самого доходного оборудования. "
+        "А 'Калькулятор' поможет рассчитать чистую прибыль с учетом вашей розетки."
+    )
+    await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(2))
+    await call.answer()
+
+
+@router.callback_query(F.data == "onboarding_step_3")
+async def onboarding_step_3(call: CallbackQuery):
+    text = (
+        "<b>Шаг 3: Крипто-Центр 💎</b>\n\n"
+        "Это наша главная фишка! Здесь наш AI-аналитик 24/7 ищет для вас самые горячие "
+        "возможности для заработка: от Airdrop'ов до майнинг-сигналов."
+    )
+    await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(3))
+    await call.answer()
+
+
+@router.callback_query(F.data == "onboarding_skip" or F.data == "onboarding_finish")
+async def onboarding_finish(call: CallbackQuery):
+    """Завершает онбординг и показывает главное меню."""
+    text = (
+        "Отлично, теперь вы знаете все основы!\n\n"
+        "Вот ваше главное меню. Если забудете, что я умею, просто вызовите команду /help."
+    )
+    # Удаляем сообщение онбординга и присылаем новое с главным меню
+    await call.message.delete()
+    await call.message.answer(text, reply_markup=get_main_menu_keyboard())
+    await call.answer()
+
+
+# --- СУЩЕСТВУЮЩИЙ КОД (БЕЗ ИЗМЕНЕНИЙ) ---
 
 @router.message(Command("help"))
 async def handle_help(message: Message, admin_service: AdminService):
