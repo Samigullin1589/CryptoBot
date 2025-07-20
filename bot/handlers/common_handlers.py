@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Union
 from datetime import datetime
@@ -7,7 +8,7 @@ from aiogram import F, Router, Bot
 from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
-from aiogram.enums import ContentType
+from aiogram.enums import ContentType, ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -15,15 +16,16 @@ from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.services.admin_service import AdminService
 from bot.utils.helpers import get_message_and_chat_id, sanitize_html
-# --- НОВЫЕ ИМПОРТЫ ---
+# --- НОВЫЕ ИМПОРТЫ ДЛЯ AI-КОНСУЛЬТАНТА ---
 from bot.services.ai_consultant_service import AIConsultantService
+from bot.services.ai_conversation_service import AIConversationService
 from bot.services.price_service import PriceService
 
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-# --- НОВЫЕ КЛАВИАТУРЫ ДЛЯ ОНБОРДИНГА ---
+# --- КЛАВИАТУРЫ ДЛЯ ОНБОРДИНГА ---
 
 def get_onboarding_start_keyboard():
     """Создает клавиатуру для начала онбординга."""
@@ -49,7 +51,7 @@ def get_onboarding_step_keyboard(step: int):
     return builder.as_markup()
 
 
-# --- СУЩЕСТВУЮЩИЙ КОД (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- СУЩЕСТВУЮЩИЙ КОД ---
 
 HELP_TEXT = """
 👋 <b>Добро пожаловать в CryptoBot!</b>
@@ -115,7 +117,6 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
     except Exception as e:
         logger.error(f"Failed to send referral notification to user {referrer_id}: {e}")
 
-# --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ ОБРАБОТЧИК /start ---
 
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService):
@@ -134,7 +135,6 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
         await redis_client.zadd("stats:user_first_seen", {str(user_id): current_timestamp})
         logger.info(f"New user {user_id} has been registered. Starting onboarding.")
         
-        # Для новых пользователей запускаем онбординг
         text = (
             f"👋 <b>Привет, {message.from_user.full_name}!</b>\n\n"
             "Я ваш персональный ассистент в мире криптовалют и майнинга. "
@@ -143,7 +143,6 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
         await message.answer(text, reply_markup=get_onboarding_start_keyboard())
 
     else:
-        # Для старых пользователей просто показываем главное меню
         logger.info(f"User {user_id} started the bot.")
         await message.answer(
             "👋 С возвращением! Выберите одну из опций в меню ниже.",
@@ -153,7 +152,6 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     if command.args:
         await handle_referral(message, command, redis_client, bot)
 
-# --- НОВЫЕ ОБРАБОТЧИКИ ДЛЯ КНОПОК ОНБОРДИНГА ---
 
 @router.callback_query(F.data == "onboarding_start" or F.data == "onboarding_step_1")
 async def onboarding_step_1(call: CallbackQuery):
@@ -200,8 +198,6 @@ async def onboarding_finish(call: CallbackQuery):
     await call.answer()
 
 
-# --- СУЩЕСТВУЮЩИЙ КОД (БЕЗ ИЗМЕНЕНИЙ) ---
-
 @router.message(Command("help"))
 async def handle_help(message: Message, admin_service: AdminService):
     """Отправляет информационное сообщение по команде /help."""
@@ -230,24 +226,35 @@ async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_serv
     finally:
         await call.answer()
 
-# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ AI-КОНСУЛЬТАНТА ---
-# Этот хендлер должен идти последним в этом файле, чтобы не перехватывать другие текстовые команды
-@router.message(F.content_type == ContentType.TEXT)
-async def handle_arbitrary_text(message: Message, state: FSMContext, ai_consultant_service: AIConsultantService, price_service: PriceService, admin_service: AdminService):
+# --- ОБНОВЛЕННЫЙ ОБРАБОТЧИК ДЛЯ AI-КОНСУЛЬТАНТА С ТРЕХУРОВНЕВЫМ ФИЛЬТРОМ ---
+@router.message(
+    F.content_type == ContentType.TEXT,
+    lambda message: not message.text.startswith('/')
+)
+async def handle_arbitrary_text(
+    message: Message, 
+    state: FSMContext, 
+    ai_consultant_service: AIConsultantService, 
+    ai_conversation_service: AIConversationService,
+    price_service: PriceService, 
+    admin_service: AdminService
+):
     """
-    Обрабатывает произвольный текстовый ввод от пользователя.
-    Сначала пытается распознать его как тикер, если не получается - отправляет в AI-Консультант.
+    Обрабатывает произвольный текстовый ввод с использованием трехуровневого фильтра.
     """
-    # Проверяем, не находится ли пользователь в каком-либо сценарии (например, в калькуляторе)
-    current_state = await state.get_state()
-    if current_state is not None:
-        logger.info(f"Ignoring arbitrary text '{message.text}' because a state '{current_state}' is active.")
-        # Если бот ждет ответа в сценарии, не реагируем
+    # Фильтр 1: Базовые проверки (без AI)
+    if (message.forward_from or message.forward_from_chat or 
+        len(message.text.split()) < 3):
         return
 
+    current_state = await state.get_state()
+    if current_state is not None:
+        return
+
+    user_id = message.from_user.id
     user_text = message.text.strip()
-    
-    # 1. Быстрая проверка, не является ли это тикером монеты
+
+    # Фильтр 2: Быстрая проверка на тикер (без AI)
     coin = await price_service.get_crypto_price(user_text)
     if coin:
         await admin_service.track_command_usage(f"Курс (текстом): {coin.symbol}")
@@ -258,20 +265,36 @@ async def handle_arbitrary_text(message: Message, state: FSMContext, ai_consulta
                 f"{emoji} 24ч: <b>{change:.2f}%</b>\n")
         if coin.algorithm:
             text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>"
-        
         await message.answer(text)
         return
 
-    # 2. Если это не тикер, считаем это вопросом для AI
-    await admin_service.track_command_usage("AI-Консультант (вопрос)")
-    temp_msg = await message.reply("🤖 AI-Консультант анализирует ваш вопрос... Это может занять до 30 секунд.")
+    # Фильтр 3: Глубокий AI-анализ намерения
+    # В личных сообщениях отвечаем всегда, в группах - только на вопросы
+    should_respond = False
+    if message.chat.type == ChatType.PRIVATE:
+        should_respond = True
+    else:
+        intent = await ai_consultant_service.get_user_intent(user_text)
+        if intent == 'question':
+            should_respond = True
     
-    ai_answer = await ai_consultant_service.get_ai_answer(user_text)
+    if not should_respond:
+        return
+
+    # Если все проверки пройдены, запускаем полноценного AI-Консультанта
+    await admin_service.track_command_usage("AI-Консультант (вопрос)")
+    
+    temp_msg = await message.reply("🤖 Думаю...")
+    await asyncio.sleep(1.5)
+    await temp_msg.edit_text("🧠 Анализирую информацию...")
+    
+    history = await ai_conversation_service.get_history(user_id)
+    ai_answer = await ai_consultant_service.get_ai_answer(user_text, history)
+    await ai_conversation_service.add_to_history(user_id, user_text, ai_answer)
     
     response_text = (
         f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
-        f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}\n\n"
-        "<i>⚠️ Ответ сгенерирован ИИ и может содержать неточности.</i>"
+        f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}"
     )
     
     await temp_msg.edit_text(response_text, disable_web_page_preview=True)

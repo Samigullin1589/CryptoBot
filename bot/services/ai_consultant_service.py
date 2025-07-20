@@ -1,3 +1,4 @@
+import json
 import logging
 import aiohttp
 from typing import List, Dict
@@ -12,32 +13,25 @@ class AIConsultantService:
     с поддержкой контекста диалога и функцией определения релевантности вопроса.
     """
 
-    @alru_cache(maxsize=512, ttl=600) # Кэшируем быстрые проверки на 10 минут
-    async def is_question_for_ai(self, text: str) -> bool:
+    @alru_cache(maxsize=512, ttl=600)
+    async def get_user_intent(self, text: str) -> str:
         """
-        Использует AI для быстрой проверки, является ли текст вопросом по теме крипты/майнинга.
+        Использует AI для определения намерения пользователя.
+        Возвращает одно из: 'question', 'statement', 'greeting', 'gratitude', 'other'.
         """
-        # Игнорируем слишком короткие сообщения, чтобы не тратить ресурсы API
-        if len(text.split()) < 3:
-            return False
-
         if not settings.gemini_api_key:
-            logger.warning("GEMINI_API_KEY is not set. AI question check is disabled.")
-            return False
+            return "other"
 
-        # Улучшенный промпт с примерами для более точного определения
         prompt = (
-            "You are a triage bot. Your task is to determine if the following message from a group chat is a specific question about cryptocurrencies, blockchain technology, or crypto mining that requires an expert answer. "
-            "General greetings, simple statements, or thanks are NOT questions. Answer ONLY with 'Yes' or 'No'.\n\n"
-            "Examples of questions to answer 'Yes':\n"
-            "- 'Кто знает М64 гидро 1 фазные?'\n"
-            "- 'температура для плат 73-74 для асика whatsminer m50s - это нормально?'\n"
-            "- 'какой сейчас самый выгодный асик для дома?'\n\n"
-            "Examples of messages to answer 'No':\n"
-            "- 'привет всем'\n"
-            "- 'спасибо за ответ'\n"
-            "- 'btc летит на луну'\n\n"
-            f"Message to analyze: '{text}'"
+            "Analyze the user's message from a group chat. What is the user's primary intent? "
+            "Choose one of the following categories: "
+            "'question' (if it's a clear question about crypto/mining), "
+            "'statement' (if it's an opinion or observation), "
+            "'greeting' (like 'hello'), "
+            "'gratitude' (like 'thanks'), "
+            "'other' (for anything else). "
+            "Respond with ONLY one word from the list.\n\n"
+            f"Message: '{text}'"
         )
         
         try:
@@ -47,19 +41,17 @@ class AIConsultantService:
             async with aiohttp.ClientSession() as session:
                 async with session.post(api_url, json=payload, timeout=5) as response:
                     if response.status != 200:
-                        logger.error(f"Gemini quick check API returned status {response.status}")
-                        return False
+                        return "other"
                     
                     result = await response.json()
-                    answer = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'No')
+                    intent = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'other').strip().lower()
                     
-                    is_question = "yes" in answer.lower()
-                    logger.info(f"AI Triage for '{text[:30]}...': Is it a question? -> {is_question}")
-                    return is_question
+                    logger.info(f"AI Intent Analysis for '{text[:30]}...': Intent -> {intent}")
+                    return intent
 
         except Exception as e:
-            logger.error(f"An error occurred during AI question check: {e}")
-            return False
+            logger.error(f"An error occurred during AI intent check: {e}")
+            return "other"
 
 
     @alru_cache(maxsize=128, ttl=3600)
@@ -70,7 +62,6 @@ class AIConsultantService:
         if not settings.gemini_api_key:
             return "К сожалению, функция AI-Консультанта сейчас недоступна."
 
-        # Улучшенный промпт с определением роли и структуры ответа
         prompt = (
             "You are 'CryptoBot Co-Pilot', a world-class expert engineer in cryptocurrency and ASIC mining. Your tone is professional, helpful, and precise. "
             "Provide a comprehensive and well-structured answer in Russian to the user's latest question, using the provided conversation history for context. "
