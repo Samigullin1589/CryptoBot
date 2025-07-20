@@ -18,13 +18,22 @@ class AIConsultantService:
             logger.warning("GEMINI_API_KEY is not set. AI Consultant is disabled.")
             return "К сожалению, функция AI-Консультанта сейчас недоступна."
 
+        # --- НОВЫЙ, УЛУЧШЕННЫЙ ПРОМПТ ---
+        # Этот промпт направляет AI на предоставление анализа, а не прямого финансового совета.
         prompt = (
             "Act as an experienced and helpful crypto mining engineer and cryptocurrency expert. "
             "Provide a clear, accurate, and detailed answer in Russian to the following user question. "
+            "IMPORTANT: If the user asks 'what is the most profitable' or for direct financial advice, "
+            "DO NOT give a single answer. Instead, provide a market analysis. "
+            "For example, list 2-3 popular models for different categories (e.g., home, industrial), "
+            "describe their pros and cons, and explain that profitability depends on factors like "
+            "electricity cost, coin price, and network difficulty, which the user must calculate themselves. "
+            "Frame your response as educational analysis, not a direct recommendation. "
             "If the question is unrelated to cryptocurrencies, mining, or blockchain, politely decline to answer. "
             "User question:\n\n"
             f"'{user_question}'"
         )
+        # --- КОНЕЦ НОВОГО ПРОМПТА ---
 
         try:
             api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
@@ -37,7 +46,12 @@ class AIConsultantService:
                         return "Произошла ошибка при обращении к AI. Попробуйте позже."
                     
                     result = await response.json()
-                    answer = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', '')
+                    # Добавлена проверка на случай, если candidates пустой
+                    if not result.get('candidates'):
+                        logger.error(f"Gemini API returned no candidates. Full response: {result}")
+                        return "AI не смог сформировать ответ из-за внутренних ограничений. Попробуйте переформулировать вопрос."
+
+                    answer = result['candidates'][0].get('content', {}).get('parts', [{}])[0].get('text', '')
                     
                     if not answer:
                         return "AI не смог сформировать ответ. Попробуйте переформулировать вопрос."
