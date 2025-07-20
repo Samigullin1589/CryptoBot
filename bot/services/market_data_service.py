@@ -10,8 +10,9 @@ from bot.utils.helpers import make_request
 
 logger = logging.getLogger(__name__)
 
-# --- НОВЫЙ РЕЗЕРВНЫЙ URL ---
+# --- НОВЫЕ, БЫСТРЫЕ И НАДЕЖНЫЕ ИСТОЧНИКИ ДАННЫХ ---
 BLOCKCHAIN_INFO_BLOCK_COUNT_URL = "https://blockchain.info/q/getblockcount"
+BLOCKCHAIR_BTC_STATS_URL = "https://api.blockchair.com/bitcoin/stats"
 
 class MarketDataService:
     @alru_cache(maxsize=1, ttl=14400)
@@ -19,20 +20,15 @@ class MarketDataService:
         """Получает Индекс Страха и Жадности, используя несколько источников."""
         logger.info("Fetching Fear & Greed Index...")
         async with aiohttp.ClientSession() as session:
-            # Пробуем получить с CoinMarketCap, если есть ключ
             if settings.cmc_api_key:
                 headers = {'X-CMC_PRO_API_KEY': settings.cmc_api_key}
                 data = await make_request(session, settings.cmc_fear_and_greed_url, headers=headers)
                 if data and 'data' in data and data['data']:
-                    fng_data = data['data'][0] # CMC returns a list
+                    fng_data = data['data'][0]
                     logger.info("Fetched F&G index from CoinMarketCap")
-                    return {
-                        'value': fng_data['score'],
-                        'value_classification': fng_data['rating']
-                    }
+                    return {'value': fng_data['score'], 'value_classification': fng_data['rating']}
                 logger.warning("Failed to fetch from CMC, falling back to Alternative.me")
             
-            # Резервный источник
             data = await make_request(session, settings.fear_and_greed_api_url)
             if data and 'data' in data and data['data']:
                 logger.info("Fetched F&G index from Alternative.me")
@@ -56,29 +52,21 @@ class MarketDataService:
 
     async def get_halving_info(self) -> str:
         """
-        Получает информацию о халвинге Bitcoin с использованием основного и резервного источников.
+        Получает информацию о халвинге Bitcoin, используя быстрый и надежный источник.
         """
-        logger.info("Fetching Bitcoin halving info...")
+        logger.info("Fetching Bitcoin halving info from blockchain.info...")
         current_block = None
         
         async with aiohttp.ClientSession() as session:
-            # 1. Основной источник: mempool.space
-            logger.info("Trying primary source for block height: mempool.space")
-            height_str = await make_request(session, settings.btc_halving_url, response_type='text', timeout=5)
+            # Используем blockchain.info как единственный, надежный источник
+            height_str = await make_request(session, BLOCKCHAIN_INFO_BLOCK_COUNT_URL, response_type='text', timeout=7)
             if height_str and height_str.isdigit():
                 current_block = int(height_str)
-                logger.info(f"Fetched block height from mempool.space: {current_block}")
-            else:
-                logger.warning("Primary source failed. Trying fallback source: blockchain.info")
-                # 2. Резервный источник: blockchain.info
-                height_str_fallback = await make_request(session, BLOCKCHAIN_INFO_BLOCK_COUNT_URL, response_type='text', timeout=10)
-                if height_str_fallback and height_str_fallback.isdigit():
-                    current_block = int(height_str_fallback)
-                    logger.info(f"Fetched block height from blockchain.info: {current_block}")
+                logger.info(f"Fetched block height from blockchain.info: {current_block}")
 
         if current_block is None:
-            logger.error("Failed to fetch block height from all sources.")
-            return "❌ Не удалось получить данные о халвинге. Внешние сервисы временно недоступны."
+            logger.error("Failed to fetch block height from blockchain.info.")
+            return "❌ Не удалось получить данные о халвинге. Внешний сервис временно недоступен."
         
         halving_interval = 210000
         blocks_left = halving_interval - (current_block % halving_interval)
@@ -90,32 +78,28 @@ class MarketDataService:
 
     async def get_btc_network_status(self) -> str:
         """
-        Получает статус сети Bitcoin (комиссии и мемпул) с обработкой ошибок.
+        Получает статус сети Bitcoin, используя быстрый и надежный источник.
         """
-        logger.info("Fetching Bitcoin network status...")
+        logger.info("Fetching Bitcoin network status from blockchair.com...")
         try:
             async with aiohttp.ClientSession() as session:
-                tasks = [
-                    make_request(session, settings.btc_fees_url, timeout=10),
-                    make_request(session, settings.btc_mempool_url, timeout=10)
-                ]
-                results = await asyncio.gather(*tasks)
-                fees_data, mempool_data = results
+                data = await make_request(session, BLOCKCHAIR_BTC_STATS_URL, timeout=7)
 
-            if not fees_data or not mempool_data:
-                logger.error("Failed to fetch BTC network status, one of the sources returned empty data.")
-                return "❌ Не удалось получить статус сети BTC. Внешний сервис вернул неполные данные."
+            if not data or "data" not in data:
+                logger.error("Failed to fetch BTC network status from blockchair.com, response has invalid structure.")
+                return "❌ Не удалось получить статус сети BTC. Внешний сервис вернул неверные данные."
             
+            stats = data["data"]
+            # Blockchair дает комиссию в satoshi per byte, что и нужно (sat/vB)
+            # Умножаем на 1024 для примерного перевода в vB, если API дает sat/kB
+            # Но blockchair обычно дает sat/vB, так что просто берем значение
+            fee_mb = stats.get('suggested_transaction_fee_per_byte_sat', 0)
+
             return (f"📡 <b>Статус сети Bitcoin:</b>\n\n"
-                    f"📈 <b>Транзакций в мемпуле:</b> <code>{mempool_data.get('count', 'N/A'):,}</code>\n\n"
-                    f"💸 <b>Рекомендуемые комиссии (sat/vB):</b>\n"
-                    f"  - 🚀 Высокий: <code>{fees_data.get('fastestFee', 'N/A')}</code>\n"
-                    f"  - 🚶‍♂️ Средний: <code>{fees_data.get('halfHourFee', 'N/A')}</code>\n"
-                    f"  - 🐢 Низкий: <code>{fees_data.get('hourFee', 'N/A')}</code>")
+                    f"📈 <b>Транзакций в мемпуле:</b> <code>{stats.get('mempool_transactions', 'N/A'):,}</code>\n\n"
+                    f"💸 <b>Рекомендуемая комиссия:</b>\n"
+                    f"  - 🚶‍♂️ Средняя: <code>{fee_mb} sat/vB</code>")
         
-        except asyncio.TimeoutError:
-            logger.error("TimeoutError while fetching BTC network status from mempool.space.")
-            return "❌ Не удалось получить статус сети BTC. Внешний сервис (mempool.space) не отвечает."
         except Exception as e:
             logger.error(f"An unexpected error occurred while fetching BTC network status: {e}")
             return "❌ Произошла непредвиденная ошибка при получении статуса сети BTC."
