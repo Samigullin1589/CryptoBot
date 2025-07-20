@@ -1,6 +1,11 @@
 import asyncio
 import logging
 from typing import List
+from datetime import datetime
+
+# --- ИСПРАВЛЕНИЕ: Добавлен недостающий импорт ---
+import redis.asyncio as redis
+# ---------------------------------------------
 
 from aiogram import F, Router, Bot
 from aiogram.filters import CommandStart, CommandObject, Command
@@ -14,16 +19,16 @@ from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.utils.helpers import sanitize_html
 
-# --- ИСПРАВЛЕННЫЕ ИМПОРТЫ ---
+# Используем правильные сервисы из нашей архитектуры
 from bot.services.user_service import UserService
 from bot.services.ai_consultant_service import AIConsultantService
 from bot.services.price_service import PriceService
-from bot.services.admin_service import AdminService # Оставляем для трекинга
+from bot.services.admin_service import AdminService
 
 router = Router()
 logger = logging.getLogger(__name__)
 
-# --- Код онбординга и справки остается без изменений ---
+# --- Код онбординга и справки ---
 
 def get_onboarding_start_keyboard():
     builder = InlineKeyboardBuilder()
@@ -75,26 +80,149 @@ HELP_TEXT = """
 Свяжитесь с администратором: <a href="https://t.me/mining_sale_admin">@mining_sale_admin</a>
 """
 
+# --- ИСПРАВЛЕНИЕ: Восстановлена логика функции ---
 async def handle_referral(message: Message, command: CommandObject, redis_client: redis.Redis, bot: Bot):
-    # Этот код без изменений
-    pass 
+    """Обрабатывает запуск по реферальной ссылке."""
+    referrer_id_str = command.args
+    new_user_id = message.from_user.id
 
+    if not referrer_id_str or not referrer_id_str.isdigit() or int(referrer_id_str) == new_user_id:
+        return
+
+    referrer_id = int(referrer_id_str)
+    
+    already_referred = await redis_client.sismember("referred_users", new_user_id)
+    if already_referred:
+        logger.info(f"User {new_user_id} tried to use referral link from {referrer_id}, but is already a referred user.")
+        return
+
+    bonus = settings.REFERRAL_BONUS_AMOUNT
+    
+    async with redis_client.pipeline() as pipe:
+        pipe.incrbyfloat(f"user:{referrer_id}:balance", bonus)
+        pipe.incrbyfloat(f"user:{referrer_id}:total_earned", bonus)
+        pipe.sadd("referred_users", new_user_id)
+        pipe.sadd(f"user:{referrer_id}:referrals", new_user_id)
+        await pipe.execute()
+    
+    logger.info(f"User {new_user_id} joined via referral from {referrer_id}. Referrer received {bonus} coins.")
+
+    try:
+        await bot.send_message(
+            referrer_id,
+            f"🤝 Поздравляем! Ваш друг @{message.from_user.username} присоединился по вашей ссылке.\n"
+            f"💰 Ваш баланс пополнен на <b>{bonus} монет</b>!"
+        )
+    except Exception as e:
+        logger.error(f"Failed to send referral notification to user {referrer_id}: {e}")
+
+# --- ИСПРАВЛЕНИЕ: Восстановлена логика функции ---
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService):
-    # Этот код без изменений
-    pass
+    """
+    Обработчик команды /start с онбордингом для новых пользователей.
+    """
+    await admin_service.track_command_usage("/start")
+    await state.clear()
+    
+    user_id = message.from_user.id
+    
+    is_new_user = await redis_client.sadd("users:known", user_id)
+    
+    if is_new_user:
+        current_timestamp = int(datetime.now().timestamp())
+        await redis_client.zadd("stats:user_first_seen", {str(user_id): current_timestamp})
+        logger.info(f"New user {user_id} has been registered. Starting onboarding.")
+        
+        text = (
+            f"👋 <b>Привет, {message.from_user.full_name}!</b>\n\n"
+            "Я ваш персональный ассистент в мире криптовалют и майнинга. "
+            "Давайте я быстро покажу, что я умею!"
+        )
+        await message.answer(text, reply_markup=get_onboarding_start_keyboard())
+
+    else:
+        logger.info(f"User {user_id} started the bot.")
+        await message.answer(
+            "👋 С возвращением! Выберите одну из опций в меню ниже.",
+            reply_markup=get_main_menu_keyboard()
+        )
+
+    if command.args:
+        await handle_referral(message, command, redis_client, bot)
 
 # --- Обработчики онбординга без изменений ---
+@router.callback_query(F.data == "onboarding_start" or F.data == "onboarding_step_1")
+async def onboarding_step_1(call: CallbackQuery):
+    text = (
+        "<b>Шаг 1: Курсы валют 💹</b>\n\n"
+        "Первая и главная функция — актуальные курсы. Вы можете просто отправить мне тикер "
+        "(например, <code>btc</code> или <code>эфир</code>) или воспользоваться кнопкой в меню."
+    )
+    await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(1))
+    await call.answer()
+
+
+@router.callback_query(F.data == "onboarding_step_2")
+async def onboarding_step_2(call: CallbackQuery):
+    text = (
+        "<b>Шаг 2: Все для майнеров ⚙️</b>\n\n"
+        "В разделе 'Топ ASIC' вы всегда найдете свежий список самого доходного оборудования. "
+        "А 'Калькулятор' поможет рассчитать чистую прибыль с учетом вашей розетки."
+    )
+    await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(2))
+    await call.answer()
+
+
+@router.callback_query(F.data == "onboarding_step_3")
+async def onboarding_step_3(call: CallbackQuery):
+    text = (
+        "<b>Шаг 3: Крипто-Центр 💎</b>\n\n"
+        "Это наша главная фишка! Здесь наш AI-аналитик 24/7 ищет для вас самые горячие "
+        "возможности для заработка: от Airdrop'ов до майнинг-сигналов."
+    )
+    await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(3))
+    await call.answer()
+
+
+@router.callback_query(F.data == "onboarding_skip" or F.data == "onboarding_finish")
+async def onboarding_finish(call: CallbackQuery):
+    """Завершает онбординг и показывает главное меню."""
+    text = (
+        "Отлично, теперь вы знаете все основы!\n\n"
+        "Вот ваше главное меню. Если забудете, что я умею, просто вызовите команду /help."
+    )
+    await call.message.delete()
+    await call.message.answer(text, reply_markup=get_main_menu_keyboard())
+    await call.answer()
 
 @router.message(Command("help"))
 async def handle_help(message: Message, admin_service: AdminService):
-    # Этот код без изменений
-    pass
+    """Отправляет информационное сообщение по команде /help."""
+    await admin_service.track_command_usage("/help")
+    await message.answer(HELP_TEXT, disable_web_page_preview=True)
+
 
 @router.callback_query(F.data == "back_to_main_menu")
 async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_service: AdminService):
-    # Этот код без изменений
-    pass
+    """
+    Обработчик кнопки 'Назад в главное меню'.
+    Умеет обрабатывать колбэки из текстовых сообщений, медиа и опросов.
+    """
+    await admin_service.track_command_usage("⬅️ Назад в меню")
+    await state.clear()
+    
+    try:
+        if call.message.content_type == ContentType.TEXT:
+            await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
+        else:
+            await call.message.delete()
+            await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+    except TelegramBadRequest as e:
+        logger.error(f"Error returning to main menu: {e}. Sending new message.")
+        await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+    finally:
+        await call.answer()
 
 # --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ ОБРАБОТЧИК ДЛЯ AI-КОНСУЛЬТАНТА ---
 @router.message(
@@ -116,7 +244,6 @@ async def handle_arbitrary_text(
     Сначала пытается распознать тикер монеты.
     Если не получилось, и это личный чат или обращение к боту, отвечает с помощью AI.
     """
-    # Проверяем, не находится ли пользователь в каком-либо состоянии FSM
     current_state = await state.get_state()
     if current_state is not None:
         return
@@ -140,7 +267,6 @@ async def handle_arbitrary_text(
         return
 
     # Уровень 2: Проверка, нужно ли отвечать с помощью AI
-    # В личных сообщениях отвечаем всегда. В группах - только при упоминании или ответе боту.
     bot_info = await bot.get_me()
     is_mention = any(
         entity.type == 'mention' and message.text[entity.offset:entity.offset+entity.length] == f"@{bot_info.username}"
@@ -149,20 +275,14 @@ async def handle_arbitrary_text(
     is_reply_to_bot = message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id
 
     if message.chat.type == ChatType.PRIVATE or is_mention or is_reply_to_bot:
-        # Если все проверки пройдены, запускаем полноценного AI-Консультанта
         await admin_service.track_command_usage("AI-Консультант (вопрос)")
         
         temp_msg = await message.reply("🤖 Думаю...")
         await asyncio.sleep(1.5)
         await temp_msg.edit_text("🧠 Анализирую информацию...")
         
-        # Получаем историю диалога из UserService
         history = await user_service.get_conversation_history(user_id, chat_id)
-        
-        # Получаем ответ от AIConsultantService
         ai_answer = await ai_consultant_service.get_ai_answer(user_text, history)
-        
-        # Сохраняем вопрос и ответ в историю через UserService
         await user_service.add_to_conversation_history(user_id, chat_id, user_text, ai_answer)
         
         response_text = (
@@ -171,4 +291,3 @@ async def handle_arbitrary_text(
         )
         
         await temp_msg.edit_text(response_text, disable_web_page_preview=True)
-
