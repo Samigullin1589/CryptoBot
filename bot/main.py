@@ -14,6 +14,8 @@ from bot.config.settings import settings
 from bot.handlers.admin import admin_menu, stats_handlers, data_management_handlers
 from bot.handlers import (common_handlers, info_handlers, 
                           mining_handlers, asic_info_handlers, crypto_center_handlers)
+# 👇 ДОБАВЛЯЕМ НОВЫЙ ИМПОРТ MIDDLEWARE
+from bot.middlewares.activity import ActivityMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
@@ -51,6 +53,8 @@ async def main():
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
 
+    # 👇 РЕГИСТРИРУЕМ НОВЫЙ MIDDLEWARE ДЛЯ ВСЕХ АПДЕЙТОВ
+    dp.update.middleware(ActivityMiddleware(redis_client=redis_client))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
 
     # Инициализация сервисов
@@ -74,12 +78,10 @@ async def main():
     dependencies.admin_service = admin_service
     
     # Регистрация роутеров
-    # Админские роутеры
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
     
-    # Пользовательские роутеры
     dp.include_router(crypto_center_handlers.router)
     dp.include_router(asic_info_handlers.router) 
     dp.include_router(common_handlers.router)

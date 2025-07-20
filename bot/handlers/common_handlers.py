@@ -1,12 +1,12 @@
 import logging
 from typing import Union
+from datetime import datetime
 
 import redis.asyncio as redis
 from aiogram import F, Router, Bot
 from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
-# 👇 Добавляем нужные импорты
 from aiogram.enums import ContentType
 from aiogram.exceptions import TelegramBadRequest
 
@@ -52,7 +52,7 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
     referrer_id = command.args
     new_user_id = message.from_user.id
 
-    if not referrer_id.isdigit() or int(referrer_id) == new_user_id:
+    if not referrer_id or not referrer_id.isdigit() or int(referrer_id) == new_user_id:
         return
 
     referrer_id = int(referrer_id)
@@ -85,14 +85,27 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
 
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService):
-    """Обработчик команды /start с поддержкой рефералов и удалением старой клавиатуры."""
+    """Обработчик команды /start с поддержкой рефералов и записью статистики."""
     await admin_service.track_command_usage("/start")
     await state.clear()
     
+    user_id = message.from_user.id
+    
+    # --- НОВЫЙ БЛОК: ЗАПИСЬ СТАТИСТИКИ ---
+    # SADD возвращает 1, если пользователь новый, и 0, если он уже был в множестве.
+    is_new_user = await redis_client.sadd("users:known", user_id)
+    
+    if is_new_user:
+        current_timestamp = int(datetime.now().timestamp())
+        # ZADD добавляет пользователя в отсортированное множество по времени первого визита.
+        await redis_client.zadd("stats:user_first_seen", {str(user_id): current_timestamp})
+        logger.info(f"New user {user_id} has been registered.")
+    # --- КОНЕЦ НОВОГО БЛОКА ---
+
     if command.args:
         await handle_referral(message, command, redis_client, bot)
     
-    logger.info(f"User {message.from_user.id} started the bot.")
+    logger.info(f"User {user_id} started the bot.")
 
     await message.answer(
         "Загружаю меню...",
@@ -112,7 +125,6 @@ async def handle_help(message: Message, admin_service: AdminService):
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
 
-# --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
 @router.callback_query(F.data == "back_to_main_menu")
 async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_service: AdminService):
     """
@@ -123,18 +135,13 @@ async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_serv
     await state.clear()
     
     try:
-        # Проверяем, можно ли отредактировать сообщение (если это текст)
         if call.message.content_type == ContentType.TEXT:
             await call.message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
         else:
-            # Если это опрос, фото или что-то еще, удаляем старое и присылаем новое
             await call.message.delete()
             await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
     except TelegramBadRequest as e:
         logger.error(f"Error returning to main menu: {e}. Sending new message.")
-        # Если возникла любая другая ошибка (например, сообщение слишком старое),
-        # просто отправляем новое сообщение.
         await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
     finally:
-        # В любом случае отвечаем на колбэк, чтобы убрать "часики"
         await call.answer()
