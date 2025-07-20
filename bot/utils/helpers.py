@@ -32,6 +32,7 @@ def backoff_hdlr(details):
         "Backing off {wait:0.1f} seconds after {tries} tries calling function {target}".format(**details)
     )
 
+
 # --- ИСПРАВЛЕНИЯ ВНЕСЕНЫ ТОЛЬКО В ЭТУ ФУНКЦИЮ ---
 @backoff.on_exception(backoff.expo, aiohttp.ClientError, max_tries=3, on_backoff=backoff_hdlr)
 async def make_request(
