@@ -1,18 +1,25 @@
 import logging
-from datetime import datetime
 from typing import Callable, Dict, Any, Awaitable
-import redis.asyncio as redis
+
 from aiogram import BaseMiddleware
 from aiogram.types import Update
+
+# Импортируем наш основной сервис для работы с пользователями
+from bot.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
 class ActivityMiddleware(BaseMiddleware):
     """
-    Middleware для отслеживания активности пользователей при каждом входящем сообщении или колбэке.
+    Middleware для отслеживания и поощрения активности пользователей.
+    Интегрирован с UserService для обновления профиля пользователя и его рейтинга доверия.
     """
-    def __init__(self, redis_client: redis.Redis):
-        self.redis = redis_client
+    def __init__(self, user_service: UserService):
+        """
+        Инициализирует middleware с сервисом пользователей.
+        Больше не зависит от прямого доступа к Redis.
+        """
+        self.user_service = user_service
 
     async def __call__(
         self,
@@ -20,20 +27,24 @@ class ActivityMiddleware(BaseMiddleware):
         event: Update,
         data: Dict[str, Any]
     ) -> Any:
-        # Пытаемся получить ID пользователя из любого типа апдейта
+        """
+        Этот метод вызывается для каждого входящего события (update).
+        """
+        # Пытаемся получить пользователя и чат из данных, которые предоставляет aiogram
         user = data.get('event_from_user')
-        if not user:
+        chat = data.get('event_chat')
+
+        # Мы отслеживаем активность только от реальных пользователей и только в чатах (не в личке с ботом)
+        if not user or not chat or chat.type == 'private':
             return await handler(event, data)
 
-        user_id = user.id
-        current_timestamp = int(datetime.now().timestamp())
-
         try:
-            # ZADD обновляет "счет" (в нашем случае - время) пользователя, если он уже существует,
-            # или добавляет нового, если его нет.
-            await self.redis.zadd("stats:user_activity", {str(user_id): current_timestamp})
+            # Делегируем всю логику обновления активности нашему UserService.
+            # Это позволяет сохранять middleware "чистым", а всю бизнес-логику держать в сервисе.
+            await self.user_service.update_user_activity(user.id, chat.id)
         except Exception as e:
-            logger.error(f"Failed to update user {user_id} activity: {e}")
+            # Логируем ошибку, но не останавливаем обработку события
+            logger.error(f"Не удалось обновить активность пользователя {user.id} в чате {chat.id}: {e}")
 
-        # Продолжаем обработку апдейта
+        # Передаем управление дальше по цепочке обработчиков
         return await handler(event, data)

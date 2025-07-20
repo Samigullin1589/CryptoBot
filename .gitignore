@@ -1,16 +1,37 @@
-# Файл с секретами
-.env
+# Файлы виртуального окружения
+venv/
+.venv/
+env/
+.env/
+*/venv/
+*/.venv/
 
-# Кэш и артефакты Python
+# Файлы кэша Python
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Виртуальные окружения
-.venv/
-venv/
-env/
-
-# Артефакты редакторов
-.vscode/
+# Файлы настроек IDE
 .idea/
+.vscode/
+
+# Локальные настройки и секреты
+.env
+*.env
+.env.*
+config.ini
+settings.local.py
+
+# Логи
+*.log
+
+# Базы данных
+*.sqlite3
+*.db
+
+# Зависимости (их нужно хранить в requirements.txt)
+/deps/
+
+# Файлы операционной системы
+.DS_Store
+Thumbs.db

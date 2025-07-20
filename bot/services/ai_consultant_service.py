@@ -1,114 +1,116 @@
-import json
 import logging
-import aiohttp
 from typing import List, Dict
+
+import aiohttp
 from async_lru import alru_cache
-from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class AIConsultantService:
     """
-    Сервис для получения экспертных ответов от Gemini API на вопросы пользователей,
-    с поддержкой контекста диалога и функцией определения релевантности вопроса.
+    Сервис для получения экспертных ответов от Gemini API на вопросы пользователей.
+    Сфокусирован исключительно на предоставлении качественных консультаций.
     """
-
-    @alru_cache(maxsize=512, ttl=600)
-    async def get_user_intent(self, text: str) -> str:
+    def __init__(self, gemini_api_key: str, http_session: aiohttp.ClientSession):
         """
-        Использует AI для определения намерения пользователя.
-        Возвращает одно из: 'question', 'statement', 'greeting', 'gratitude', 'other'.
-        """
-        if not settings.gemini_api_key:
-            return "other"
+        Инициализирует сервис.
 
-        prompt = (
-            "Analyze the user's message from a group chat. What is the user's primary intent? "
-            "Choose one of the following categories: "
-            "'question' (if it's a clear question about crypto/mining), "
-            "'statement' (if it's an opinion or observation), "
-            "'greeting' (like 'hello'), "
-            "'gratitude' (like 'thanks'), "
-            "'other' (for anything else). "
-            "Respond with ONLY one word from the list.\n\n"
-            f"Message: '{text}'"
+        :param gemini_api_key: API-ключ для доступа к Google Gemini.
+        :param http_session: Общий экземпляр aiohttp.ClientSession для переиспользования соединений.
+        """
+        if not gemini_api_key:
+            raise ValueError("Необходимо передать API-ключ Gemini.")
+        self.api_key = gemini_api_key
+        self.session = http_session
+        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.api_key}"
+
+    def _create_system_prompt(self) -> str:
+        """
+        Создает и возвращает системный промпт, определяющий роль и поведение AI-консультанта.
+        Это "мозг" и "характер" вашего консультанта.
+        """
+        return (
+            "You are 'CryptoBot Co-Pilot', a world-class expert engineer in cryptocurrency and ASIC mining. Your tone is professional, helpful, and precise. "
+            "Your primary goal is to provide accurate, well-structured, and safe information. "
+            "Provide a comprehensive and well-structured answer in Russian to the user's latest question, using the provided conversation history for context. "
+            "Structure your answer with clear headings (using bold text), bullet points, and `code` blocks for technical specifications or commands. "
+            "Start the answer by directly addressing the user's question. "
+            "Conclude your answer with a '<b>Вывод:</b>' (Conclusion) section that summarizes the key takeaway. "
+            "If the question is a request for a recommendation (e.g., 'what is the most profitable'), provide an analytical comparison of 2-3 relevant options and explain the trade-offs, rather than giving a single answer. "
+            "Always state that profitability depends on many variables (electricity cost, network difficulty, market price) that the user must check themselves. "
+            "NEVER give financial advice or guarantee any profit. "
+            "If the question is unrelated to crypto, mining, blockchain, or related technologies, politely decline to answer, explaining that your expertise is limited to these topics. "
+            "Do not answer questions about illegal activities."
         )
+
+    def _prepare_request_payload(self, user_question: str, history: List[Dict[str, str]]) -> Dict:
+        """
+        Готовит тело запроса (payload) для Gemini API.
+        """
+        system_prompt = self._create_system_prompt()
+
+        # Формируем историю диалога для API
+        contents = []
+        for message in history:
+            role = message.get("role")
+            text = message.get("text")
+            # Пропускаем пустые или некорректные сообщения в истории
+            if role and text and role in ["user", "model"]:
+                contents.append({"role": role, "parts": [{"text": text}]})
         
-        try:
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
-            payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json=payload, timeout=5) as response:
-                    if response.status != 200:
-                        return "other"
-                    
-                    result = await response.json()
-                    intent = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'other').strip().lower()
-                    
-                    logger.info(f"AI Intent Analysis for '{text[:30]}...': Intent -> {intent}")
-                    return intent
+        # Добавляем текущий вопрос пользователя
+        contents.append({"role": "user", "parts": [{"text": user_question}]})
 
-        except Exception as e:
-            logger.error(f"An error occurred during AI intent check: {e}")
-            return "other"
-
+        return {
+            "contents": contents,
+            "systemInstruction": { "role": "system", "parts": [{"text": system_prompt}] },
+            "safetySettings": [ # Явно задаем настройки безопасности, чтобы избежать нежелательного контента
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
+            ]
+        }
 
     @alru_cache(maxsize=128, ttl=3600)
     async def get_ai_answer(self, user_question: str, history: List[Dict[str, str]]) -> str:
         """
         Получает экспертный ответ от Gemini API, учитывая предыдущую историю диалога.
+        Результат кешируется для повышения производительности и экономии.
         """
-        if not settings.gemini_api_key:
-            return "К сожалению, функция AI-Консультанта сейчас недоступна."
-
-        prompt = (
-            "You are 'CryptoBot Co-Pilot', a world-class expert engineer in cryptocurrency and ASIC mining. Your tone is professional, helpful, and precise. "
-            "Provide a comprehensive and well-structured answer in Russian to the user's latest question, using the provided conversation history for context. "
-            "Structure your answer with clear headings (using bold text), bullet points, and `code` blocks for technical specifications. "
-            "Start the answer by directly addressing the user's question. "
-            "Conclude your answer with a '<b>Вывод:</b>' (Conclusion) section that summarizes the key takeaway. "
-            "If the question is a request for a recommendation (e.g., 'what is the most profitable'), provide an analytical comparison of 2-3 relevant options and explain the trade-offs, rather than giving a single answer. "
-            "Always state that profitability depends on variables the user must check themselves. "
-            "If the question is unrelated to crypto, politely decline."
-        )
-
-        contents = []
-        for message in history:
-            role = message.get("role")
-            text = message.get("text")
-            if role and text:
-                contents.append({"role": role, "parts": [{"text": text}]})
-        
-        contents.append({"role": "user", "parts": [{"text": user_question}]})
+        payload = self._prepare_request_payload(user_question, history)
 
         try:
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.gemini_api_key}"
-            payload = {
-                "contents": contents,
-                "systemInstruction": { "role": "system", "parts": [{"text": prompt}] }
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(api_url, json=payload, timeout=30) as response:
-                    if response.status != 200:
-                        logger.error(f"Gemini API returned status {response.status}: {await response.text()}")
-                        return "Произошла ошибка при обращении к AI. Попробуйте позже."
-                    
-                    result = await response.json()
-                    
-                    if not result.get('candidates'):
-                        logger.error(f"Gemini API returned no candidates. Full response: {result}")
-                        return "AI не смог сформировать ответ из-за внутренних ограничений. Попробуйте переформулировать вопрос."
-
-                    answer = result['candidates'][0].get('content', {}).get('parts', [{}])[0].get('text', '')
-                    
-                    if not answer:
+            async with self.session.post(self.api_url, json=payload, timeout=30) as response:
+                if response.status != 200:
+                    response_text = await response.text()
+                    logger.error(f"Gemini API вернул статус {response.status}: {response_text}")
+                    return "Произошла ошибка при обращении к AI. Пожалуйста, попробуйте позже."
+                
+                result = await response.json()
+                
+                # Более детальная проверка ответа на случай блокировки по безопасности
+                if not result.get('candidates'):
+                    finish_reason = result.get('promptFeedback', {}).get('blockReason')
+                    if finish_reason:
+                        logger.warning(f"Gemini API не вернул кандидатов из-за настроек безопасности. Причина: {finish_reason}. Вопрос: '{user_question}'")
+                        return "AI не смог сформировать ответ из-за внутренних ограничений безопасности. Попробуйте переформулировать вопрос."
+                    else:
+                        logger.error(f"Gemini API не вернул кандидатов. Полный ответ: {result}")
                         return "AI не смог сформировать ответ. Попробуйте переформулировать вопрос."
-                        
-                    logger.info(f"Generated AI answer for question: '{user_question}'")
-                    return answer.strip()
 
+                answer = result['candidates'][0].get('content', {}).get('parts', [{}])[0].get('text', '')
+                
+                if not answer:
+                    logger.warning(f"Gemini API вернул пустой ответ на вопрос: '{user_question}'")
+                    return "AI не смог сформировать содержательный ответ. Попробуйте задать вопрос иначе."
+                    
+                logger.info(f"Сгенерирован AI-ответ на вопрос: '{user_question}'")
+                return answer.strip()
+
+        except aiohttp.ClientError as e:
+            logger.error(f"Сетевая ошибка при запросе к AI-Консультанту: {e}")
+            return "Ошибка сети при обращении к AI. Проверьте соединение и попробуйте позже."
         except Exception as e:
-            logger.error(f"An error occurred during AI Consultant request: {e}")
+            logger.error(f"Непредвиденная ошибка в AI-Консультанте: {e}", exc_info=True)
             return "Произошла непредвиденная ошибка. Пожалуйста, попробуйте позже."
