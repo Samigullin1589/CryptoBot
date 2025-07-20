@@ -14,7 +14,11 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.services.admin_service import AdminService
-from bot.utils.helpers import get_message_and_chat_id
+from bot.utils.helpers import get_message_and_chat_id, sanitize_html
+# --- НОВЫЕ ИМПОРТЫ ---
+from bot.services.ai_consultant_service import AIConsultantService
+from bot.services.price_service import PriceService
+
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -191,7 +195,6 @@ async def onboarding_finish(call: CallbackQuery):
         "Отлично, теперь вы знаете все основы!\n\n"
         "Вот ваше главное меню. Если забудете, что я умею, просто вызовите команду /help."
     )
-    # Удаляем сообщение онбординга и присылаем новое с главным меню
     await call.message.delete()
     await call.message.answer(text, reply_markup=get_main_menu_keyboard())
     await call.answer()
@@ -226,3 +229,49 @@ async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_serv
         await call.message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
     finally:
         await call.answer()
+
+# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ AI-КОНСУЛЬТАНТА ---
+# Этот хендлер должен идти последним в этом файле, чтобы не перехватывать другие текстовые команды
+@router.message(F.content_type == ContentType.TEXT)
+async def handle_arbitrary_text(message: Message, state: FSMContext, ai_consultant_service: AIConsultantService, price_service: PriceService, admin_service: AdminService):
+    """
+    Обрабатывает произвольный текстовый ввод от пользователя.
+    Сначала пытается распознать его как тикер, если не получается - отправляет в AI-Консультант.
+    """
+    # Проверяем, не находится ли пользователь в каком-либо сценарии (например, в калькуляторе)
+    current_state = await state.get_state()
+    if current_state is not None:
+        logger.info(f"Ignoring arbitrary text '{message.text}' because a state '{current_state}' is active.")
+        # Если бот ждет ответа в сценарии, не реагируем
+        return
+
+    user_text = message.text.strip()
+    
+    # 1. Быстрая проверка, не является ли это тикером монеты
+    coin = await price_service.get_crypto_price(user_text)
+    if coin:
+        await admin_service.track_command_usage(f"Курс (текстом): {coin.symbol}")
+        change = coin.price_change_24h or 0
+        emoji = "📈" if change >= 0 else "📉"
+        text = (f"<b>{coin.name} ({coin.symbol})</b>\n"
+                f"💹 Курс: <b>${coin.price:,.4f}</b>\n"
+                f"{emoji} 24ч: <b>{change:.2f}%</b>\n")
+        if coin.algorithm:
+            text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>"
+        
+        await message.answer(text)
+        return
+
+    # 2. Если это не тикер, считаем это вопросом для AI
+    await admin_service.track_command_usage("AI-Консультант (вопрос)")
+    temp_msg = await message.reply("🤖 AI-Консультант анализирует ваш вопрос... Это может занять до 30 секунд.")
+    
+    ai_answer = await ai_consultant_service.get_ai_answer(user_text)
+    
+    response_text = (
+        f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
+        f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}\n\n"
+        "<i>⚠️ Ответ сгенерирован ИИ и может содержать неточности.</i>"
+    )
+    
+    await temp_msg.edit_text(response_text, disable_web_page_preview=True)

@@ -335,14 +335,3 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         correct_option_id=quiz['correct_option_index'], is_anonymous=False,
         reply_markup=get_quiz_keyboard()
     )
-
-
-@router.message(
-    F.content_type == ContentType.TEXT,
-    lambda message: not any(entity.type == "bot_command" for entity in message.entities or [])
-)
-async def handle_arbitrary_text(message: Message, price_service: PriceService, bot: Bot):
-    if message.chat.type == "private":
-        logger.info(f"User sent text '{message.text}' in private, processing as price request.")
-        temp_msg = await message.answer("⏳ Получаю курс...")
-        await send_price_info(temp_msg, message.text, price_service)

@@ -14,7 +14,6 @@ from bot.config.settings import settings
 from bot.handlers.admin import admin_menu, stats_handlers, data_management_handlers
 from bot.handlers import (common_handlers, info_handlers, 
                           mining_handlers, asic_info_handlers, crypto_center_handlers)
-# 👇 ДОБАВЛЯЕМ НОВЫЙ ИМПОРТ MIDDLEWARE
 from bot.middlewares.activity import ActivityMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
 from bot.services.asic_service import AsicService
@@ -25,6 +24,8 @@ from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
 from bot.services.admin_service import AdminService
 from bot.services.crypto_center_service import CryptoCenterService
+# --- НОВЫЙ ИМПОРТ ---
+from bot.services.ai_consultant_service import AIConsultantService
 from bot.services.scheduler import setup_scheduler
 from bot.utils import dependencies
 from bot.utils.helpers import setup_logging
@@ -53,7 +54,6 @@ async def main():
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
 
-    # 👇 РЕГИСТРИРУЕМ НОВЫЙ MIDDLEWARE ДЛЯ ВСЕХ АПДЕЙТОВ
     dp.update.middleware(ActivityMiddleware(redis_client=redis_client))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
 
@@ -61,6 +61,8 @@ async def main():
     asic_service = AsicService(redis_client=redis_client)
     admin_service = AdminService(redis_client=redis_client)
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
+    # --- НОВЫЙ СЕРВИС ---
+    ai_consultant_service = AIConsultantService()
     openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
@@ -97,6 +99,8 @@ async def main():
         "redis_client": redis_client,
         "admin_service": admin_service,
         "crypto_center_service": crypto_center_service,
+        # --- НОВАЯ ЗАВИСИМОСТЬ ---
+        "ai_consultant_service": ai_consultant_service,
     }
 
     scheduler = setup_scheduler(context_data)
