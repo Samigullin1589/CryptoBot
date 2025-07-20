@@ -32,32 +32,38 @@ def backoff_hdlr(details):
         "Backing off {wait:0.1f} seconds after {tries} tries calling function {target}".format(**details)
     )
 
-
+# --- ИСПРАВЛЕНИЯ ВНЕСЕНЫ ТОЛЬКО В ЭТУ ФУНКЦИЮ ---
 @backoff.on_exception(backoff.expo, aiohttp.ClientError, max_tries=3, on_backoff=backoff_hdlr)
 async def make_request(
     session: aiohttp.ClientSession,
     url: str,
     response_type: Literal["json", "text"] = "json",
-    headers: Optional[dict] = None
+    headers: Optional[dict] = None,
+    timeout: int = 15  # <-- 1. ДОБАВЛЕН ПАРАМЕТР TIMEOUT
 ) -> Optional[Any]:
     """
     Выполняет асинхронный HTTP-запрос с использованием aiohttp и backoff для отказоустойчивости.
     """
     try:
-        timeout = aiohttp.ClientTimeout(total=15)
-        async with session.get(url, headers=headers, timeout=timeout, ssl=False) as response:
-            # ssl=False используется для обхода потенциальных SSL-ошибок с некоторыми API
+        # 2. ИСПОЛЬЗУЕМ ПЕРЕДАННЫЙ TIMEOUT
+        aio_timeout = aiohttp.ClientTimeout(total=timeout)
+        async with session.get(url, headers=headers, timeout=aio_timeout, ssl=False) as response:
             response.raise_for_status()
             if response_type == "json":
-                # Игнорируем content_type для работы с некорректно настроенными API
                 return await response.json(content_type=None)
             return await response.text()
+            
+    # 3. ДОБАВЛЕНА ЯВНАЯ ОБРАБОТКА ОШИБКИ TIMEOUT
+    except asyncio.TimeoutError:
+        logger.error(f"Request to {url} timed out after {timeout} seconds.")
+        return None
     except aiohttp.ClientError as e:
         logger.error(f"Request to {url} failed after all retries: {e}")
         return None
     except Exception as e:
         logger.exception("An unexpected error occurred in make_request for URL: %s", url)
         return None
+# --- КОНЕЦ ИСПРАВЛЕНИЙ ---
 
 
 def sanitize_html(text: str) -> str:
