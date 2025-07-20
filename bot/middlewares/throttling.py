@@ -3,8 +3,9 @@ from typing import Callable, Dict, Any, Awaitable
 
 import redis.asyncio as redis
 from aiogram import BaseMiddleware
-from aiogram.dispatcher.event.handler import Handler
 from aiogram.types import Message
+# --- ИЗМЕНЕНИЕ: Импортируем исключение для отмены ---
+from aiogram.exceptions import CancelHandler
 
 # Импортируем наш основной сервис для работы с пользователями
 from bot.services.user_service import UserService
@@ -66,14 +67,12 @@ class ThrottlingMiddleware(BaseMiddleware):
 
         if is_throttled:
             # Если пользователь превысил лимит, уведомляем его и отменяем обработку сообщения
-            # ttl (time-to-live) покажет, сколько еще секунд ключ будет существовать
             ttl = await self.redis.ttl(throttle_key)
             await event.answer(f"⏳ Сообщения слишком часто. Попробуйте снова через {ttl} сек.")
             
-            # Отменяем дальнейшую обработку этого события (сообщение не дойдет до хендлеров)
-            handler_obj: Handler = data["handler"]
-            handler_obj.cancel()
-            return
+            # --- ИЗМЕНЕНИЕ: Новый, правильный способ отмены обработки ---
+            # Выбрасываем специальное исключение, которое aiogram перехватит и остановит цепочку.
+            raise CancelHandler()
 
         # Если лимит не превышен, устанавливаем ключ с временем жизни, равным лимиту
         await self.redis.set(throttle_key, "1", ex=int(rate_limit) + 1)
