@@ -1,20 +1,23 @@
 import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
-from bot.filters.admin_filter import IsAdmin
+
+# --- ИСПРАВЛЕНИЕ: Импортируем правильное имя класса ---
+from bot.filters.admin_filter import IsAdminFilter
 from bot.keyboards.admin_keyboards import get_back_to_admin_menu_keyboard
 from bot.services.admin_service import AdminService
 
 stats_router = Router()
 logger = logging.getLogger(__name__)
 
-stats_router.callback_query.filter(IsAdmin())
+# --- ИСПРАВЛЕНИЕ: Применяем правильный фильтр ко всему роутеру ---
+stats_router.callback_query.filter(IsAdminFilter())
 
 
 @stats_router.callback_query(F.data == "admin_stats_general")
 async def show_general_stats(call: CallbackQuery, admin_service: AdminService):
     """Отображает общую статистику по боту."""
-    await admin_service.track_command_usage("📊 Общая статистика (Админ)") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
+    await admin_service.track_command_usage("📊 Общая статистика (Админ)")
     
     stats = await admin_service.get_general_stats()
     text = (
@@ -29,7 +32,7 @@ async def show_general_stats(call: CallbackQuery, admin_service: AdminService):
 @stats_router.callback_query(F.data == "admin_stats_mining")
 async def show_mining_stats(call: CallbackQuery, admin_service: AdminService):
     """Отображает статистику по игре 'Виртуальный Майнинг'."""
-    await admin_service.track_command_usage("💎 Статистика майнинга (Админ)") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
+    await admin_service.track_command_usage("💎 Статистика майнинга (Админ)")
     
     stats = await admin_service.get_mining_stats()
     text = (
@@ -45,7 +48,7 @@ async def show_mining_stats(call: CallbackQuery, admin_service: AdminService):
 @stats_router.callback_query(F.data == "admin_stats_commands")
 async def show_command_stats(call: CallbackQuery, admin_service: AdminService):
     """Отображает статистику по использованию команд."""
-    await admin_service.track_command_usage("📈 Статистика команд (Админ)") # <<< ДОБАВЛЕНО ОТСЛЕЖИВАНИЕ
+    await admin_service.track_command_usage("📈 Статистика команд (Админ)")
     
     top_commands = await admin_service.get_command_stats()
     
