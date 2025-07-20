@@ -36,3 +36,7 @@ async def admin_menu_callback(call: CallbackQuery, admin_service: AdminService):
     # но для полноты картины можно добавить и её
     await admin_service.track_command_usage("Админ-меню (возврат)")
     await call.message.edit_text(ADMIN_MENU_TEXT, reply_markup=get_admin_menu_keyboard())
+# ... весь остальной код ...
+await call.message.edit_text(ADMIN_MENU_TEXT, reply_markup=get_admin_menu_keyboard())
+
+# Финальная версия
