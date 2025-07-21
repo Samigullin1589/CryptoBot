@@ -34,6 +34,9 @@ from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.crypto_center_service import CryptoCenterService
+# --- ИСПРАВЛЕНИЕ: Добавлен недостающий импорт ---
+from bot.services.admin_service import AdminService
+# ---------------------------------------------
 from bot.services.scheduler import setup_scheduler
 from bot.utils.helpers import setup_logging
 
@@ -42,7 +45,6 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ УДАЛЕНИЯ СПАМА ---
 async def delete_spam_message(message: Message):
     """
     Этот хендлер вызывается, когда AlphaSpamFilter возвращает True,
@@ -53,7 +55,6 @@ async def delete_spam_message(message: Message):
         logger.warning(f"Удалено спам-сообщение от пользователя {message.from_user.id} в чате {message.chat.id}")
     except Exception as e:
         logger.error(f"Не удалось удалить спам-сообщение {message.message_id}: {e}")
-# -------------------------------------------
 
 
 async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
@@ -112,6 +113,9 @@ async def main():
     news_service = NewsService()
     market_data_service = MarketDataService()
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
+    # --- ИСПРАВЛЕНИЕ: Инициализируем AdminService ---
+    admin_service = AdminService(redis_client=redis_client)
+    # ---------------------------------------------
 
     # --- Регистрация Middleware ---
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
@@ -119,14 +123,11 @@ async def main():
 
     # --- РЕГИСТРАЦИЯ АНТИСПАМ-СИСТЕМЫ ---
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
-    # Регистрируем наш новый хендлер, который будет срабатывать только в группах
-    # и только если alpha_spam_filter вернет True.
     dp.message.register(
         delete_spam_message, 
         F.chat.type.in_({'group', 'supergroup'}), 
         alpha_spam_filter
     )
-    # --------------------------------------
 
     # --- Регистрация роутеров ---
     dp.include_router(admin_menu.admin_router)
@@ -149,6 +150,9 @@ async def main():
         "price_service": price_service,
         "market_data_service": market_data_service,
         "crypto_center_service": crypto_center_service,
+        # --- ИСПРАВЛЕНИЕ: Добавляем AdminService в DI ---
+        "admin_service": admin_service,
+        # ---------------------------------------------
         "redis_client": redis_client,
         "http_session": http_session,
     }
