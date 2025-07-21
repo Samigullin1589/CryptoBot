@@ -109,7 +109,7 @@ async def main():
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
     asic_service = AsicService(redis_client=redis_client)
     coin_list_service = CoinListService()
-    price_service = PriceService(coin_list_service=coin_list_service)
+    price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
     news_service = NewsService()
     market_data_service = MarketDataService()
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
