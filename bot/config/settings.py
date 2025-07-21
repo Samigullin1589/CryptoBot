@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Any
 
-from pydantic import model_validator, Field
+from pydantic import model_validator, Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -22,13 +22,10 @@ class AppSettings(BaseSettings):
     gemini_api_key: str = "" 
     admin_chat_id: int
     
-    # --- ИСПРАВЛЕНИЕ: Убрано нижнее подчеркивание в соответствии с правилами Pydantic v2 ---
-    # 1. Это временное поле читает переменную окружения ADMIN_USER_IDS как обычную строку.
+    # --- ИСПРАВЛЕНИЕ: Реализован самый надежный способ парсинга ---
+    # 1. Это поле читает переменную окружения ADMIN_USER_IDS как ОБЫЧНУЮ СТРОКУ.
+    #    Pydantic больше не будет пытаться парсить ее как JSON.
     admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
-    
-    # 2. Это поле, которое будет использовать остальная часть приложения. Оно будет заполнено валидатором ниже.
-    ADMIN_USER_IDS: List[int] = []
-    # -----------------------------------------------------------------
     
     news_chat_id: int
     cmc_api_key: str = ""
@@ -84,25 +81,23 @@ class AppSettings(BaseSettings):
         case_sensitive=False
     )
     
-    # --- ИСПРАВЛЕНИЕ: Валидатор теперь работает с публичным полем ---
-    @model_validator(mode='before')
-    @classmethod
-    def parse_admin_ids(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+    # --- ИСПРАВЛЕНИЕ: Используем вычисляемое поле для создания списка ---
+    @computed_field
+    @property
+    def ADMIN_USER_IDS(self) -> List[int]:
         """
-        Берет строку из admin_user_ids_str, парсит ее в список чисел 
-        и помещает результат в поле ADMIN_USER_IDS.
+        Это вычисляемое поле. Оно не читается из окружения, а создается
+        на основе уже прочитанного поля admin_user_ids_str.
         """
-        admin_ids_str = values.get('admin_user_ids_str', '')
-        if isinstance(admin_ids_str, str) and admin_ids_str.strip():
-            try:
-                # Разделяем строку по запятой, убираем пробелы и преобразуем в числа
-                parsed_ids = [int(item.strip()) for item in admin_ids_str.split(',') if item.strip()]
-                values['ADMIN_USER_IDS'] = parsed_ids
-            except (ValueError, TypeError):
-                # В случае ошибки просто оставляем список пустым
-                values['ADMIN_USER_IDS'] = []
-        return values
-    # ---------------------------------------------
+        if not self.admin_user_ids_str.strip():
+            return []
+        try:
+            # Разделяем строку по запятой, убираем пробелы и преобразуем в числа
+            return [int(item.strip()) for item in self.admin_user_ids_str.split(',') if item.strip()]
+        except (ValueError, TypeError):
+            # В случае ошибки (например, если в строке есть буквы) возвращаем пустой список
+            return []
+    # -----------------------------------------------------------------
     
     @model_validator(mode='after')
     def set_allowed_users(self) -> 'AppSettings':
