@@ -1,11 +1,10 @@
 import re
 from datetime import timedelta, datetime
 
+# --- ИСПРАВЛЕНИЕ: Используем "F" для фильтрации ---
 from aiogram import Router, F, Bot
-# --- ИСПРАВЛЕНИЕ: Разделены импорты для соответствия aiogram 3.x ---
 from aiogram.filters import Command
-from aiogram.filters.chat_type import ChatTypeFilter
-# -----------------------------------------------------------------
+# --------------------------------------------------
 from aiogram.types import Message, ChatPermissions
 
 # Импортируем наши сервисы, которые будут передаваться через DI
@@ -16,11 +15,12 @@ from bot.filters.admin_filter import IsAdminFilter
 # Создаем роутер специально для админских команд по борьбе со спамом
 admin_spam_router = Router()
 
-# Ограничиваем все хендлеры в этом роутере только для групповых чатов и только для администраторов
+# --- ИСПРАВЛЕНИЕ: Ограничиваем все хендлеры с помощью "магического фильтра" F ---
 admin_spam_router.message.filter(
-    ChatTypeFilter(chat_type=["group", "supergroup"]),
+    F.chat.type.in_({'group', 'supergroup'}),
     IsAdminFilter()
 )
+# -----------------------------------------------------------------------------
 
 def parse_duration(text: str) -> timedelta | None:
     """
