@@ -2,13 +2,16 @@ import re
 from datetime import timedelta, datetime
 
 from aiogram import Router, F, Bot
-from aiogram.filters import Command, ChatTypeFilter
+# --- ИСПРАВЛЕНИЕ: Разделены импорты для соответствия aiogram 3.x ---
+from aiogram.filters import Command
+from aiogram.filters.chat_type import ChatTypeFilter
+# -----------------------------------------------------------------
 from aiogram.types import Message, ChatPermissions
 
 # Импортируем наши сервисы, которые будут передаваться через DI
 from bot.services.user_service import UserService
 from bot.services.ai_service import AIService
-from bot.filters.admin_filter import IsAdminFilter # Убедись, что этот фильтр существует и исправлен
+from bot.filters.admin_filter import IsAdminFilter
 
 # Создаем роутер специально для админских команд по борьбе со спамом
 admin_spam_router = Router()
