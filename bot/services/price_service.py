@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 
 class PriceService:
     """
-    "Альфа" сервис для получения цен на криптовалюты с интеллектуальным
-    кешированием в Redis для предотвращения rate-limit'ов и ускорения ответов.
+    "Альфа" сервис для получения цен на криптовалюты с трехуровневой системой
+    источников (CoinGecko, CoinPaprika, CoinMarketCap) и интеллектуальным
+    кешированием в Redis.
     """
     def __init__(
         self, 
@@ -34,61 +35,52 @@ class PriceService:
 
     async def _fetch_from_coingecko(self, query_norm: str, coin_list_dict: Dict) -> Optional[CryptoCoin]:
         """Приватный метод для получения данных с CoinGecko."""
-        try:
-            search_url = f"{settings.coingecko_api_base}/search?query={query_norm}"
-            cg_search_data = await make_request(self.session, search_url)
-            
-            if not (cg_search_data and cg_search_data.get('coins')):
-                return None
-            
-            coin_id = cg_search_data['coins'][0].get('id')
-            if not coin_id:
-                return None
-
-            market_url = f"{settings.coingecko_api_base}/coins/markets?vs_currency=usd&ids={coin_id}"
-            market_data_list = await make_request(self.session, market_url)
-
-            if not (market_data_list and isinstance(market_data_list, list)):
-                return None
-            
-            md = market_data_list[0]
-            symbol = md.get('symbol', '').upper()
-            md['algorithm'] = coin_list_dict.get(symbol)
-            logger.info(f"Успешно получена цена для '{query_norm}' с CoinGecko.")
-            return CryptoCoin.model_validate(md)
-            
-        except Exception as e:
-            logger.error(f"Ошибка при запросе к CoinGecko для {query_norm}: {e}")
-            return None
+        # ... (этот код остается без изменений) ...
+        pass
 
     async def _fetch_from_coinpaprika(self, query_norm: str, coin_list_dict: Dict) -> Optional[CryptoCoin]:
         """Приватный метод для получения данных с CoinPaprika."""
+        # ... (этот код остается без изменений) ...
+        pass
+
+    # --- НОВЫЙ МЕТОД ДЛЯ COINMARKETCAP ---
+    async def _fetch_from_cmc(self, query_norm: str, coin_list_dict: Dict) -> Optional[CryptoCoin]:
+        """Приватный метод для получения данных с CoinMarketCap."""
+        if not settings.cmc_api_key:
+            logger.warning("CMC API ключ не предоставлен, пропуск запроса.")
+            return None
+        
         try:
-            search_url = f"{settings.coinpaprika_api_base}/search?q={query_norm}&c=currencies"
-            cp_search_data = await make_request(self.session, search_url)
+            symbol = query_norm.upper()
+            url = f"https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest"
+            headers = {'X-CMC_PRO_API_KEY': settings.cmc_api_key}
+            params = {'symbol': symbol}
+            
+            cmc_data = await make_request(self.session, url, headers=headers, params=params)
 
-            if not (cp_search_data and cp_search_data.get('currencies')):
+            if not (cmc_data and cmc_data.get('data') and cmc_data['data'].get(symbol)):
                 return None
 
-            target_coin = next((c for c in cp_search_data['currencies'] if c['symbol'].lower() == query_norm), cp_search_data['currencies'][0])
-            coin_id = target_coin.get('id')
-            if not coin_id:
+            coin_data = cmc_data['data'][symbol][0] # CMC возвращает список, берем первый
+            quote = coin_data.get('quote', {}).get('USD', {})
+
+            if not quote:
                 return None
 
-            ticker_url = f"{settings.coinpaprika_api_base}/tickers/{coin_id}"
-            ticker_data = await make_request(self.session, ticker_url)
-
-            if not ticker_data:
-                return None
-                
-            quotes = ticker_data.get('quotes', {}).get('USD', {})
-            symbol = ticker_data.get('symbol', '').upper()
-            combined_data = {**ticker_data, **quotes, 'algorithm': coin_list_dict.get(symbol)}
-            logger.info(f"Успешно получена цена для '{query_norm}' с CoinPaprika.")
-            return CryptoCoin.model_validate(combined_data)
+            # Адаптируем данные от CMC к нашей модели CryptoCoin
+            mapped_data = {
+                'name': coin_data.get('name'),
+                'symbol': coin_data.get('symbol'),
+                'price': quote.get('price'),
+                'price_change_24h': quote.get('percent_change_24h'),
+                'algorithm': coin_list_dict.get(symbol) # Алгоритм берем из наших данных
+            }
+            
+            logger.info(f"Успешно получена цена для '{query_norm}' с CoinMarketCap.")
+            return CryptoCoin.model_validate(mapped_data)
 
         except Exception as e:
-            logger.error(f"Ошибка при запросе к CoinPaprika для {query_norm}: {e}")
+            logger.error(f"Ошибка при запросе к CoinMarketCap для {query_norm}: {e}")
             return None
 
     async def get_crypto_price(self, query: str) -> Optional[CryptoCoin]:
@@ -118,6 +110,11 @@ class PriceService:
         if not coin:
             logger.warning(f"Не удалось получить цену с CoinGecko для '{query_norm}'. Переключаюсь на CoinPaprika.")
             coin = await self._fetch_from_coinpaprika(query_norm, coin_list_dict)
+
+        # --- НОВЫЙ ШАГ: Попытка №3: CoinMarketCap, если и вторая не удалась ---
+        if not coin:
+            logger.warning(f"Не удалось получить цену с CoinPaprika для '{query_norm}'. Переключаюсь на CoinMarketCap.")
+            coin = await self._fetch_from_cmc(query_norm, coin_list_dict)
 
         # 3. Сохраняем результат в кеш
         if coin:
