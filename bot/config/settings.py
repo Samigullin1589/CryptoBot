@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Annotated
 
-from pydantic import model_validator
+from pydantic import model_validator, BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -14,6 +14,21 @@ def load_fallback_asics() -> List[Dict[str, Any]]:
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+# --- НОВЫЙ УМНЫЙ ПАРСЕР ---
+def ints_from_comma_separated_str(value: Any) -> List[int]:
+    """
+    Принимает строку с ID через запятую (например, "123, 456") и превращает ее в список чисел.
+    Это делает настройку в переменных окружения гораздо удобнее.
+    """
+    if isinstance(value, str):
+        if not value.strip():
+            return []
+        # Разделяем строку по запятой, убираем лишние пробелы и преобразуем в числа
+        return [int(item.strip()) for item in value.split(',') if item.strip()]
+    # Если это не строка (например, уже список), Pydantic обработает его сам
+    return value
+# ---------------------------
+
 class AppSettings(BaseSettings):
     # --- Основные секреты и ID ---
     bot_token: str
@@ -22,11 +37,10 @@ class AppSettings(BaseSettings):
     gemini_api_key: str = "" 
     admin_chat_id: int
     
-    # --- ИСПРАВЛЕНИЕ: Добавлено недостающее поле ---
-    # Эта настройка будет прочитана из переменной окружения ADMIN_USER_IDS
-    # Пример значения: 12345678,87654321
-    ADMIN_USER_IDS: List[int] = []
-    # ---------------------------------------------
+    # --- ИСПРАВЛЕНИЕ: Используем наш новый парсер для этого поля ---
+    # Теперь можно вводить ID просто через запятую: 123,456,789
+    ADMIN_USER_IDS: Annotated[List[int], BeforeValidator(ints_from_comma_separated_str)] = []
+    # -----------------------------------------------------------------
     
     news_chat_id: int
     cmc_api_key: str = ""
@@ -88,11 +102,9 @@ class AppSettings(BaseSettings):
         if self.admin_chat_id and self.admin_chat_id not in self.ALLOWED_LINK_USER_IDS:
             self.ALLOWED_LINK_USER_IDS.append(self.admin_chat_id)
         
-        # --- ИСПРАВЛЕНИЕ: Добавляем всех глобальных админов в список разрешенных ---
         for admin_id in self.ADMIN_USER_IDS:
             if admin_id not in self.ALLOWED_LINK_USER_IDS:
                 self.ALLOWED_LINK_USER_IDS.append(admin_id)
-        # -----------------------------------------------------------------------
             
         return self
 
