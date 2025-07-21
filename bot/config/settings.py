@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Annotated
+from typing import List, Dict, Any
 
-from pydantic import model_validator, BeforeValidator
+from pydantic import model_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -14,21 +14,6 @@ def load_fallback_asics() -> List[Dict[str, Any]]:
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
-# --- НОВЫЙ УМНЫЙ ПАРСЕР ---
-def ints_from_comma_separated_str(value: Any) -> List[int]:
-    """
-    Принимает строку с ID через запятую (например, "123, 456") и превращает ее в список чисел.
-    Это делает настройку в переменных окружения гораздо удобнее.
-    """
-    if isinstance(value, str):
-        if not value.strip():
-            return []
-        # Разделяем строку по запятой, убираем лишние пробелы и преобразуем в числа
-        return [int(item.strip()) for item in value.split(',') if item.strip()]
-    # Если это не строка (например, уже список), Pydantic обработает его сам
-    return value
-# ---------------------------
-
 class AppSettings(BaseSettings):
     # --- Основные секреты и ID ---
     bot_token: str
@@ -37,9 +22,12 @@ class AppSettings(BaseSettings):
     gemini_api_key: str = "" 
     admin_chat_id: int
     
-    # --- ИСПРАВЛЕНИЕ: Используем наш новый парсер для этого поля ---
-    # Теперь можно вводить ID просто через запятую: 123,456,789
-    ADMIN_USER_IDS: Annotated[List[int], BeforeValidator(ints_from_comma_separated_str)] = []
+    # --- ИСПРАВЛЕНИЕ: Реализован самый надежный способ парсинга ---
+    # 1. Это "скрытое" поле читает переменную окружения ADMIN_USER_IDS как обычную строку.
+    _admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
+    
+    # 2. Это поле, которое будет использовать остальная часть приложения. Оно будет заполнено валидатором ниже.
+    ADMIN_USER_IDS: List[int] = []
     # -----------------------------------------------------------------
     
     news_chat_id: int
@@ -95,6 +83,26 @@ class AppSettings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False
     )
+    
+    # --- ИСПРАВЛЕНИЕ: Новый, надежный валидатор ---
+    @model_validator(mode='before')
+    @classmethod
+    def parse_admin_ids(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Берет строку из _admin_user_ids_str, парсит ее в список чисел 
+        и помещает результат в поле ADMIN_USER_IDS.
+        """
+        admin_ids_str = values.get('_admin_user_ids_str', '')
+        if isinstance(admin_ids_str, str) and admin_ids_str.strip():
+            try:
+                # Разделяем строку по запятой, убираем пробелы и преобразуем в числа
+                parsed_ids = [int(item.strip()) for item in admin_ids_str.split(',') if item.strip()]
+                values['ADMIN_USER_IDS'] = parsed_ids
+            except (ValueError, TypeError):
+                # В случае ошибки просто оставляем список пустым
+                values['ADMIN_USER_IDS'] = []
+        return values
+    # ---------------------------------------------
     
     @model_validator(mode='after')
     def set_allowed_users(self) -> 'AppSettings':
