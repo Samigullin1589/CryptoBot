@@ -15,11 +15,19 @@ def load_fallback_asics() -> List[Dict[str, Any]]:
         return json.load(f)
 
 class AppSettings(BaseSettings):
+    # --- Основные секреты и ID ---
     bot_token: str
     redis_url: str 
     openai_api_key: str = ""
     gemini_api_key: str = "" 
     admin_chat_id: int
+    
+    # --- ИСПРАВЛЕНИЕ: Добавлено недостающее поле ---
+    # Эта настройка будет прочитана из переменной окружения ADMIN_USER_IDS
+    # Пример значения: 12345678,87654321
+    ADMIN_USER_IDS: List[int] = []
+    # ---------------------------------------------
+    
     news_chat_id: int
     cmc_api_key: str = ""
 
@@ -54,16 +62,13 @@ class AppSettings(BaseSettings):
     }
     DEFAULT_ELECTRICITY_TARIFF: str = "Домашний 💡"
 
-    # --- НОВЫЙ БЛОК ---
     # Crypto Center Settings
     crypto_center_news_api_url: str = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN&categories=Airdrop,Mining,DeFi,L1,L2,Altcoin"
-    # Дополнительные источники для AI-анализа
     alpha_rss_feeds: List[str] = [
         "https://thedefiant.io/feed",
         "https://bankless.substack.com/feed",
         "https://www.theblock.co/rss.xml"
     ]
-    # --- КОНЕЦ НОВОГО БЛОКА ---
 
     # Moderation Settings
     STOP_WORDS: List[str] = ["казино", "ставки", "бонус", "фриспин", "депозит", "работа", "вакансия", "зарплата", "заработок"]
@@ -79,9 +84,16 @@ class AppSettings(BaseSettings):
     
     @model_validator(mode='after')
     def set_allowed_users(self) -> 'AppSettings':
-        """Добавляет admin_chat_id в список разрешенных после инициализации."""
+        """Добавляет admin_chat_id и ADMIN_USER_IDS в список разрешенных после инициализации."""
         if self.admin_chat_id and self.admin_chat_id not in self.ALLOWED_LINK_USER_IDS:
             self.ALLOWED_LINK_USER_IDS.append(self.admin_chat_id)
+        
+        # --- ИСПРАВЛЕНИЕ: Добавляем всех глобальных админов в список разрешенных ---
+        for admin_id in self.ADMIN_USER_IDS:
+            if admin_id not in self.ALLOWED_LINK_USER_IDS:
+                self.ALLOWED_LINK_USER_IDS.append(admin_id)
+        # -----------------------------------------------------------------------
+            
         return self
 
 settings = AppSettings()
