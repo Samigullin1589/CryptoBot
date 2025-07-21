@@ -11,7 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.config.settings import settings
 
 # --- Фильтры и Мидлвари ---
-from bot.filters.admin_filter import IsAdminFilter # Предполагаем, что этот фильтр создан
+from bot.filters.admin_filter import IsAdminFilter
 from bot.filters.spam_filter_alpha import AlphaSpamFilter
 from bot.middlewares.activity import ActivityMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
@@ -32,6 +32,9 @@ from bot.services.coin_list_service import CoinListService
 from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
+# --- ИСПРАВЛЕНИЕ: Добавлен недостающий импорт ---
+from bot.services.crypto_center_service import CryptoCenterService
+# ---------------------------------------------
 from bot.services.scheduler import setup_scheduler
 from bot.utils.helpers import setup_logging
 
@@ -82,9 +85,7 @@ async def main():
         return
 
     # --- Инициализация внешних соединений ---
-    # Создаем одну сессию для всех HTTP-запросов - это эффективно
     http_session = aiohttp.ClientSession()
-    # Redis-клиент без глобального декодирования, т.к. сервисы могут ожидать байты
     redis_client = redis.from_url(settings.redis_url, decode_responses=False)
     
     storage = RedisStorage(redis=redis_client)
@@ -92,14 +93,9 @@ async def main():
     dp = Dispatcher(storage=storage)
 
     # --- Инициализация всех сервисов ---
-    # Сервисы антиспам-системы
     user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
-    
-    # Сервис-консультант
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
-    
-    # Остальные сервисы
     asic_service = AsicService(redis_client=redis_client)
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service)
@@ -108,23 +104,20 @@ async def main():
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
 
     # --- Регистрация Middleware ---
-    # Порядок важен: сначала общие, потом более специфичные
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
-    dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client))
+    # --- ИСПРАВЛЕНИЕ: Передаем user_service в ThrottlingMiddleware ---
+    dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
 
     # --- Регистрация основного антиспам-фильтра ---
-    # Этот фильтр будет применяться ко всем сообщениям в группах
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
-    dp.message.register(lambda: None, alpha_spam_filter) # Заглушка, чтобы фильтр отрабатывал
+    # Регистрируем фильтр для сообщений в группах и супергруппах
+    dp.message.filter(F.chat.type.in_({'group', 'supergroup'})).register(lambda: None, alpha_spam_filter)
 
     # --- Регистрация роутеров ---
-    # Сначала регистрируем админские хендлеры, чтобы они имели приоритет
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
-    dp.include_router(spam_handler.admin_spam_router) # <-- Наш новый роутер для модерации
-
-    # Затем регистрируем пользовательские хендлеры
+    dp.include_router(spam_handler.admin_spam_router)
     dp.include_router(crypto_center_handlers.router)
     dp.include_router(asic_info_handlers.router) 
     dp.include_router(common_handlers.router)
@@ -133,18 +126,14 @@ async def main():
 
     # --- Подготовка данных для передачи в хендлеры (Dependency Injection) ---
     workflow_data = {
-        # Сервисы для антиспама
         "user_service": user_service,
         "ai_service": ai_service,
-        # Сервис-консультант
         "ai_consultant_service": ai_consultant_service,
-        # Остальные сервисы
         "asic_service": asic_service,
         "news_service": news_service,
         "price_service": price_service,
         "market_data_service": market_data_service,
         "crypto_center_service": crypto_center_service,
-        # Внешние клиенты
         "redis_client": redis_client,
         "http_session": http_session,
     }
@@ -158,7 +147,6 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode...")
-        # Передаем все сервисы и планировщик в поллинг
         await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
