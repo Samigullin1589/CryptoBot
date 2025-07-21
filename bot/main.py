@@ -3,7 +3,9 @@ import logging
 
 import aiohttp
 import redis.asyncio as redis
-from aiogram import Bot, Dispatcher
+# --- ИСПРАВЛЕНИЕ: Добавлен импорт "F" для магических фильтров ---
+from aiogram import Bot, Dispatcher, F
+# -----------------------------------------------------------
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -32,9 +34,7 @@ from bot.services.coin_list_service import CoinListService
 from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
-# --- ИСПРАВЛЕНИЕ: Добавлен недостающий импорт ---
 from bot.services.crypto_center_service import CryptoCenterService
-# ---------------------------------------------
 from bot.services.scheduler import setup_scheduler
 from bot.utils.helpers import setup_logging
 
@@ -105,7 +105,6 @@ async def main():
 
     # --- Регистрация Middleware ---
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
-    # --- ИСПРАВЛЕНИЕ: Передаем user_service в ThrottlingMiddleware ---
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
 
     # --- Регистрация основного антиспам-фильтра ---
