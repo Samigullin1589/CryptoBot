@@ -3,11 +3,10 @@ import logging
 
 import aiohttp
 import redis.asyncio as redis
-# --- ИСПРАВЛЕНИЕ: Добавлен импорт "F" для магических фильтров ---
 from aiogram import Bot, Dispatcher, F
-# -----------------------------------------------------------
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.config.settings import settings
@@ -43,14 +42,26 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ УДАЛЕНИЯ СПАМА ---
+async def delete_spam_message(message: Message):
+    """
+    Этот хендлер вызывается, когда AlphaSpamFilter возвращает True,
+    и просто удаляет спам-сообщение.
+    """
+    try:
+        await message.delete()
+        logger.warning(f"Удалено спам-сообщение от пользователя {message.from_user.id} в чате {message.chat.id}")
+    except Exception as e:
+        logger.error(f"Не удалось удалить спам-сообщение {message.message_id}: {e}")
+# -------------------------------------------
+
+
 async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
     """Выполняется при старте бота."""
     logger.info("Bot is starting up...")
     if not scheduler.running:
         scheduler.start()
         logger.info("Scheduler has been started.")
-    # Устанавливаем команды бота
-    # await setup_bot_commands(bot) 
     logger.info("Bot startup complete.")
 
 
@@ -79,7 +90,6 @@ async def on_shutdown(
 
 async def main():
     """Основная асинхронная функция для настройки и запуска бота."""
-    # Проверка наличия ключевых переменных окружения
     if not all([settings.bot_token, settings.redis_url, settings.gemini_api_key]):
         logger.critical("One or more critical environment variables are missing (BOT_TOKEN, REDIS_URL, GEMINI_API_KEY).")
         return
@@ -107,10 +117,16 @@ async def main():
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
 
-    # --- Регистрация основного антиспам-фильтра ---
+    # --- РЕГИСТРАЦИЯ АНТИСПАМ-СИСТЕМЫ ---
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
-    # Регистрируем фильтр для сообщений в группах и супергруппах
-    dp.message.filter(F.chat.type.in_({'group', 'supergroup'})).register(lambda: None, alpha_spam_filter)
+    # Регистрируем наш новый хендлер, который будет срабатывать только в группах
+    # и только если alpha_spam_filter вернет True.
+    dp.message.register(
+        delete_spam_message, 
+        F.chat.type.in_({'group', 'supergroup'}), 
+        alpha_spam_filter
+    )
+    # --------------------------------------
 
     # --- Регистрация роутеров ---
     dp.include_router(admin_menu.admin_router)
