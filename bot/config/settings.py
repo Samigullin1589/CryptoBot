@@ -22,9 +22,9 @@ class AppSettings(BaseSettings):
     gemini_api_key: str = "" 
     admin_chat_id: int
     
-    # --- ИСПРАВЛЕНИЕ: Реализован самый надежный способ парсинга ---
-    # 1. Это "скрытое" поле читает переменную окружения ADMIN_USER_IDS как обычную строку.
-    _admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
+    # --- ИСПРАВЛЕНИЕ: Убрано нижнее подчеркивание в соответствии с правилами Pydantic v2 ---
+    # 1. Это временное поле читает переменную окружения ADMIN_USER_IDS как обычную строку.
+    admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
     
     # 2. Это поле, которое будет использовать остальная часть приложения. Оно будет заполнено валидатором ниже.
     ADMIN_USER_IDS: List[int] = []
@@ -84,15 +84,15 @@ class AppSettings(BaseSettings):
         case_sensitive=False
     )
     
-    # --- ИСПРАВЛЕНИЕ: Новый, надежный валидатор ---
+    # --- ИСПРАВЛЕНИЕ: Валидатор теперь работает с публичным полем ---
     @model_validator(mode='before')
     @classmethod
     def parse_admin_ids(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Берет строку из _admin_user_ids_str, парсит ее в список чисел 
+        Берет строку из admin_user_ids_str, парсит ее в список чисел 
         и помещает результат в поле ADMIN_USER_IDS.
         """
-        admin_ids_str = values.get('_admin_user_ids_str', '')
+        admin_ids_str = values.get('admin_user_ids_str', '')
         if isinstance(admin_ids_str, str) and admin_ids_str.strip():
             try:
                 # Разделяем строку по запятой, убираем пробелы и преобразуем в числа
