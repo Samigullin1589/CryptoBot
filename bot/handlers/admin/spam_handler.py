@@ -72,7 +72,7 @@ async def handle_ban_user(message: Message, bot: Bot, user_service: UserService,
         await message.delete()
 
         await message.answer_photo(
-            photo="https://i.imgur.com/p7b4Gv7.png", # Картинка с молотом бана
+            photo="https://i.ytimg.com/vi/DxBBAtTq30A/maxresdefault.jpg", # Картинка с молотом бана
             caption=f"✅ Пользователь {target_user.full_name} забанен. Сообщение использовано для обучения антиспам-системы."
         )
 
