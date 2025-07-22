@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
 import aiohttp
 import redis.asyncio as redis
@@ -16,9 +16,16 @@ from bot.utils.models import AsicMiner
 logger = logging.getLogger(__name__)
 
 class AsicService:
-    def __init__(self, redis_client: redis.Redis):
-        """Сервис для работы с данными об ASIC-майнерах."""
+    """
+    "Альфа" сервис для работы с данными об ASIC-майнерах.
+    Использует общую http_session и корректно работает с данными из Redis.
+    """
+    def __init__(self, redis_client: redis.Redis, http_session: aiohttp.ClientSession):
+        """
+        Инициализирует сервис с клиентом Redis и общей HTTP-сессией.
+        """
         self.redis = redis_client
+        self.session = http_session # Используем общую сессию
         self.LAST_UPDATE_KEY = "asics_last_update_utc"
 
     # --- БЛОК АВТОМАТИЧЕСКОГО ОБНОВЛЕНИЯ БАЗЫ ДАННЫХ ---
@@ -35,25 +42,24 @@ class AsicService:
         
         final_asics = []
         
-        async with aiohttp.ClientSession() as session:
-            logger.info("[Step 1/3] Trying primary source: WhatToMine API...")
-            final_asics = await self._fetch_from_whattomine_api(session)
+        logger.info("[Step 1/3] Trying primary source: WhatToMine API...")
+        final_asics = await self._fetch_from_whattomine_api(self.session)
+        
+        if not final_asics:
+            logger.warning("[Step 1/3] FAILED. WhatToMine API returned no valid data.")
+            logger.info("[Step 2/3] Trying secondary source: AsicMinerValue Parser...")
+            final_asics = await self._fetch_from_asicminervalue(self.session)
+        
+        if not final_asics:
+            logger.warning("[Step 2/3] FAILED. AsicMinerValue Parser returned no valid data.")
+            logger.info("[Step 3/3] Trying final source: Local fallback_asics.json...")
             
-            if not final_asics:
-                logger.warning("[Step 1/3] FAILED. WhatToMine API returned no valid data.")
-                logger.info("[Step 2/3] Trying secondary source: AsicMinerValue Parser...")
-                final_asics = await self._fetch_from_asicminervalue(session)
-            
-            if not final_asics:
-                logger.warning("[Step 2/3] FAILED. AsicMinerValue Parser returned no valid data.")
-                logger.info("[Step 3/3] Trying final source: Local fallback_asics.json...")
-                
-                if settings.fallback_asics and isinstance(settings.fallback_asics, list):
-                    logger.info(f"Loaded {len(settings.fallback_asics)} ASICs from fallback JSON.")
-                    final_asics = [AsicMiner(**asic_data) for asic_data in settings.fallback_asics]
-                else:
-                    logger.error("Local fallback_asics.json is empty or invalid.")
-                    final_asics = []
+            if settings.fallback_asics and isinstance(settings.fallback_asics, list):
+                logger.info(f"Loaded {len(settings.fallback_asics)} ASICs from fallback JSON.")
+                final_asics = [AsicMiner(**asic_data) for asic_data in settings.fallback_asics]
+            else:
+                logger.error("Local fallback_asics.json is empty or invalid.")
+                final_asics = []
 
         if not final_asics:
             logger.error("CRITICAL: All data sources failed completely. Cache will not be updated.")
@@ -100,6 +106,7 @@ class AsicService:
         logger.info(f"Successfully cached {cached_count} ASICs.")
 
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> Optional[List[AsicMiner]]:
+        """Приватный метод для получения данных с WhatToMine."""
         try:
             data = await make_request(session, settings.whattomine_asics_url)
             if not data or "asics" not in data:
@@ -128,6 +135,7 @@ class AsicService:
             return None
 
     async def _fetch_from_asicminervalue(self, session: aiohttp.ClientSession) -> Optional[List[AsicMiner]]:
+        """Приватный метод для парсинга данных с AsicMinerValue."""
         try:
             html_content = await make_request(session, settings.asicminervalue_url, response_type='text')
             if not html_content:
@@ -168,9 +176,9 @@ class AsicService:
 
     async def get_last_update_time(self) -> Optional[datetime]:
         """Возвращает время последнего обновления базы из Redis."""
-        last_update_iso = await self.redis.get(self.LAST_UPDATE_KEY)
-        if last_update_iso:
-            # ИСПРАВЛЕНИЕ: last_update_iso уже является строкой из-за decode_responses=True
+        last_update_iso_bytes = await self.redis.get(self.LAST_UPDATE_KEY)
+        if last_update_iso_bytes:
+            last_update_iso = last_update_iso_bytes.decode('utf-8')
             return datetime.fromisoformat(last_update_iso)
         return None
 
@@ -185,7 +193,6 @@ class AsicService:
     async def get_top_asics(self, count: int = 10, electricity_cost: float = 0.0) -> Tuple[List[AsicMiner], Optional[datetime]]:
         """
         Достает все ASIC из кэша Redis, рассчитывает чистую прибыль и возвращает топ.
-        ФИНАЛЬНАЯ ВЕРСИЯ: работает со строками (str) из-за decode_responses=True.
         """
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
         
@@ -202,11 +209,11 @@ class AsicService:
         results = await pipe.execute()
         
         asics = []
-        for data in results:
-            if not data: continue
+        for data_bytes in results:
+            if not data_bytes: continue
             try:
-                # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ---
-                # Работаем со строками ('name'), а не с байтами (b'name')
+                data = {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
+                
                 if 'name' not in data:
                     logger.warning(f"Skipping invalid entry from Redis cache (no 'name' field): {data}")
                     continue
@@ -215,7 +222,6 @@ class AsicService:
                 if not name_str or name_str.lower() == 'unknown':
                     logger.warning(f"Skipping invalid/empty name from Redis cache: {data}")
                     continue
-                # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
                 profitability = float(data.get('profitability', '0.0'))
                 power = int(data.get('power', '0'))
@@ -231,7 +237,7 @@ class AsicService:
                     efficiency=data.get('efficiency', 'N/A')
                 ))
             except (ValueError, TypeError, KeyError) as e:
-                logger.warning(f"Could not process cached ASIC data: {data}. Error: {e}")
+                logger.warning(f"Could not process cached ASIC data: {data_bytes}. Error: {e}")
                 continue
         
         sorted_asics = sorted(asics, key=lambda x: x.profitability, reverse=True)
@@ -243,8 +249,10 @@ class AsicService:
         """Ищет один ASIC в кэше Redis по нечеткому названию модели."""
         normalized_query = re.sub(r'[^a-z0-9]', '', model_query.lower())
         if not normalized_query: return None
-        keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
-        for key_str in keys:
+        keys_bytes = [key async for key in self.redis.scan_iter("asic_passport:*")]
+        for key_bytes in keys_bytes:
+            key_str = key_bytes.decode('utf-8')
             if normalized_query in key_str.replace('asic_passport:', ''):
-                return await self.redis.hgetall(key_str)
+                data_bytes = await self.redis.hgetall(key_str)
+                return {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
         return None
