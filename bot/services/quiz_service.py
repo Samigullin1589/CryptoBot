@@ -1,12 +1,13 @@
 # ===============================================================
-# Файл: bot/services/quiz_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлен __init__ для приема и OpenAI, и Gemini.
-# Это должно устранить ошибку TypeError при запуске.
+# Файл: bot/services/quiz_service.py (Path FIX)
+# Описание: Исправлен путь к fallback_quiz.json для
+# гарантированной загрузки файла.
 # ===============================================================
 import asyncio
 import json
 import logging
 import random
+from pathlib import Path # <-- Добавлен импорт
 from typing import Optional, Dict, List, Tuple
 
 from openai import AsyncOpenAI
@@ -31,25 +32,27 @@ class QuizResponse(BaseModel):
 
 # --- Сервис ---
 class QuizService:
-    # --- ИСПРАВЛЕНО: __init__ теперь принимает оба AI клиента ---
     def __init__(self, ai_service: AIService, openai_client: Optional[AsyncOpenAI]):
-        """
-        Сервис теперь принимает и твой AIService (для Gemini), и клиент OpenAI.
-        """
         self.ai_service = ai_service
         self.openai_client = openai_client
         self.fallback_questions = self._load_fallback_questions()
 
     def _load_fallback_questions(self) -> List[Dict]:
         """Загружает резервные вопросы из локального JSON файла."""
+        file_path = None
         try:
-            # Убедись, что файл fallback_quiz.json лежит в bot/data/
-            with open("bot/data/fallback_quiz.json", "r", encoding="utf-8") as f:
+            # --- ИСПРАВЛЕНО: Используем pathlib для надежного пути к файлу ---
+            # Этот путь будет работать независимо от того, откуда запускается бот.
+            # bot/services/quiz_service.py -> bot/ -> data/
+            file_path = Path(__file__).parent.parent / "data" / "fallback_quiz.json"
+            # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+            
+            with open(file_path, "r", encoding="utf-8") as f:
                 questions = json.load(f)
                 logger.info(f"Successfully loaded {len(questions)} fallback quiz questions.")
                 return questions
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.error(f"Could not load fallback quiz questions: {e}")
+            logger.error(f"Could not load fallback quiz questions from '{file_path}': {e}")
             return []
 
     async def get_random_question(self) -> Tuple[str, List[str], int]:
