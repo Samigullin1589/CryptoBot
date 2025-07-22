@@ -21,10 +21,12 @@ async def send_news_job():
     """Задача для отправки новостей. Сама создает и закрывает свои зависимости."""
     logger.info("Executing scheduled news job...")
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
+    session = aiohttp.ClientSession()
     try:
         if not settings.news_chat_id: return
         
-        news_service = NewsService()
+        # NewsService может требовать http_session для работы
+        news_service = NewsService(http_session=session)
         news = await news_service.fetch_latest_news()
         if not news: return
         
@@ -36,6 +38,7 @@ async def send_news_job():
     except Exception as e:
         logger.error(f"Error in send_news_job: {e}", exc_info=True)
     finally:
+        await session.close()
         await bot.session.close()
 
 
@@ -43,12 +46,15 @@ async def update_asics_cache_job():
     """Задача для обновления базы данных ASIC в Redis."""
     logger.info("Executing scheduled ASIC DB update job...")
     redis_client = redis.from_url(settings.redis_url, decode_responses=False)
+    session = aiohttp.ClientSession()
     try:
-        asic_service = AsicService(redis_client=redis_client)
+        # AsicService может требовать http_session для загрузки данных
+        asic_service = AsicService(redis_client=redis_client, http_session=session)
         await asic_service.update_asics_db()
     except Exception as e:
         logger.error(f"Error in update_asics_cache_job: {e}", exc_info=True)
     finally:
+        await session.close()
         await redis_client.close()
 
 
@@ -61,9 +67,9 @@ async def send_morning_summary_job():
     redis_client = redis.from_url(settings.redis_url, decode_responses=False)
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     try:
-        coin_list_service = CoinListService()
+        coin_list_service = CoinListService(http_session=session)
         price_service = PriceService(coin_list_service, redis_client, session)
-        market_data_service = MarketDataService()
+        market_data_service = MarketDataService(http_session=session)
 
         btc_coin = await price_service.get_crypto_price('BTC')
         eth_coin = await price_service.get_crypto_price('ETH')
