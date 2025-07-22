@@ -1,11 +1,9 @@
 # ===============================================================
-# Файл: main.py (Полная версия с диагностикой)
-# Описание: Полный код main.py с добавленным временным блоком
-# для отладки загрузки настроек. Заглушки отсутствуют.
+# Файл: main.py (Чистая версия)
+# Описание: Полный код для запуска бота. Диагностический блок убран.
 # ===============================================================
 import asyncio
 import logging
-import os # <-- Импорт для диагностики
 
 import aiohttp
 import redis.asyncio as redis
@@ -16,9 +14,7 @@ from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
-# --- СНАЧАЛА ИМПОРТИРУЕМ ВСЕ, ЧТО НУЖНО ---
 from bot.config.settings import settings
-from bot.utils.helpers import setup_logging
 from bot.filters.admin_filter import IsAdminFilter
 from bot.filters.spam_filter_alpha import AlphaSpamFilter
 from bot.middlewares.activity import ActivityMiddleware
@@ -41,33 +37,10 @@ from bot.services.admin_service import AdminService
 from bot.services.mining_service import MiningService
 from bot.services.quiz_service import QuizService
 from bot.services.scheduler import setup_scheduler
+from bot.utils.helpers import setup_logging
 
-# --- ТЕПЕРЬ НАСТРАИВАЕМ ЛОГИРОВАНИЕ ---
 setup_logging()
 logger = logging.getLogger(__name__)
-
-
-# ===============================================================
-# --- ВРЕМЕННЫЙ БЛОК ДЛЯ ДИАГНОСТИКИ ---
-# Этот код выполнится один раз при запуске и покажет, что видит бот.
-# ===============================================================
-try:
-    logger.info("--- DIAGNOSTICS START ---")
-    
-    # Пытаемся получить переменную напрямую из окружения
-    env_var = os.getenv('CRYPTOCOMPARE_API_KEY')
-    logger.info(f"os.getenv('CRYPTOCOMPARE_API_KEY'): '{env_var}' (type: {type(env_var)})")
-
-    # Выводим все поля, которые Pydantic смог загрузить
-    logger.info("Settings object dump:")
-    logger.info(settings.model_dump_json(indent=2))
-    
-    logger.info("--- DIAGNOSTICS END ---")
-
-except Exception as e:
-    logger.critical(f"--- FAILED TO RUN DIAGNOSTICS: {e} ---", exc_info=True)
-# ===============================================================
-
 
 async def delete_spam_message(message: Message):
     try:
@@ -108,7 +81,6 @@ async def main():
         logger.critical("One or more critical environment variables are missing (BOT_TOKEN, REDIS_URL, GEMINI_API_KEY).")
         return
 
-    # --- Инициализация внешних соединений ---
     http_session = aiohttp.ClientSession()
     redis_client = redis.from_url(settings.redis_url, decode_responses=False)
     
@@ -116,7 +88,6 @@ async def main():
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
 
-    # --- Инициализация всех сервисов ---
     user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
@@ -139,15 +110,12 @@ async def main():
 
     quiz_service = QuizService(ai_service=ai_service, openai_client=openai_client)
 
-    # --- Регистрация Middleware ---
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
 
-    # --- Регистрация антиспам-системы ---
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
     dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
 
-    # --- Регистрация роутеров ---
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
@@ -158,7 +126,6 @@ async def main():
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # --- Контекст для обработчиков aiogram ---
     workflow_data = {
         "user_service": user_service,
         "ai_service": ai_service,

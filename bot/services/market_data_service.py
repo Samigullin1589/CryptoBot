@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (АЛЬФА-ВЕРСИЯ)
-# Описание: Добавлен метод для получения полных данных о сети
-# монеты для калькулятора майнинга.
+# Файл: bot/services/market_data_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
+# Описание: Исправлена ошибка с регистром при обращении к
+# 'settings.cryptocompare_api_key'.
 # ===============================================================
 import asyncio
 import logging
@@ -15,19 +15,19 @@ from bot.utils.helpers import make_request
 
 logger = logging.getLogger(__name__)
 
-# --- НОВЫЕ, БЫСТРЫЕ И НАДЕЖНЫЕ ИСТОЧНИКИ ДАННЫХ ---
+# --- ИСТОЧНИКИ ДАННЫХ ---
 BLOCKCHAIN_INFO_BLOCK_COUNT_URL = "https://blockchain.info/q/getblockcount"
 BLOCKCHAIR_BTC_STATS_URL = "https://api.blockchair.com/bitcoin/stats"
 CRYPTOCOMPARE_BASE_URL = "https://min-api.cryptocompare.com/data"
 
 class MarketDataService:
-    # --- ИЗМЕНЕНО: Сервис теперь принимает http_session ---
     def __init__(self, http_session: aiohttp.ClientSession):
         self.http_session = http_session
-        self.cryptocompare_api_key = settings.CRYPTOCOMPARE_API_KEY
+        # --- ИСПРАВЛЕНО: Обращаемся к полю в нижнем регистре, как в settings.py ---
+        self.cryptocompare_api_key = settings.cryptocompare_api_key
+        # --------------------------------------------------------------------
 
-    # --- НОВЫЙ МЕТОД ДЛЯ КАЛЬКУЛЯТОРА ---
-    @alru_cache(maxsize=10, ttl=600)  # Кэшируем на 10 минут
+    @alru_cache(maxsize=10, ttl=600)
     async def get_coin_network_data(self, coin_symbol: str) -> Optional[Dict]:
         """
         Получает ключевые данные о сети монеты (хешрейт, награда за блок) и ее цену.
@@ -45,7 +45,6 @@ class MarketDataService:
         price_url = f"{CRYPTOCOMPARE_BASE_URL}/price?fsym={symbol}&tsyms=USD"
 
         try:
-            # Выполняем запросы параллельно для максимальной скорости
             async with asyncio.TaskGroup() as tg:
                 network_task = tg.create_task(make_request(self.http_session, network_url, headers=headers))
                 price_task = tg.create_task(make_request(self.http_session, price_url, headers=headers))
@@ -63,7 +62,6 @@ class MarketDataService:
 
             net_info = network_data["Data"]
             
-            # Собираем все данные в один словарь
             return {
                 "price": float(price_data["USD"]),
                 "network_hashrate": float(net_info.get("hash_rate", 0)),
@@ -76,12 +74,10 @@ class MarketDataService:
 
     @alru_cache(maxsize=1, ttl=14400)
     async def get_fear_and_greed_index(self) -> Optional[dict]:
-        """Получает Индекс Страха и Жадности, используя несколько источников."""
         logger.info("Fetching Fear & Greed Index...")
-        # --- ИЗМЕНЕНО: Используем self.http_session ---
         if settings.cmc_api_key:
             headers = {'X-CMC_PRO_API_KEY': settings.cmc_api_key}
-            data = await make_request(self.http_session, settings.cmc_fear_and_greed_url, headers=headers)
+            data = await make_request(self.http_session, "https://pro-api.coinmarketcap.com/v1/crypto/fng", headers=headers)
             if data and 'data' in data and data['data']:
                 fng_data = data['data'][0]
                 logger.info("Fetched F&G index from CoinMarketCap")
@@ -98,9 +94,7 @@ class MarketDataService:
 
     @alru_cache(maxsize=1, ttl=43200)
     async def get_usd_rub_rate(self) -> float:
-        """Получает курс USD/RUB от Центробанка РФ."""
         logger.info("Fetching USD/RUB exchange rate.")
-        # --- ИЗМЕНЕНО: Используем self.http_session ---
         data = await make_request(self.http_session, settings.cbr_daily_json_url)
         if data and "Valute" in data and "USD" in data["Valute"]:
             rate = data["Valute"]["USD"]["Value"]
@@ -110,10 +104,8 @@ class MarketDataService:
         return 90.0
 
     async def get_halving_info(self) -> str:
-        """Получает информацию о халвинге Bitcoin."""
         logger.info("Fetching Bitcoin halving info from blockchain.info...")
         current_block = None
-        # --- ИЗМЕНЕНО: Используем self.http_session ---
         height_str = await make_request(self.http_session, BLOCKCHAIN_INFO_BLOCK_COUNT_URL, response_type='text', timeout=7)
         if height_str and height_str.isdigit():
             current_block = int(height_str)
@@ -132,12 +124,9 @@ class MarketDataService:
                 f"🗓 <b>Примерно дней:</b> <code>{days_left:.1f}</code>")
 
     async def get_btc_network_status(self) -> str:
-        """Получает статус сети Bitcoin."""
         logger.info("Fetching Bitcoin network status from blockchair.com...")
         try:
-            # --- ИЗМЕНЕНО: Используем self.http_session ---
             data = await make_request(self.http_session, BLOCKCHAIR_BTC_STATS_URL, timeout=7)
-
             if not data or "data" not in data:
                 logger.error("Failed to fetch BTC network status from blockchair.com, response has invalid structure.")
                 return "❌ Не удалось получить статус сети BTC. Внешний сервис вернул неверные данные."
