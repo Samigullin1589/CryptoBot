@@ -136,9 +136,8 @@ async def main():
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # --- "АЛЬФА" РАЗДЕЛЕНИЕ КОНТЕКСТОВ ---
-    # 1. Полный контекст для всех сервисов и задач
-    full_context = {
+    # --- Контекст для обработчиков aiogram ---
+    workflow_data = {
         "user_service": user_service,
         "ai_service": ai_service,
         "ai_consultant_service": ai_consultant_service,
@@ -150,20 +149,10 @@ async def main():
         "admin_service": admin_service,
         "redis_client": redis_client,
         "http_session": http_session,
-        "bot": bot,
     }
-
-    # 2. "Безопасный" контекст для планировщика
-    scheduler_context = {
-        k: v for k, v in full_context.items() 
-        if k not in ['redis_client', 'http_session']
-    }
-    scheduler = setup_scheduler(scheduler_context)
     
-    # 3. Контекст для обработчиков aiogram (без 'bot', т.к. он передается позиционно)
-    workflow_data = full_context.copy()
-    del workflow_data['bot']
-    # ----------------------------------------
+    # --- ИСПРАВЛЕНИЕ: Вызываем setup_scheduler без аргументов ---
+    scheduler = setup_scheduler()
     
     # Регистрация хуков startup и shutdown
     dp.startup.register(on_startup)
@@ -172,9 +161,7 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode...")
-        # --- ИСПРАВЛЕНИЕ: Передаем bot позиционно, а остальное - как kwargs ---
         await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
-        # --------------------------------------------------------------------
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
     finally:
