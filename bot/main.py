@@ -1,3 +1,8 @@
+# ===============================================================
+# Файл: main.py (Интеграция MarketData)
+# Описание: Обновлена инициализация сервисов для работы
+# калькулятора с реальными данными.
+# ===============================================================
 import asyncio
 import logging
 
@@ -8,16 +13,15 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from openai import AsyncOpenAI
 
 from bot.config.settings import settings
 
-# --- Фильтры и Мидлвари ---
+# ... все твои импорты фильтров, мидлварей, хэндлеров ...
 from bot.filters.admin_filter import IsAdminFilter
 from bot.filters.spam_filter_alpha import AlphaSpamFilter
 from bot.middlewares.activity import ActivityMiddleware
 from bot.middlewares.throttling import ThrottlingMiddleware
-
-# --- Обработчики (Роутеры) ---
 from bot.handlers.admin import admin_menu, stats_handlers, data_management_handlers, spam_handler
 from bot.handlers import (
     common_handlers, info_handlers, mining_handlers, 
@@ -25,6 +29,7 @@ from bot.handlers import (
 )
 
 # --- Сервисы ---
+# ... все твои импорты сервисов ...
 from bot.services.user_service import UserService
 from bot.services.ai_service import AIService
 from bot.services.ai_consultant_service import AIConsultantService
@@ -35,34 +40,28 @@ from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.crypto_center_service import CryptoCenterService
 from bot.services.admin_service import AdminService
+from bot.services.mining_service import MiningService
+from bot.services.quiz_service import QuizService
 from bot.services.scheduler import setup_scheduler
 from bot.utils.helpers import setup_logging
 
-# Настраиваем логирование при старте модуля
 setup_logging()
 logger = logging.getLogger(__name__)
 
-
+# ... функции delete_spam_message, on_startup, on_shutdown ...
 async def delete_spam_message(message: Message):
-    """
-    Этот хендлер вызывается, когда AlphaSpamFilter возвращает True,
-    и просто удаляет спам-сообщение.
-    """
     try:
         await message.delete()
         logger.warning(f"Удалено спам-сообщение от пользователя {message.from_user.id} в чате {message.chat.id}")
     except Exception as e:
         logger.error(f"Не удалось удалить спам-сообщение {message.message_id}: {e}")
 
-
 async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
-    """Выполняется при старте бота."""
     logger.info("Bot is starting up...")
     if not scheduler.running:
         scheduler.start()
         logger.info("Scheduler has been started.")
     logger.info("Bot startup complete.")
-
 
 async def on_shutdown(
     bot: Bot, 
@@ -70,18 +69,14 @@ async def on_shutdown(
     redis_client: redis.Redis, 
     http_session: aiohttp.ClientSession
 ):
-    """Выполняется при остановке бота для корректного закрытия ресурсов."""
     logger.info("Bot is shutting down...")
     if scheduler.running:
         scheduler.shutdown()
         logger.info("Scheduler has been shut down.")
-    
     await redis_client.close()
     logger.info("Redis connection has been closed.")
-
     await http_session.close()
     logger.info("Aiohttp session has been closed.")
-
     await bot.session.close()
     logger.info("Bot session has been closed.")
     logger.info("Graceful shutdown complete.")
@@ -105,29 +100,37 @@ async def main():
     user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
-    # --- ИСПРАВЛЕНИЕ: Передаем http_session в AsicService ---
     asic_service = AsicService(redis_client=redis_client, http_session=http_session)
-    # ----------------------------------------------------
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
     news_service = NewsService()
-    market_data_service = MarketDataService()
+    # --- ИЗМЕНЕНО: Передаем http_session в MarketDataService ---
+    market_data_service = MarketDataService(http_session=http_session)
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
     admin_service = AdminService(redis_client=redis_client)
+    
+    # --- ИЗМЕНЕНО: Передаем market_data_service в MiningService ---
+    mining_service = MiningService(market_data_service=market_data_service)
+    
+    openai_client = None
+    if settings.OPENAI_API_KEY:
+        openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        logger.info("OpenAI client initialized.")
+    else:
+        logger.warning("OPENAI_API_KEY not found. Quiz generation will fallback to Gemini.")
+
+    quiz_service = QuizService(ai_service=ai_service, openai_client=openai_client)
 
     # --- Регистрация Middleware ---
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
 
-    # --- РЕГИСТРАЦИЯ АНТИСПАМ-СИСТЕМЫ ---
+    # --- Регистрация антиспам-системы ---
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
-    dp.message.register(
-        delete_spam_message, 
-        F.chat.type.in_({'group', 'supergroup'}), 
-        alpha_spam_filter
-    )
+    dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
 
     # --- Регистрация роутеров ---
+    # ... все твои dp.include_router(...) ...
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
@@ -151,11 +154,13 @@ async def main():
         "admin_service": admin_service,
         "redis_client": redis_client,
         "http_session": http_session,
+        "mining_service": mining_service,
+        "quiz_service": quiz_service,
+        "coin_list_service": coin_list_service
     }
     
     scheduler = setup_scheduler()
     
-    # Регистрация хуков startup и shutdown
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 

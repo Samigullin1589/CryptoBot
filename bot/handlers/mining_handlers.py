@@ -1,12 +1,19 @@
+# ===============================================================
+# Файл: bot/handlers/mining_handlers.py (ПОЛНАЯ АЛЬФА-ВЕРСИЯ)
+# Описание: Объединен код для "Виртуальной фермы" и нового
+# "Профессионального калькулятора". Заглушки убраны.
+# ===============================================================
 import time
 import logging
-from typing import Union
+import re
+from typing import Union, List
 from math import floor
 import redis.asyncio as redis
 from aiogram import F, Router, Bot
-from aiogram.types import Message, CallbackQuery
-# 👇 Добавляем CommandObject для работы с аргументами команды
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.filters import Command, CommandObject
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, timedelta
@@ -14,6 +21,9 @@ from datetime import datetime, timedelta
 from bot.config.settings import settings
 from bot.services.asic_service import AsicService
 from bot.services.admin_service import AdminService
+from bot.services.mining_service import MiningService
+from bot.utils.states import ProfitCalculator
+from bot.utils.models import AsicMiner
 from bot.keyboards.keyboards import (
     get_mining_menu_keyboard, get_asic_shop_keyboard,
     get_my_farm_keyboard, get_withdraw_keyboard, get_electricity_menu_keyboard
@@ -22,6 +32,10 @@ from bot.utils.helpers import get_message_and_chat_id, sanitize_html
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# ===============================================================
+# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (ТВОЙ ОРИГИНАЛЬНЫЙ КОД) ---
+# ===============================================================
 
 # --- ГЛАВНОЕ МЕНЮ РАЗДЕЛА ---
 
@@ -41,10 +55,7 @@ async def show_shop_page(message: Message, asic_service: AsicService, page: int 
     """
     Отображает страницу магазина с оборудованием.
     """
-    # --- ИСПРАВЛЕНИЕ 1 ---
-    # Вызываем новый метод get_top_asics и распаковываем кортеж
     asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     if not asics:
         await message.edit_text("К сожалению, список оборудования сейчас недоступен.", reply_markup=get_mining_menu_keyboard())
@@ -89,10 +100,7 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
     
     asic_index = int(call.data.split("_")[2])
     
-    # --- ИСПРАВЛЕНИЕ 2 ---
-    # Вызываем новый метод get_top_asics и распаковываем кортеж
     all_asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     if asic_index >= len(all_asics):
         await call.answer("❌ Ошибка. Оборудование не найдено. Попробуйте обновить магазин.", show_alert=True)
@@ -147,8 +155,8 @@ async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_s
         await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
         return
 
-    start_time = int(session_data.get("start_time", 0))
-    profitability_per_day = float(session_data.get("asic_profitability_per_day", 0))
+    start_time = int(session_data.get(b"start_time", 0))
+    profitability_per_day = float(session_data.get(b"asic_profitability_per_day", 0))
     
     elapsed_seconds = int(time.time()) - start_time
     remaining_seconds = max(0, settings.MINING_DURATION_SECONDS - elapsed_seconds)
@@ -163,12 +171,13 @@ async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_s
     text = (
         f"🖥️ <b>Моя ферма</b>\n\n"
         f"✅ <b>Статус:</b> В работе\n"
-        f"⚙️ <b>Оборудование:</b> {sanitize_html(session_data.get('asic_name', 'Неизвестно'))}\n"
+        f"⚙️ <b>Оборудование:</b> {sanitize_html(session_data.get(b'asic_name', b'Неизвестно').decode())}\n"
         f"⏳ <b>Осталось времени:</b> <code>{remaining_time_str}</code>\n"
         f"💰 <b>Намайнено в этой сессии:</b> ~${earned_so_far:.4f}"
     )
     
     await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
+
 
 # --- ЛОГИКА "ВЫВОД СРЕДСТВ" ---
 
@@ -281,9 +290,11 @@ async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis
     await admin_service.track_command_usage("⚡️ Электроэнергия")
     user_id = call.from_user.id
     
-    current_tariff = await redis_client.get(f"user:{user_id}:tariff") or settings.DEFAULT_ELECTRICITY_TARIFF
+    current_tariff_bytes = await redis_client.get(f"user:{user_id}:tariff")
+    current_tariff = current_tariff_bytes.decode() if current_tariff_bytes else settings.DEFAULT_ELECTRICITY_TARIFF
     
-    unlocked_tariffs = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
+    unlocked_tariffs_bytes = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
+    unlocked_tariffs = {t.decode() for t in unlocked_tariffs_bytes}
     if not unlocked_tariffs:
         unlocked_tariffs = {settings.DEFAULT_ELECTRICITY_TARIFF}
 
@@ -304,7 +315,8 @@ async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis, a
     user_id = call.from_user.id
     tariff_name = call.data[len("select_tariff_"):]
 
-    unlocked_tariffs = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
+    unlocked_tariffs_bytes = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
+    unlocked_tariffs = {t.decode() for t in unlocked_tariffs_bytes}
     if not unlocked_tariffs:
         unlocked_tariffs = {settings.DEFAULT_ELECTRICITY_TARIFF}
 
@@ -354,7 +366,7 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
     await handle_electricity_menu(call, redis_client, admin_service)
 
 
-# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ ЧАЕВЫХ ---
+# --- ОБРАБОТЧИК ДЛЯ ЧАЕВЫХ ---
 
 @router.message(Command("tip"))
 async def handle_tip_command(message: Message, command: CommandObject, redis_client: redis.Redis, admin_service: AdminService):
@@ -362,12 +374,10 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
     Обрабатывает команду /tip для перевода монет другому пользователю.
     Используется ответом на сообщение.
     """
-    # 1. Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
         await message.reply("⚠️ Эту команду нужно использовать ответом на сообщение того, кому вы хотите отправить монеты.")
         return
 
-    # 2. Парсим сумму
     try:
         if command.args is None:
             raise ValueError("Не указана сумма.")
@@ -380,11 +390,9 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
         await message.reply("⚠️ Неверный формат. Используйте: <code>/tip [сумма]</code>\nНапример: <code>/tip 10.5</code>")
         return
 
-    # 3. Определяем отправителя и получателя
     sender = message.from_user
     recipient = message.reply_to_message.from_user
 
-    # 4. Проверяем, что это не бот и не перевод самому себе
     if sender.id == recipient.id:
         await message.reply("😅 Нельзя отправить чаевые самому себе.")
         return
@@ -393,7 +401,6 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
         await message.reply("🤖 Нельзя отправить чаевые боту.")
         return
 
-    # 5. Проверяем баланс отправителя
     sender_balance_str = await redis_client.get(f"user:{sender.id}:balance")
     sender_balance = float(sender_balance_str) if sender_balance_str else 0
 
@@ -401,12 +408,10 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
         await message.reply(f"😕 Недостаточно средств. Ваш баланс: {sender_balance:.2f} монет.")
         return
 
-    # 6. Выполняем перевод
     try:
         async with redis_client.pipeline() as pipe:
             pipe.incrbyfloat(f"user:{sender.id}:balance", -amount)
             pipe.incrbyfloat(f"user:{recipient.id}:balance", amount)
-            # Увеличиваем счетчик "всего заработано" для получателя
             pipe.incrbyfloat(f"user:{recipient.id}:total_earned", amount)
             await pipe.execute()
     except Exception as e:
@@ -414,7 +419,6 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
         await message.reply("❌ Произошла внутренняя ошибка при переводе. Попробуйте позже.")
         return
 
-    # 7. Отправляем уведомление и записываем статистику
     await admin_service.track_command_usage("/tip")
     
     sender_name = f"<a href='tg://user?id={sender.id}'>{sanitize_html(sender.full_name)}</a>"
@@ -425,3 +429,137 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
         disable_web_page_preview=True
     )
     logger.info(f"User {sender.id} tipped {amount:.2f} to {recipient.id}")
+
+
+# ===============================================================
+# --- БЛОК 2: ПРОФЕССИОНАЛЬНЫЙ КАЛЬКУЛЯТОР ДОХОДНОСТИ (НОВЫЙ КОД) ---
+# ===============================================================
+
+# --- Вспомогательная функция для создания клавиатуры выбора ASIC ---
+def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    items_per_page = 8
+    start = page * items_per_page
+    end = start + items_per_page
+    
+    for i, asic in enumerate(asics[start:end]):
+        builder.button(text=f"{asic.name}", callback_data=f"prof_calc_select_{i + start}")
+    
+    builder.adjust(2)
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"prof_calc_page_{page - 1}"))
+    if end < len(asics):
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"prof_calc_page_{page + 1}"))
+    
+    builder.row(*nav_buttons)
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="prof_calc_cancel"))
+    return builder
+
+# Шаг 1: Пользователь нажимает кнопку "Калькулятор"
+@router.message(F.text.contains("⛏️ Калькулятор"))
+async def start_profit_calculator(message: Message, state: FSMContext, admin_service: AdminService):
+    await admin_service.track_command_usage("⛏️ Калькулятор")
+    await message.answer("Введите стоимость вашей электроэнергии в USD (например, <b>0.05</b>):")
+    await state.set_state(ProfitCalculator.waiting_for_electricity_cost)
+
+# Шаг 2: Пользователь вводит стоимость электричества
+@router.message(ProfitCalculator.waiting_for_electricity_cost)
+async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService):
+    try:
+        cost = float(message.text.replace(',', '.').strip())
+        if cost < 0:
+            raise ValueError("Стоимость не может быть отрицательной.")
+        
+        await state.update_data(electricity_cost=cost)
+        await message.answer("⏳ Загружаю список актуального оборудования...")
+        
+        all_asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
+        sorted_asics = sorted(all_asics, key=lambda x: x.name)
+        
+        if not sorted_asics:
+            await message.answer("❌ Не удалось загрузить список оборудования. Попробуйте позже.")
+            await state.clear()
+            return
+            
+        await state.update_data(asic_list=[asic.model_dump() for asic in sorted_asics])
+
+        keyboard = get_asic_selection_keyboard(sorted_asics, page=0)
+        await message.answer(
+            "Отлично! Теперь выберите ваш ASIC-майнер из списка:",
+            reply_markup=keyboard.as_markup()
+        )
+        await state.set_state(ProfitCalculator.waiting_for_asic_selection)
+
+    except (ValueError, TypeError):
+        await message.answer("Пожалуйста, введите корректное число (например, <b>0.05</b>).")
+        return
+
+# Шаг 3: Обработка пагинации и выбора асика
+@router.callback_query(ProfitCalculator.waiting_for_asic_selection, F.data.startswith("prof_calc_"))
+async def process_asic_selection(call: CallbackQuery, state: FSMContext, mining_service: MiningService):
+    action = call.data.split("_")[2]
+    user_data = await state.get_data()
+    asic_list = [AsicMiner(**data) for data in user_data.get("asic_list", [])]
+
+    if action == "cancel":
+        await call.message.edit_text("Действие отменено.")
+        await state.clear()
+        return
+
+    if action == "page":
+        page = int(call.data.split("_")[3])
+        keyboard = get_asic_selection_keyboard(asic_list, page=page)
+        try:
+            await call.message.edit_text(
+                "Выберите ваш ASIC-майнер из списка:",
+                reply_markup=keyboard.as_markup()
+            )
+        except TelegramBadRequest: # Если сообщение не изменилось
+            await call.answer()
+        return
+
+    if action == "select":
+        asic_index = int(call.data.split("_")[3])
+        
+        if asic_index >= len(asic_list):
+            await call.answer("❌ Ошибка выбора. Попробуйте снова.", show_alert=True)
+            return
+            
+        selected_asic = asic_list[asic_index]
+        electricity_cost = user_data.get("electricity_cost")
+
+        await call.message.edit_text(f"⏳ Рассчитываю доходность для <b>{selected_asic.name}</b>...")
+        
+        try:
+            # Более надежный парсинг хешрейта
+            hash_rate_str = selected_asic.hashrate.lower()
+            hash_value_match = re.search(r'[\d.]+', hash_rate_str)
+            if not hash_value_match:
+                raise ValueError("Could not find numeric value in hashrate string")
+            
+            hash_value = float(hash_value_match.group(0))
+            
+            if 'ph/s' in hash_rate_str:
+                hash_value *= 1000
+            elif 'gh/s' in hash_rate_str:
+                hash_value /= 1000
+            elif 'mh/s' in hash_rate_str:
+                hash_value /= 1_000_000
+            # TH/s - это наша база, ничего не делаем
+
+        except (AttributeError, ValueError) as e:
+            logger.error(f"Could not parse hashrate for {selected_asic.name} ('{selected_asic.hashrate}'): {e}")
+            await call.message.edit_text("❌ Не удалось определить хешрейт для выбранной модели. Расчет невозможен.")
+            await state.clear()
+            return
+
+        result_text = await mining_service.calculate(
+            hashrate_ths=hash_value,
+            power_consumption_watts=selected_asic.power,
+            electricity_cost=electricity_cost
+        )
+        
+        await call.message.edit_text(result_text, disable_web_page_preview=True)
+        await state.clear()
