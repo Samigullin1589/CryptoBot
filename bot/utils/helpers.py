@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 import sys
-from typing import Any, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union, Dict
 
 import aiohttp
 import backoff
@@ -33,33 +33,45 @@ def backoff_hdlr(details):
     )
 
 
-# --- ИСПРАВЛЕНИЯ ВНЕСЕНЫ ТОЛЬКО В ЭТУ ФУНКЦИЮ ---
+# --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННАЯ "АЛЬФА" ФУНКЦИЯ ---
 @backoff.on_exception(backoff.expo, aiohttp.ClientError, max_tries=3, on_backoff=backoff_hdlr)
 async def make_request(
     session: aiohttp.ClientSession,
     url: str,
+    method: str = "GET",
+    params: Optional[Dict[str, Any]] = None,
+    json_data: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None,
     response_type: Literal["json", "text"] = "json",
-    headers: Optional[dict] = None,
-    timeout: int = 15  # <-- 1. ДОБАВЛЕН ПАРАМЕТР TIMEOUT
+    timeout: int = 15
 ) -> Optional[Any]:
     """
-    Выполняет асинхронный HTTP-запрос с использованием aiohttp и backoff для отказоустойчивости.
+    Универсальный "альфа" метод для выполнения асинхронных HTTP-запросов.
+    Поддерживает разные методы, параметры, заголовки и отказоустойчивость.
     """
     try:
-        # 2. ИСПОЛЬЗУЕМ ПЕРЕДАННЫЙ TIMEOUT
         aio_timeout = aiohttp.ClientTimeout(total=timeout)
-        async with session.get(url, headers=headers, timeout=aio_timeout, ssl=False) as response:
+        async with session.request(
+            method,
+            url,
+            params=params,
+            json=json_data,
+            headers=headers,
+            timeout=aio_timeout,
+            ssl=False
+        ) as response:
             response.raise_for_status()
             if response_type == "json":
+                # content_type=None игнорирует проверку Content-Type, что полезно для некоторых API
                 return await response.json(content_type=None)
             return await response.text()
             
-    # 3. ДОБАВЛЕНА ЯВНАЯ ОБРАБОТКА ОШИБКИ TIMEOUT
     except asyncio.TimeoutError:
         logger.error(f"Request to {url} timed out after {timeout} seconds.")
         return None
-    except aiohttp.ClientError as e:
-        logger.error(f"Request to {url} failed after all retries: {e}")
+    except aiohttp.ClientResponseError as e:
+        # Логируем ошибку со статусом, сообщением и URL
+        logger.error(f"Request to {url} failed with status {e.status}, message='{e.message}'")
         return None
     except Exception as e:
         logger.exception("An unexpected error occurred in make_request for URL: %s", url)
