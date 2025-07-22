@@ -1,3 +1,8 @@
+# ===============================================================
+# Файл: bot/config/settings.py (ОКОНЧАТЕЛЬНЫЙ FIX)
+# Описание: Добавлены явные псевдонимы (alias) для всех
+# переменных окружения, чтобы гарантировать их загрузку Pydantic.
+# ===============================================================
 import json
 from pathlib import Path
 from typing import List, Dict, Any
@@ -16,25 +21,24 @@ def load_fallback_asics() -> List[Dict[str, Any]]:
 
 class AppSettings(BaseSettings):
     # --- Основные секреты и ID ---
-    bot_token: str
-    redis_url: str 
-    openai_api_key: str = ""
-    gemini_api_key: str = "" 
-    admin_chat_id: int
+    # Используем Field(alias=...) для явного указания имени переменной в .env или окружении
+    bot_token: str = Field(alias='BOT_TOKEN')
+    redis_url: str = Field(alias='REDIS_URL')
+    openai_api_key: str = Field(alias='OPENAI_API_KEY', default="")
+    gemini_api_key: str = Field(alias='GEMINI_API_KEY')
+    admin_chat_id: int = Field(alias='ADMIN_CHAT_ID')
     admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
-    news_chat_id: int
-    cmc_api_key: str = "" # Оставляем на всякий случай, но больше не используем
+    news_chat_id: int = Field(alias='NEWS_CHAT_ID')
+    cmc_api_key: str = Field(alias='CMC_API_KEY', default="")
     
-    # --- НОВАЯ НАСТРОЙКА ---
-    cryptocompare_api_key: str = ""
-    # ----------------------
+    # --- ИСПРАВЛЕНИЕ: Явно указываем псевдоним для ключа ---
+    cryptocompare_api_key: str = Field(alias='CRYPTOCOMPARE_API_KEY', default="")
+    # ----------------------------------------------------
 
     # API Endpoints
     coingecko_api_base: str = "https://api.coingecko.com/api/v3"
     coinpaprika_api_base: str = "https://api.coinpaprika.com/v1"
-    # --- НОВЫЙ ENDPOINT ---
     cryptocompare_api_base: str = "https://min-api.cryptocompare.com"
-    # ----------------------
     minerstat_api_base: str = "https://api.minerstat.com/v2"
     whattomine_asics_url: str = "https://whattomine.com/asics.json"
     asicminervalue_url: str = "https://www.asicminervalue.com/"
@@ -74,7 +78,7 @@ class AppSettings(BaseSettings):
     STOP_WORDS: List[str] = ["казино", "ставки", "бонус", "фриспин", "депозит", "работа", "вакансия", "зарплата", "заработок"]
     ALLOWED_LINK_USER_IDS: List[int] = []
 
-    fallback_asics: List[Dict[str, Any]] = load_fallback_asics()
+    fallback_asics: List[Dict[str, Any]] = Field(default_factory=load_fallback_asics)
 
     model_config = SettingsConfigDict(
         env_file=".env",
