@@ -103,6 +103,7 @@ async def send_morning_summary_job(bot, price_service, market_data_service, **kw
     logger.info(f"--- Morning summary sent successfully to chat {settings.news_chat_id} ---")
 
 
+# --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
 @with_task_dependencies
 async def send_leaderboard_job(bot, admin_service, **kwargs):
     """Задача для отправки еженедельного лидерборда по майнингу."""
@@ -112,14 +113,27 @@ async def send_leaderboard_job(bot, admin_service, **kwargs):
     top_users = await admin_service.get_top_users_by_balance(limit=5)
     
     if not top_users:
-        text = "🏆 <b>Еженедельный лидерборд майнеров</b>\n\nНа этой неделе у нас пока нет лидеров."
+        text = "🏆 <b>Еженедельный лидерборд майнеров</b>\n\nНа этой неделе у нас пока нет лидеров. Начните играть, чтобы попасть в топ!"
     else:
-        leaderboard_lines = [f"{'🥇🥈🥉'[i]} {f\"@{d['username']}\" if d.get('username') else f\"User ID {d['user_id']}\"} - <b>{d['balance']:.2f} монет</b>" for i, d in enumerate(top_users)]
+        # Возвращаемся к простому, надежному и читаемому циклу for
+        leaderboard_lines = []
+        medals = ["🥇", "🥈", "🥉", "4.", "5."]
+        for i, user_data in enumerate(top_users):
+            username = f"@{user_data['username']}" if user_data.get('username') else f"User ID {user_data['user_id']}"
+            balance = user_data['balance']
+            leaderboard_lines.append(f"{medals[i]} {username} - <b>{balance:.2f} монет</b>")
+        
         leaderboard_text = "\n".join(leaderboard_lines)
-        text = f"🏆 <b>Еженедельный лидерборд майнеров</b>\n\n{leaderboard_text}"
+        text = (
+            "🏆 <b>Еженедельный лидерборд майнеров</b>\n\n"
+            "Вот наши лучшие игроки на этой неделе:\n\n"
+            f"{leaderboard_text}\n\n"
+            "Продолжайте в том же духе! Новый лидерборд — в следующую пятницу."
+        )
         
     await bot.send_message(settings.news_chat_id, text)
     logger.info(f"Leaderboard sent to chat {settings.news_chat_id}.")
+# ------------------------------------
 
 
 @with_task_dependencies
