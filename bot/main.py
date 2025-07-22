@@ -1,10 +1,11 @@
 # ===============================================================
-# Файл: main.py (Интеграция MarketData)
-# Описание: Обновлена инициализация сервисов для работы
-# калькулятора с реальными данными.
+# Файл: main.py (Полная версия с диагностикой)
+# Описание: Полный код main.py с добавленным временным блоком
+# для отладки загрузки настроек. Заглушки отсутствуют.
 # ===============================================================
 import asyncio
 import logging
+import os # <-- Импорт для диагностики
 
 import aiohttp
 import redis.asyncio as redis
@@ -15,9 +16,9 @@ from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
+# --- СНАЧАЛА ИМПОРТИРУЕМ ВСЕ, ЧТО НУЖНО ---
 from bot.config.settings import settings
-
-# ... все твои импорты фильтров, мидлварей, хэндлеров ...
+from bot.utils.helpers import setup_logging
 from bot.filters.admin_filter import IsAdminFilter
 from bot.filters.spam_filter_alpha import AlphaSpamFilter
 from bot.middlewares.activity import ActivityMiddleware
@@ -27,9 +28,6 @@ from bot.handlers import (
     common_handlers, info_handlers, mining_handlers, 
     asic_info_handlers, crypto_center_handlers
 )
-
-# --- Сервисы ---
-# ... все твои импорты сервисов ...
 from bot.services.user_service import UserService
 from bot.services.ai_service import AIService
 from bot.services.ai_consultant_service import AIConsultantService
@@ -43,12 +41,34 @@ from bot.services.admin_service import AdminService
 from bot.services.mining_service import MiningService
 from bot.services.quiz_service import QuizService
 from bot.services.scheduler import setup_scheduler
-from bot.utils.helpers import setup_logging
 
+# --- ТЕПЕРЬ НАСТРАИВАЕМ ЛОГИРОВАНИЕ ---
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# ... функции delete_spam_message, on_startup, on_shutdown ...
+
+# ===============================================================
+# --- ВРЕМЕННЫЙ БЛОК ДЛЯ ДИАГНОСТИКИ ---
+# Этот код выполнится один раз при запуске и покажет, что видит бот.
+# ===============================================================
+try:
+    logger.info("--- DIAGNOSTICS START ---")
+    
+    # Пытаемся получить переменную напрямую из окружения
+    env_var = os.getenv('CRYPTOCOMPARE_API_KEY')
+    logger.info(f"os.getenv('CRYPTOCOMPARE_API_KEY'): '{env_var}' (type: {type(env_var)})")
+
+    # Выводим все поля, которые Pydantic смог загрузить
+    logger.info("Settings object dump:")
+    logger.info(settings.model_dump_json(indent=2))
+    
+    logger.info("--- DIAGNOSTICS END ---")
+
+except Exception as e:
+    logger.critical(f"--- FAILED TO RUN DIAGNOSTICS: {e} ---", exc_info=True)
+# ===============================================================
+
+
 async def delete_spam_message(message: Message):
     try:
         await message.delete()
@@ -104,17 +124,15 @@ async def main():
     coin_list_service = CoinListService()
     price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
     news_service = NewsService()
-    # --- ИЗМЕНЕНО: Передаем http_session в MarketDataService ---
     market_data_service = MarketDataService(http_session=http_session)
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
     admin_service = AdminService(redis_client=redis_client)
     
-    # --- ИЗМЕНЕНО: Передаем market_data_service в MiningService ---
     mining_service = MiningService(market_data_service=market_data_service)
     
     openai_client = None
-    if settings.OPENAI_API_KEY:
-        openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    if settings.openai_api_key:
+        openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
         logger.info("OpenAI client initialized.")
     else:
         logger.warning("OPENAI_API_KEY not found. Quiz generation will fallback to Gemini.")
@@ -130,7 +148,6 @@ async def main():
     dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
 
     # --- Регистрация роутеров ---
-    # ... все твои dp.include_router(...) ...
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
