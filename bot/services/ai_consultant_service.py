@@ -2,7 +2,6 @@ import logging
 from typing import List, Dict
 
 import aiohttp
-from async_lru import alru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +13,7 @@ class AIConsultantService:
     def __init__(self, gemini_api_key: str, http_session: aiohttp.ClientSession):
         """
         Инициализирует сервис.
-
+        
         :param gemini_api_key: API-ключ для доступа к Google Gemini.
         :param http_session: Общий экземпляр aiohttp.ClientSession для переиспользования соединений.
         """
@@ -27,7 +26,6 @@ class AIConsultantService:
     def _create_system_prompt(self) -> str:
         """
         Создает и возвращает системный промпт, определяющий роль и поведение AI-консультанта.
-        Это "мозг" и "характер" вашего консультанта.
         """
         return (
             "You are 'CryptoBot Co-Pilot', a world-class expert engineer in cryptocurrency and ASIC mining. Your tone is professional, helpful, and precise. "
@@ -49,22 +47,20 @@ class AIConsultantService:
         """
         system_prompt = self._create_system_prompt()
 
-        # Формируем историю диалога для API
         contents = []
         for message in history:
             role = message.get("role")
-            text = message.get("text")
-            # Пропускаем пустые или некорректные сообщения в истории
-            if role and text and role in ["user", "model"]:
-                contents.append({"role": role, "parts": [{"text": text}]})
+            # --- Улучшение: Проверяем, что parts - это список словарей ---
+            parts = message.get("parts")
+            if role and isinstance(parts, list) and parts and "text" in parts[0]:
+                contents.append({"role": role, "parts": parts})
         
-        # Добавляем текущий вопрос пользователя
         contents.append({"role": "user", "parts": [{"text": user_question}]})
 
         return {
             "contents": contents,
             "systemInstruction": { "role": "system", "parts": [{"text": system_prompt}] },
-            "safetySettings": [ # Явно задаем настройки безопасности, чтобы избежать нежелательного контента
+            "safetySettings": [
                 {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
                 {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
                 {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
@@ -72,11 +68,10 @@ class AIConsultantService:
             ]
         }
 
-    @alru_cache(maxsize=128, ttl=3600)
+    # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Убран декоратор @alru_cache ---
     async def get_ai_answer(self, user_question: str, history: List[Dict[str, str]]) -> str:
         """
         Получает экспертный ответ от Gemini API, учитывая предыдущую историю диалога.
-        Результат кешируется для повышения производительности и экономии.
         """
         payload = self._prepare_request_payload(user_question, history)
 
@@ -89,7 +84,6 @@ class AIConsultantService:
                 
                 result = await response.json()
                 
-                # Более детальная проверка ответа на случай блокировки по безопасности
                 if not result.get('candidates'):
                     finish_reason = result.get('promptFeedback', {}).get('blockReason')
                     if finish_reason:

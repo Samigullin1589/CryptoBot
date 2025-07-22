@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import re
 from typing import Union
 from datetime import datetime, timezone
 import redis.asyncio as redis
@@ -54,15 +53,16 @@ async def safe_edit_or_send(call: CallbackQuery, text: str, markup, delete_photo
         await call.answer()
 
 
-async def send_price_info(message: Message, query: str, price_service: PriceService):
+# --- "АЛЬФА" РЕФАКТОРИНГ: ОТДЕЛЯЕМ ЛОГИКУ ПОЛУЧЕНИЯ ДАННЫХ ОТ ОТПРАВКИ ---
+async def format_price_info_text(query: str, price_service: PriceService) -> str:
+    """
+    Получает данные о монете и форматирует их в готовый для отправки текст.
+    Возвращает либо информацию о цене, либо сообщение об ошибке.
+    """
     coin = await price_service.get_crypto_price(query)
     
     if not coin:
-        await message.edit_text(
-            f"❌ Не удалось найти информацию по '{sanitize_html(query)}'.",
-            reply_markup=get_main_menu_keyboard()
-        )
-        return
+        return f"❌ К сожалению, не удалось найти информацию по тикеру '{sanitize_html(query)}'.\n\nПожалуйста, проверьте правильность написания или попробуйте другую монету."
 
     change = coin.price_change_24h or 0
     emoji = "📈" if change >= 0 else "📉"
@@ -72,24 +72,27 @@ async def send_price_info(message: Message, query: str, price_service: PriceServ
     if coin.algorithm:
         text += f"⚙️ Алгоритм: <code>{coin.algorithm}</code>"
     
-    await message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    return text
 
 
 @router.callback_query(F.data == "menu_asics")
 @router.message(F.text == "⚙️ Топ ASIC")
-async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service: AsicService, admin_service: AdminService, redis_client: redis.Redis):
+async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service: AsicService, admin_service: AdminService, user_service: UserService):
     """
-    ОБНОВЛЕННЫЙ обработчик для кнопки и колбэка "Топ ASIC".
-    Теперь он использует правильный метод get_top_asics и учитывает стоимость э/э.
+    ОБНОВЛЕННЫЙ обработчик для "Топ ASIC" с правильным использованием зависимостей.
     """
     await admin_service.track_command_usage("⚙️ Топ ASIC")
     
-    message_to_edit = update.message if isinstance(update, CallbackQuery) else await update.answer("⏳ Загружаю актуальный список...")
-    if isinstance(update, CallbackQuery):
-        await safe_edit_or_send(update, "⏳ Загружаю актуальный список...", None, delete_photo=False)
-
-    user_service = UserService(redis_client)
-    electricity_cost = await user_service.get_user_electricity_cost(update.from_user.id)
+    message, chat_id = await get_message_and_chat_id(update)
+    temp_message = await message.answer("⏳ Загружаю актуальный список...")
+    
+    if isinstance(update, CallbackQuery) and update.message.content_type != ContentType.TEXT:
+        try:
+            await update.message.delete()
+        except TelegramBadRequest:
+            pass
+    
+    electricity_cost = await user_service.get_user_electricity_cost(update.from_user.id, chat_id, default_cost=0.05)
     
     top_miners, last_update_time = await asic_service.get_top_asics(count=10, electricity_cost=electricity_cost)
 
@@ -99,7 +102,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
         text_lines = [f"🏆 <b>Топ-10 доходных ASIC</b> (чистыми, при цене э/э ${electricity_cost:.4f}/кВт·ч)\n"]
         for miner in top_miners:
             line = (f"<b>{sanitize_html(miner.name)}</b>\n"
-                    f"   Доход: <b>${miner.profitability:.2f}/день</b>"
+                    f"   Доход: <b>${miner.profitability:.2f}/день</b>"
                     f"{f' | {miner.algorithm}' if miner.algorithm and miner.algorithm != 'N/A' else ''}")
             text_lines.append(line)
         
@@ -110,7 +113,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
         
         text = "\n".join(text_lines)
 
-    await message_to_edit.edit_text(text, reply_markup=get_main_menu_keyboard(), disable_web_page_preview=True)
+    await temp_message.edit_text(text, reply_markup=get_main_menu_keyboard(), disable_web_page_preview=True)
 
 
 @router.callback_query(F.data == "menu_price")
@@ -121,12 +124,10 @@ async def handle_price_menu(update: Union[CallbackQuery, Message], state: FSMCon
     text = "Курс какой монеты вас интересует?"
     markup = get_price_keyboard()
     
-    if isinstance(update, CallbackQuery):
-        await safe_edit_or_send(update, text, markup)
-    else:
-        await update.answer(text, reply_markup=markup)
+    message, _ = await get_message_and_chat_id(update)
+    await message.answer(text, reply_markup=markup)
     
-    await state.clear()
+    await state.set_state(PriceInquiry.waiting_for_ticker)
 
 
 @router.callback_query(F.data == "menu_news")
@@ -206,15 +207,20 @@ async def handle_btc_status_menu(update: Union[CallbackQuery, Message], market_d
 
 @router.callback_query(F.data.startswith("price_"))
 async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService, admin_service: AdminService):
+    await state.clear()
     query = call.data.split('_', 1)[1]
     
     if query == "other":
         await call.message.edit_text("Введите тикер монеты (напр. Aleo):")
         await state.set_state(PriceInquiry.waiting_for_ticker)
+        await call.answer()
     else:
         await admin_service.track_command_usage(f"Курс: {query.upper()}")
         await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
-        await send_price_info(call.message, query, price_service)
+        
+        response_text = await format_price_info_text(query, price_service)
+        await call.message.edit_text(response_text, reply_markup=get_main_menu_keyboard())
+        await call.answer()
 
 
 @router.message(PriceInquiry.waiting_for_ticker)
@@ -222,7 +228,9 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     await admin_service.track_command_usage("Курс: Другая монета")
     await state.clear()
     temp_msg = await message.answer("⏳ Получаю курс...")
-    await send_price_info(temp_msg, message.text, price_service)
+    
+    response_text = await format_price_info_text(message.text, price_service)
+    await temp_msg.edit_text(response_text, reply_markup=get_main_menu_keyboard())
 
 # --- БЛОК КАЛЬКУЛЯТОРА ---
 
@@ -274,16 +282,14 @@ async def process_pool_commission(message: Message, state: FSMContext, market_da
         
         asics, _ = await asic_service.get_top_asics(count=10, electricity_cost=0.0)
         
-        # --- ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ ДЛЯ КАЛЬКУЛЯТОРА ---
         if not asics or not rate_usd_rub:
             await message.answer("❌ Не удалось получить данные о курсах или ASIC для расчета. Попробуйте позже.", reply_markup=get_main_menu_keyboard())
             await state.clear()
             return
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
             
         res = [f"💰 <b>Расчет доходности (розетка {cost_rub_per_kwh:.2f} ₽, пул {commission_percent:.2f}%)</b>\n"]
         
-        for asic in asics: # Теперь asics уже содержит только топ-10
+        for asic in asics:
             if not asic.power: continue
 
             gross_income_usd = asic.profitability

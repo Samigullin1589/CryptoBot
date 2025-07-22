@@ -1,55 +1,59 @@
 import logging
-from bot.utils import dependencies
 from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ ФАЙЛ ---
 
-async def send_news_job():
+async def send_news_job(**kwargs):
     """Задача для отправки новостей."""
     logger.info("Executing scheduled news job...")
+    context = kwargs.get('context', {})
+    bot = context.get('bot')
+    news_service = context.get('news_service')
+    
     try:
-        bot = dependencies.bot
-        news_service = dependencies.news_service
-        if not bot or not news_service:
-            logger.warning("send_news_job skipped: dependencies not initialized.")
+        if not all([bot, news_service, settings.news_chat_id]):
+            logger.warning("send_news_job skipped: dependencies or chat_id not available.")
             return
-        if not settings.news_chat_id:
-            return
+            
         news = await news_service.fetch_latest_news()
         if not news:
             return
+            
         text = "📰 <b>Крипто-новости (авто):</b>\n\n" + "\n".join(
             [f"🔹 <a href=\"{n['link']}\">{n['title']}</a>" for n in news]
         )
         await bot.send_message(settings.news_chat_id, text, disable_web_page_preview=True)
         logger.info(f"News sent to chat {settings.news_chat_id}.")
-    except Exception as e:
+    except Exception:
         logger.error("Error in send_news_job", exc_info=True)
 
 
-async def update_asics_cache_job():
+async def update_asics_cache_job(**kwargs):
     """Задача для обновления базы данных ASIC в Redis."""
     logger.info("Executing scheduled ASIC DB update job...")
+    context = kwargs.get('context', {})
+    asic_service = context.get('asic_service')
+    
     try:
-        asic_service = dependencies.asic_service
         if not asic_service:
             logger.warning("update_asics_cache_job skipped: asic_service not initialized.")
             return
-        # ИСПРАВЛЕНО: Вызываем новую функцию для обновления всей базы
         await asic_service.update_asics_db()
-    except Exception as e:
+    except Exception:
         logger.error("Error in update_asics_cache_job", exc_info=True)
 
 
-async def send_morning_summary_job():
+async def send_morning_summary_job(**kwargs):
     """Задача для отправки утренней сводки (Курсы + Индекс F&G)."""
     logger.info("--- Starting morning summary job ---")
-    try:
-        bot = dependencies.bot
-        price_service = dependencies.price_service
-        market_data_service = dependencies.market_data_service
+    context = kwargs.get('context', {})
+    bot = context.get('bot')
+    price_service = context.get('price_service')
+    market_data_service = context.get('market_data_service')
 
+    try:
         if not all([bot, price_service, market_data_service, settings.news_chat_id]):
             logger.warning("send_morning_summary_job skipped: dependencies or chat_id not available.")
             return
@@ -72,16 +76,18 @@ async def send_morning_summary_job():
 
         await bot.send_message(settings.news_chat_id, text)
         logger.info(f"--- Morning summary sent successfully to chat {settings.news_chat_id} ---")
-    except Exception as e:
+    except Exception:
         logger.error("--- CRITICAL ERROR in send_morning_summary_job ---", exc_info=True)
 
 
-async def send_leaderboard_job():
+async def send_leaderboard_job(**kwargs):
     """Задача для отправки еженедельного лидерборда по майнингу."""
     logger.info("Executing weekly leaderboard job...")
+    context = kwargs.get('context', {})
+    bot = context.get('bot')
+    admin_service = context.get('admin_service')
+    
     try:
-        bot = dependencies.bot
-        admin_service = dependencies.admin_service
         if not all([bot, admin_service, settings.news_chat_id]):
             logger.warning("send_leaderboard_job skipped: dependencies or chat_id not available.")
             return
@@ -107,19 +113,21 @@ async def send_leaderboard_job():
             )
         await bot.send_message(settings.news_chat_id, text)
         logger.info(f"Leaderboard sent to chat {settings.news_chat_id}.")
-    except Exception as e:
+    except Exception:
         logger.error("Error in send_leaderboard_job", exc_info=True)
 
 
-async def health_check_job():
+async def health_check_job(**kwargs):
     """Отладочная задача для проверки работы планировщика."""
     logger.info("--- SCHEDULER HEALTH CHECK: Job is running! ---")
+    context = kwargs.get('context', {})
+    bot = context.get('bot')
+    
     try:
-        bot = dependencies.bot
         if bot and settings.admin_chat_id:
             await bot.send_message(settings.admin_chat_id, "Scheduler health check: OK. Задачи выполняются по расписанию.")
             logger.info(f"Health check message sent to admin {settings.admin_chat_id}.")
         else:
             logger.warning("Health check: Bot or admin_chat_id not available to send message.")
-    except Exception as e:
+    except Exception:
         logger.error("--- CRITICAL ERROR in health_check_job ---", exc_info=True)
