@@ -137,8 +137,8 @@ async def main():
     dp.include_router(mining_handlers.router)
 
     # --- "АЛЬФА" РАЗДЕЛЕНИЕ КОНТЕКСТОВ ---
-    # 1. Полный контекст для обработчиков реального времени
-    workflow_data = {
+    # 1. Полный контекст для всех сервисов и задач
+    full_context = {
         "user_service": user_service,
         "ai_service": ai_service,
         "ai_consultant_service": ai_consultant_service,
@@ -150,16 +150,19 @@ async def main():
         "admin_service": admin_service,
         "redis_client": redis_client,
         "http_session": http_session,
-        "bot": bot, # Добавляем бота в контекст для задач
+        "bot": bot,
     }
 
-    # 2. "Безопасный" контекст для планировщика, который можно "заморозить"
-    # Мы удаляем из него живые подключения, которые вызывают ошибку.
-    scheduler_context = workflow_data.copy()
-    del scheduler_context['redis_client']
-    del scheduler_context['http_session']
-    
+    # 2. "Безопасный" контекст для планировщика
+    scheduler_context = {
+        k: v for k, v in full_context.items() 
+        if k not in ['redis_client', 'http_session']
+    }
     scheduler = setup_scheduler(scheduler_context)
+    
+    # 3. Контекст для обработчиков aiogram (без 'bot', т.к. он передается позиционно)
+    workflow_data = full_context.copy()
+    del workflow_data['bot']
     # ----------------------------------------
     
     # Регистрация хуков startup и shutdown
@@ -169,8 +172,9 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode...")
-        # Передаем ПОЛНЫЙ контекст в поллинг для обработчиков
+        # --- ИСПРАВЛЕНИЕ: Передаем bot позиционно, а остальное - как kwargs ---
         await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
+        # --------------------------------------------------------------------
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
     finally:
