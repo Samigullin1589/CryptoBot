@@ -21,23 +21,24 @@ class AppSettings(BaseSettings):
     openai_api_key: str = ""
     gemini_api_key: str = "" 
     admin_chat_id: int
-    
-    # --- ИСПРАВЛЕНИЕ: Реализован самый надежный способ парсинга ---
-    # 1. Это поле читает переменную окружения ADMIN_USER_IDS как ОБЫЧНУЮ СТРОКУ.
-    #    Pydantic больше не будет пытаться парсить ее как JSON.
     admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
-    
     news_chat_id: int
-    cmc_api_key: str = ""
+    cmc_api_key: str = "" # Оставляем на всякий случай, но больше не используем
+    
+    # --- НОВАЯ НАСТРОЙКА ---
+    cryptocompare_api_key: str = ""
+    # ----------------------
 
     # API Endpoints
     coingecko_api_base: str = "https://api.coingecko.com/api/v3"
     coinpaprika_api_base: str = "https://api.coinpaprika.com/v1"
+    # --- НОВЫЙ ENDPOINT ---
+    cryptocompare_api_base: str = "https://min-api.cryptocompare.com"
+    # ----------------------
     minerstat_api_base: str = "https://api.minerstat.com/v2"
     whattomine_asics_url: str = "https://whattomine.com/asics.json"
     asicminervalue_url: str = "https://www.asicminervalue.com/"
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
-    cmc_fear_and_greed_url: str = "https://pro-api.coinmarketcap.com/v3/fear-and-greed/historical"
     cbr_daily_json_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     btc_halving_url: str = "https://mempool.space/api/blocks/tip/height"
     btc_fees_url: str = "https://mempool.space/api/v1/fees/recommended"
@@ -81,27 +82,18 @@ class AppSettings(BaseSettings):
         case_sensitive=False
     )
     
-    # --- ИСПРАВЛЕНИЕ: Используем вычисляемое поле для создания списка ---
     @computed_field
     @property
     def ADMIN_USER_IDS(self) -> List[int]:
-        """
-        Это вычисляемое поле. Оно не читается из окружения, а создается
-        на основе уже прочитанного поля admin_user_ids_str.
-        """
         if not self.admin_user_ids_str.strip():
             return []
         try:
-            # Разделяем строку по запятой, убираем пробелы и преобразуем в числа
             return [int(item.strip()) for item in self.admin_user_ids_str.split(',') if item.strip()]
         except (ValueError, TypeError):
-            # В случае ошибки (например, если в строке есть буквы) возвращаем пустой список
             return []
-    # -----------------------------------------------------------------
     
     @model_validator(mode='after')
     def set_allowed_users(self) -> 'AppSettings':
-        """Добавляет admin_chat_id и ADMIN_USER_IDS в список разрешенных после инициализации."""
         if self.admin_chat_id and self.admin_chat_id not in self.ALLOWED_LINK_USER_IDS:
             self.ALLOWED_LINK_USER_IDS.append(self.admin_chat_id)
         
