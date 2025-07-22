@@ -34,9 +34,7 @@ from bot.services.market_data_service import MarketDataService
 from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.crypto_center_service import CryptoCenterService
-# --- ИСПРАВЛЕНИЕ: Добавлен недостающий импорт ---
 from bot.services.admin_service import AdminService
-# ---------------------------------------------
 from bot.services.scheduler import setup_scheduler
 from bot.utils.helpers import setup_logging
 
@@ -113,9 +111,7 @@ async def main():
     news_service = NewsService()
     market_data_service = MarketDataService()
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
-    # --- ИСПРАВЛЕНИЕ: Инициализируем AdminService ---
     admin_service = AdminService(redis_client=redis_client)
-    # ---------------------------------------------
 
     # --- Регистрация Middleware ---
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
@@ -140,7 +136,8 @@ async def main():
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
 
-    # --- Подготовка данных для передачи в хендлеры (Dependency Injection) ---
+    # --- "АЛЬФА" РАЗДЕЛЕНИЕ КОНТЕКСТОВ ---
+    # 1. Полный контекст для обработчиков реального времени
     workflow_data = {
         "user_service": user_service,
         "ai_service": ai_service,
@@ -150,14 +147,20 @@ async def main():
         "price_service": price_service,
         "market_data_service": market_data_service,
         "crypto_center_service": crypto_center_service,
-        # --- ИСПРАВЛЕНИЕ: Добавляем AdminService в DI ---
         "admin_service": admin_service,
-        # ---------------------------------------------
         "redis_client": redis_client,
         "http_session": http_session,
+        "bot": bot, # Добавляем бота в контекст для задач
     }
 
-    scheduler = setup_scheduler(workflow_data)
+    # 2. "Безопасный" контекст для планировщика, который можно "заморозить"
+    # Мы удаляем из него живые подключения, которые вызывают ошибку.
+    scheduler_context = workflow_data.copy()
+    del scheduler_context['redis_client']
+    del scheduler_context['http_session']
+    
+    scheduler = setup_scheduler(scheduler_context)
+    # ----------------------------------------
     
     # Регистрация хуков startup и shutdown
     dp.startup.register(on_startup)
@@ -166,6 +169,7 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode...")
+        # Передаем ПОЛНЫЙ контекст в поллинг для обработчиков
         await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
