@@ -1,8 +1,8 @@
 # ===============================================================
-# Файл: bot/services/asic_service.py (ALPHA FIX)
+# Файл: bot/services/asic_service.py (ФИНАЛЬНАЯ АЛЬФА-ВЕРСИЯ)
 # Описание: Полностью переписана логика обновления. Сервис теперь
-# объединяет данные из нескольких источников для максимальной
-# полноты информации об ASIC-майнерах.
+# интеллектуально объединяет данные из нескольких источников для
+# максимальной полноты информации об ASIC-майнерах.
 # ===============================================================
 import asyncio
 import logging
@@ -48,7 +48,7 @@ class AsicService:
         results = await asyncio.gather(
             self._fetch_from_whattomine_api(self.session),
             self._fetch_from_asicminervalue(self.session),
-            return_exceptions=True # Не падаем, если один из источников недоступен
+            return_exceptions=True
         )
         
         whattomine_asics = results[0] if isinstance(results[0], list) else []
@@ -69,7 +69,6 @@ class AsicService:
         for asic in whattomine_asics:
             normalized_name = self._normalize_name(asic.name)
             if normalized_name in master_asics:
-                # Запись уже есть, обогащаем недостающие поля
                 existing_asic = master_asics[normalized_name]
                 updated = False
                 # WhatToMine более точен в доходности и алгоритме

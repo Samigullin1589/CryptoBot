@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/mining_handlers.py (Alpha FIX)
-# Описание: Полностью переписан калькулятор. Добавлен выбор
-# валюты и корректная обработка асиков без данных.
+# Файл: bot/handlers/mining_handlers.py (ПОЛНАЯ АЛЬФА-ВЕРСИЯ)
+# Описание: Объединен код для "Виртуальной фермы" и нового
+# "Профессионального калькулятора". Заглушки убраны.
 # ===============================================================
 import time
 import logging
@@ -35,7 +35,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 # ===============================================================
-# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (ТВОЙ ОРИГИНАЛЬНЫЙ КОД) ---
 # ===============================================================
 
 @router.callback_query(F.data == "menu_mining")
@@ -408,7 +408,7 @@ async def process_nodata_asic_selection(call: CallbackQuery):
     await call.answer("ℹ️ Для этой модели нет данных о хешрейте, расчет невозможен.", show_alert=True)
 
 @router.callback_query(ProfitCalculator.waiting_for_asic_selection, F.data.startswith("prof_calc_"))
-async def process_asic_selection(call: CallbackQuery, state: FSMContext, mining_service: MiningService):
+async def process_asic_selection(call: CallbackQuery, state: FSMContext):
     action = call.data.split("_")[2]
     user_data = await state.get_data()
     asic_list = [AsicMiner(**data) for data in user_data.get("asic_list", [])]
@@ -429,28 +429,43 @@ async def process_asic_selection(call: CallbackQuery, state: FSMContext, mining_
             await call.answer("❌ Ошибка выбора. Попробуйте снова.", show_alert=True)
             return
         selected_asic = asic_list[asic_index]
+        await state.update_data(selected_asic=selected_asic.model_dump())
+        await call.message.edit_text("📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):")
+        await state.set_state(ProfitCalculator.waiting_for_pool_commission)
+        await call.answer()
+
+@router.message(ProfitCalculator.waiting_for_pool_commission)
+async def process_pool_commission(message: Message, state: FSMContext, mining_service: MiningService):
+    try:
+        commission_percent = float(message.text.replace(',', '.').strip())
+        if not (0 <= commission_percent < 100):
+            raise ValueError("Комиссия должна быть от 0 до 99.9")
+
+        await message.answer("⏳ Считаю...")
+        user_data = await state.get_data()
+        selected_asic_data = user_data.get("selected_asic")
+        selected_asic = AsicMiner(**selected_asic_data)
         electricity_cost_usd = user_data.get("electricity_cost_usd")
-        await call.message.edit_text(f"⏳ Рассчитываю доходность для <b>{selected_asic.name}</b>...")
-        try:
-            hash_rate_str = selected_asic.hashrate
-            if not hash_rate_str or hash_rate_str.lower() == 'n/a':
-                 raise ValueError(f"Hashrate is not available for {selected_asic.name}")
-            hash_rate_str = hash_rate_str.lower()
-            hash_value_match = re.search(r'[\d.]+', hash_rate_str)
-            if not hash_value_match:
-                raise ValueError(f"Could not find numeric value in hashrate string: {hash_rate_str}")
-            hash_value = float(hash_value_match.group(0))
-            if 'ph/s' in hash_rate_str: hash_value *= 1000
-            elif 'gh/s' in hash_rate_str: hash_value /= 1000
-            elif 'mh/s' in hash_rate_str: hash_value /= 1_000_000
-        except (AttributeError, ValueError) as e:
-            logger.error(f"Could not parse hashrate for {selected_asic.name} ('{selected_asic.hashrate}'): {e}")
-            await call.message.edit_text("❌ Не удалось определить хешрейт для выбранной модели. Расчет невозможен.")
-            await state.clear()
-            return
+
+        hash_rate_str = selected_asic.hashrate.lower()
+        hash_value_match = re.search(r'[\d.]+', hash_rate_str)
+        hash_value = float(hash_value_match.group(0))
+        if 'ph/s' in hash_rate_str: hash_value *= 1000
+        elif 'gh/s' in hash_rate_str: hash_value /= 1000
+        elif 'mh/s' in hash_rate_str: hash_value /= 1_000_000
+
         result_text = await mining_service.calculate(
-            hashrate_ths=hash_value, power_consumption_watts=selected_asic.power,
-            electricity_cost=electricity_cost_usd
+            hashrate_ths=hash_value, 
+            power_consumption_watts=selected_asic.power,
+            electricity_cost=electricity_cost_usd,
+            pool_commission=commission_percent
         )
-        await call.message.edit_text(result_text, disable_web_page_preview=True)
+        await message.answer(result_text, disable_web_page_preview=True)
+
+    except (ValueError, TypeError):
+        await message.answer("❌ Неверный формат. Введите число (например, <code>1.5</code>).")
+    except Exception as e:
+        logger.error(f"Error in final calculation: {e}")
+        await message.answer("❌ Произошла ошибка при финальном расчете.")
+    finally:
         await state.clear()
