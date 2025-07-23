@@ -1,9 +1,11 @@
 # ===============================================================
-# Файл: main.py (Чистая версия)
-# Описание: Полный код для запуска бота. Диагностический блок убран.
+# Файл: main.py (Router FIX)
+# Описание: Исправлен порядок подключения роутеров для
+# корректной работы калькулятора и других команд.
 # ===============================================================
 import asyncio
 import logging
+import os
 
 import aiohttp
 import redis.asyncio as redis
@@ -116,15 +118,21 @@ async def main():
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
     dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
 
+    # --- ИСПРАВЛЕНО: Изменен порядок подключения роутеров ---
+    # Сначала регистрируем все роутеры с конкретными командами и сценариями
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
     dp.include_router(spam_handler.admin_spam_router)
     dp.include_router(crypto_center_handlers.router)
     dp.include_router(asic_info_handlers.router) 
-    dp.include_router(common_handlers.router)
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
+    
+    # Роутер с общими обработчиками (поиск монеты по любому тексту)
+    # должен идти в самом конце, чтобы не перехватывать команды из других роутеров.
+    dp.include_router(common_handlers.router)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     workflow_data = {
         "user_service": user_service,
