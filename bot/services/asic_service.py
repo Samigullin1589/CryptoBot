@@ -3,7 +3,7 @@
 # Описание: Полностью переписана логика обновления. Сервис теперь
 # использует агрессивную нормализацию имен и нечеткое сравнение
 # строк (rapidfuzz) для интеллектуального объединения данных
-# из всех доступных источников.
+# из ВСЕХ доступных источников (API, парсер, fallback-файл).
 # ===============================================================
 import asyncio
 import logging
@@ -34,11 +34,8 @@ class AsicService:
         Агрессивно очищает имя ASIC, оставляя только суть модели для надежного сравнения.
         "Bitmain Antminer S19K Pro 110 Th/s" -> "s19kpro110"
         """
-        # Удаляем названия производителей и общие слова
-        name = re.sub(r'\b(bitmain|antminer|whatsminer|canaan|avalon|jasminer|goldshell)\b', '', name, flags=re.IGNORECASE)
-        # Удаляем единицы измерения и разделители
+        name = re.sub(r'\b(bitmain|antminer|whatsminer|canaan|avalon|jasminer|goldshell|бу)\b', '', name, flags=re.IGNORECASE)
         name = re.sub(r'\s*(th/s|ths|gh/s|mh/s|ksol|t|g|m)\b', '', name, flags=re.IGNORECASE)
-        # Удаляем все, кроме букв и цифр
         return re.sub(r'[^a-z0-9]', '', name.lower())
 
     @alru_cache(maxsize=1, ttl=3600 * settings.asic_cache_update_hours)
@@ -95,14 +92,14 @@ class AsicService:
             
             for asic_to_merge in source_list:
                 normalized_to_merge = self._normalize_name_aggressively(asic_to_merge.name)
-                
+                if not normalized_to_merge: continue
+
                 best_match = process.extractOne(normalized_to_merge, master_keys, scorer=fuzz.WRatio, score_cutoff=90) if master_keys else None
 
                 if best_match:
                     match_key = best_match[0]
                     existing_asic = master_asics[match_key]
                     
-                    # Обогащаем данные, отдавая приоритет более полным
                     if (not existing_asic.power or existing_asic.power == 0) and asic_to_merge.power:
                         existing_asic.power = asic_to_merge.power
                     if (not existing_asic.hashrate or existing_asic.hashrate.lower() == 'n/a') and asic_to_merge.hashrate:
@@ -111,12 +108,9 @@ class AsicService:
                          existing_asic.algorithm = asic_to_merge.algorithm
                     if (not existing_asic.efficiency or existing_asic.efficiency.lower() == 'n/a') and asic_to_merge.efficiency:
                          existing_asic.efficiency = asic_to_merge.efficiency
-                    # Доходность всегда обновляем, если она есть, т.к. она динамическая
                     if asic_to_merge.profitability is not None:
                         existing_asic.profitability = asic_to_merge.profitability
-
                 else:
-                    # Если совпадений не найдено, это новый асик
                     master_asics[normalized_to_merge] = asic_to_merge
         
         logger.info(f"Intelligent merge complete. Total unique ASICs found: {len(master_asics)}.")
@@ -253,7 +247,6 @@ class AsicService:
         normalized_query = self._normalize_name_aggressively(model_query)
         if not normalized_query: return None
         
-        # --- ИСПРАВЛЕНО: Используем нечеткий поиск по ключам в Redis ---
         all_keys_bytes = [key async for key in self.redis.scan_iter("asic_passport:*")]
         if not all_keys_bytes: return None
         
