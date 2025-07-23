@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/services/coin_list_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлен __init__ для приема http_session, чтобы
-# устранить ошибку TypeError в фоновых задачах.
+# Описание: Восстановлен метод get_coin_list для обратной
+# совместимости, чтобы исправить AttributeError в PriceService.
 # ===============================================================
 import logging
 from typing import Dict, Optional, List
@@ -14,10 +14,28 @@ from bot.utils.helpers import make_request
 logger = logging.getLogger(__name__)
 
 class CoinListService:
-    # --- ИСПРАВЛЕНО: Сервис теперь принимает http_session ---
     def __init__(self, http_session: aiohttp.ClientSession):
         self.session = http_session
         self._coin_data = {}
+
+    # --- НОВЫЙ МЕТОД, ВОССТАНОВЛЕННЫЙ ДЛЯ СОВМЕСТИМОСТИ ---
+    @alru_cache(maxsize=1, ttl=3600)
+    async def get_coin_list(self) -> Dict[str, str]:
+        """
+        Возвращает список монет в формате {СИМВОЛ: АЛГОРИТМ} для обратной совместимости
+        с другими сервисами, такими как PriceService.
+        """
+        logger.info("Providing coin list for backward compatibility...")
+        full_data = await self.get_full_coin_data()
+        if not full_data:
+            return {}
+        
+        # Преобразуем новый формат данных (список словарей) в старый (словарь)
+        return {
+            coin.get('coin', ''): coin.get('algorithm', 'Unknown')
+            for coin in full_data if coin.get('coin')
+        }
+    # --- КОНЕЦ НОВОГО МЕТОДА ---
 
     @alru_cache(maxsize=1, ttl=3600)
     async def get_full_coin_data(self) -> List[Dict]:
@@ -26,7 +44,6 @@ class CoinListService:
         """
         logger.info("Updating full coin data list...")
         
-        # --- ИСПРАВЛЕНО: Используем self.session вместо создания новой ---
         # Источник №1: MinerStat
         minerstat_data = await make_request(self.session, f"{settings.minerstat_api_base}/coins")
         if minerstat_data and isinstance(minerstat_data, list):
