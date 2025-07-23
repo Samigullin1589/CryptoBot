@@ -14,3 +14,4 @@ pydantic-settings
 pydantic
 async-lru
 backoff
+rapidfuzz
