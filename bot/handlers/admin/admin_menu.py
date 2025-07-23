@@ -1,3 +1,7 @@
+# ===============================================================
+# Файл: bot/handlers/admin/admin_menu.py (БЕЗ ИЗМЕНЕНИЙ)
+# Описание: Этот файл уже написан правильно.
+# ===============================================================
 import logging
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -33,4 +37,3 @@ async def admin_menu_callback(call: CallbackQuery, admin_service: AdminService):
     """
     await admin_service.track_command_usage("Админ-меню (возврат)")
     await call.message.edit_text(ADMIN_MENU_TEXT, reply_markup=get_admin_menu_keyboard())
-

@@ -1,3 +1,8 @@
+# ===============================================================
+# Файл: bot/services/admin_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
+# Описание: Исправлена обработка байтовых строк из Redis для
+# корректного отображения статистики команд.
+# ===============================================================
 import logging
 from datetime import datetime, timedelta
 import redis.asyncio as redis
@@ -36,12 +41,14 @@ class AdminService:
         total_balance = 0
         if total_balance_keys:
             balance_values = await self.redis.mget(total_balance_keys)
-            total_balance = sum([float(v) for v in balance_values if v is not None])
+            # ИСПРАВЛЕНО: Корректно декодируем байты перед преобразованием в float
+            total_balance = sum([float(v.decode('utf-8')) for v in balance_values if v is not None])
 
         total_withdrawn = 0
         if total_withdrawn_keys:
             withdrawn_values = await self.redis.mget(total_withdrawn_keys)
-            total_withdrawn = sum([float(v) for v in withdrawn_values if v is not None])
+            # ИСПРАВЛЕНО: Корректно декодируем байты перед преобразованием в float
+            total_withdrawn = sum([float(v.decode('utf-8')) for v in withdrawn_values if v is not None])
         
         total_referrals = await self.redis.scard("referred_users")
 
@@ -55,13 +62,12 @@ class AdminService:
     async def get_command_stats(self) -> list:
         """Получает топ-10 самых используемых команд."""
         top_commands = await self.redis.zrevrange("stats:commands", 0, 9, withscores=True)
-        # ИСПРАВЛЕНИЕ: Убираем .decode('utf-8'), так как Redis уже возвращает строки
-        return [(cmd, int(score)) for cmd, score in top_commands]
+        # ИСПРАВЛЕНО: Принудительно декодируем имена команд из байтов в строки
+        return [(cmd.decode('utf-8'), int(score)) for cmd, score in top_commands]
 
     async def track_command_usage(self, command_name: str):
         """
         Увеличивает счетчик использования для указанной команды.
-        Использует Redis Sorted Set для хранения статистики.
         """
         try:
             await self.redis.zincrby("stats:commands", 1, command_name)

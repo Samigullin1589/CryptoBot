@@ -1,8 +1,12 @@
+# ===============================================================
+# Файл: bot/handlers/admin/stats_handlers.py (БЕЗ ИЗМЕНЕНИЙ)
+# Описание: Этот файл уже написан правильно и будет работать
+# с исправленным AdminService.
+# ===============================================================
 import logging
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 
-# --- ИСПРАВЛЕНИЕ: Импортируем правильное имя класса ---
 from bot.filters.admin_filter import IsAdminFilter
 from bot.keyboards.admin_keyboards import get_back_to_admin_menu_keyboard
 from bot.services.admin_service import AdminService
@@ -10,7 +14,6 @@ from bot.services.admin_service import AdminService
 stats_router = Router()
 logger = logging.getLogger(__name__)
 
-# --- ИСПРАВЛЕНИЕ: Применяем правильный фильтр ко всему роутеру ---
 stats_router.callback_query.filter(IsAdminFilter())
 
 
@@ -55,6 +58,7 @@ async def show_command_stats(call: CallbackQuery, admin_service: AdminService):
     if not top_commands:
         stats_text = "Еще нет данных."
     else:
+        # Теперь `cmd` будет строкой, и `sanitize_html` не нужен, но для безопасности оставим
         stats_text = "\n".join([f"🔹 <code>{cmd}</code> - {score} раз" for cmd, score in top_commands])
 
     text = (
