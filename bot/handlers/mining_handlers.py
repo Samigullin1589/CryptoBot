@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/mining_handlers.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Полностью объединен код "Виртуальной фермы" и 
-# "Профессионального калькулятора" с исправлением всех ошибок
-# обработки байтовых строк из Redis. Заглушки отсутствуют.
+# Файл: bot/handlers/mining_handlers.py (Alpha FIX)
+# Описание: Полностью переписан калькулятор. Добавлен выбор
+# валюты и корректная обработка асиков без данных.
 # ===============================================================
 import time
 import logging
@@ -23,6 +22,7 @@ from bot.config.settings import settings
 from bot.services.asic_service import AsicService
 from bot.services.admin_service import AdminService
 from bot.services.mining_service import MiningService
+from bot.services.market_data_service import MarketDataService
 from bot.utils.states import ProfitCalculator
 from bot.utils.models import AsicMiner
 from bot.keyboards.keyboards import (
@@ -35,19 +35,14 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 # ===============================================================
-# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
+# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (БЕЗ ИЗМЕНЕНИЙ) ---
 # ===============================================================
-
-# --- ГЛАВНОЕ МЕНЮ РАЗДЕЛА ---
 
 @router.callback_query(F.data == "menu_mining")
 async def handle_mining_menu(call: CallbackQuery, admin_service: AdminService):
     await admin_service.track_command_usage("💎 Виртуальный Майнинг")
     text = "<b>💎 Центр управления Виртуальным Майнингом</b>\n\nВыберите действие:"
     await call.message.edit_text(text, reply_markup=get_mining_menu_keyboard())
-
-
-# --- ЛОГИКА МАГАЗИНА ОБОРУДОВАНИЯ ---
 
 async def show_shop_page(message: Message, asic_service: AsicService, page: int = 0):
     asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
@@ -58,21 +53,16 @@ async def show_shop_page(message: Message, asic_service: AsicService, page: int 
     keyboard = get_asic_shop_keyboard(asics, page)
     await message.edit_text(text, reply_markup=keyboard)
 
-
 @router.callback_query(F.data == "mining_shop")
 async def handle_shop_menu(call: CallbackQuery, asic_service: AsicService, admin_service: AdminService):
     await admin_service.track_command_usage("🏪 Магазин оборудования")
     await call.message.edit_text("⏳ Загружаю оборудование...")
     await show_shop_page(call.message, asic_service, 0)
 
-
 @router.callback_query(F.data.startswith("shop_page_"))
 async def handle_shop_pagination(call: CallbackQuery, asic_service: AsicService):
     page = int(call.data.split("_")[2])
     await show_shop_page(call.message, asic_service, page)
-
-
-# --- ЛОГИКА ЗАПУСКА МАЙНИНГА ---
 
 @router.callback_query(F.data.startswith("start_mining_"))
 async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, scheduler: AsyncIOScheduler, asic_service: AsicService, admin_service: AdminService):
@@ -107,30 +97,22 @@ async def handle_start_mining(call: CallbackQuery, redis_client: redis.Redis, sc
     )
     logger.info(f"User {user_id} started mining session with ASIC: {selected_asic.name}")
 
-
-# --- ЛОГИКА "МОЯ ФЕРМА" ---
-
 @router.callback_query(F.data == "mining_my_farm")
 async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     await admin_service.track_command_usage("🖥️ Моя ферма")
     user_id = call.from_user.id
     session_data = await redis_client.hgetall(f"mining:session:{user_id}")
-
     if not session_data:
         text = "🖥️ <b>Моя ферма</b>\n\nУ вас нет активных майнинг-сессий. Зайдите в магазин, чтобы запустить оборудование!"
         await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
         return
 
-    # --- ИСПРАВЛЕНО: Корректная обработка байт из Redis ---
     start_time_bytes = session_data.get(b"start_time")
     start_time = int(start_time_bytes) if start_time_bytes else 0
-
     profitability_per_day_bytes = session_data.get(b"asic_profitability_per_day")
     profitability_per_day = float(profitability_per_day_bytes) if profitability_per_day_bytes else 0.0
-    
     asic_name_bytes = session_data.get(b'asic_name')
     asic_name = asic_name_bytes.decode('utf-8') if asic_name_bytes else "Неизвестно"
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     elapsed_seconds = int(time.time()) - start_time
     remaining_seconds = max(0, settings.MINING_DURATION_SECONDS - elapsed_seconds)
@@ -139,7 +121,6 @@ async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_s
     m, s = divmod(remaining_seconds, 60)
     h, m = divmod(m, 60)
     remaining_time_str = f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
-
     text = (
         f"🖥️ <b>Моя ферма</b>\n\n"
         f"✅ <b>Статус:</b> В работе\n"
@@ -148,9 +129,6 @@ async def handle_my_farm(call: CallbackQuery, redis_client: redis.Redis, admin_s
         f"💰 <b>Намайнено в этой сессии:</b> ~${earned_so_far:.4f}"
     )
     await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
-
-
-# --- ЛОГИКА "ВЫВОД СРЕДСТВ" ---
 
 @router.callback_query(F.data == "mining_withdraw")
 async def handle_withdraw(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
@@ -182,9 +160,6 @@ async def handle_withdraw(call: CallbackQuery, redis_client: redis.Redis, admin_
     logger.info(f"User {user_id} withdrew {balance:.2f} coins for a {total_discount}% discount.")
     await call.message.edit_text(text, reply_markup=get_withdraw_keyboard())
 
-
-# --- ЛОГИКА "ПРИГЛАСИТЬ ДРУГА" ---
-
 @router.callback_query(F.data == "mining_invite")
 async def handle_invite_friend(call: CallbackQuery, bot: Bot, admin_service: AdminService):
     await admin_service.track_command_usage("🤝 Пригласить друга")
@@ -202,9 +177,6 @@ async def handle_invite_friend(call: CallbackQuery, bot: Bot, admin_service: Adm
     await call.answer()
     await call.message.answer(text, reply_markup=get_mining_menu_keyboard())
 
-
-# --- ЛОГИКА "СТАТИСТИКА" ---
-
 @router.callback_query(F.data == "mining_stats")
 async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     await admin_service.track_command_usage("📊 Статистика (Майнинг)")
@@ -216,13 +188,10 @@ async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis, admin_
         pipe.scard(f"user:{user_id}:referrals")
         results = await pipe.execute()
     
-    # --- ИСПРАВЛЕНО: Корректная обработка байт из Redis ---
     balance = float(results[0]) if results[0] else 0.0
     total_earned = float(results[1]) if results[1] else 0.0
     total_withdrawn = float(results[2]) if results[2] else 0.0
     referrals_count = int(results[3]) if results[3] else 0
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-    
     text = (
         f"📊 <b>Ваша игровая статистика</b>\n\n"
         f"💰 Текущий баланс: <b>{balance:.2f} монет</b>\n"
@@ -232,9 +201,6 @@ async def handle_my_stats(call: CallbackQuery, redis_client: redis.Redis, admin_
     )
     await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
 
-
-# --- ЛОГИКА "ЭЛЕКТРОЭНЕРГИЯ" ---
-
 @router.callback_query(F.data == "mining_electricity")
 async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     await admin_service.track_command_usage("⚡️ Электроэнергия")
@@ -242,12 +208,10 @@ async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis
     
     current_tariff_bytes = await redis_client.get(f"user:{user_id}:tariff")
     current_tariff = current_tariff_bytes.decode('utf-8') if current_tariff_bytes else settings.DEFAULT_ELECTRICITY_TARIFF
-    
     unlocked_tariffs_bytes = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
     unlocked_tariffs = {t.decode('utf-8') for t in unlocked_tariffs_bytes}
     if not unlocked_tariffs:
         unlocked_tariffs = {settings.DEFAULT_ELECTRICITY_TARIFF}
-
     text = (
         f"⚡️ <b>Управление электроэнергией</b>\n\n"
         f"Покупайте более выгодные тарифы, чтобы увеличить чистую прибыль от майнинга.\n\n"
@@ -255,26 +219,21 @@ async def handle_electricity_menu(call: CallbackQuery, redis_client: redis.Redis
     )
     await call.message.edit_text(text, reply_markup=get_electricity_menu_keyboard(current_tariff, unlocked_tariffs))
 
-
 @router.callback_query(F.data.startswith("select_tariff_"))
 async def handle_select_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
     user_id = call.from_user.id
     tariff_name = call.data[len("select_tariff_"):]
-
     unlocked_tariffs_bytes = await redis_client.smembers(f"user:{user_id}:unlocked_tariffs")
     unlocked_tariffs = {t.decode('utf-8') for t in unlocked_tariffs_bytes}
     if not unlocked_tariffs:
         unlocked_tariffs = {settings.DEFAULT_ELECTRICITY_TARIFF}
-
     if tariff_name not in unlocked_tariffs:
         await call.answer("🔒 Этот тариф вам еще не доступен. Сначала его нужно купить.", show_alert=True)
         return
-
     await redis_client.set(f"user:{user_id}:tariff", tariff_name)
     logger.info(f"User {user_id} selected new electricity tariff: {tariff_name}")
     await call.answer(f"✅ Тариф '{tariff_name}' успешно выбран!")
     await handle_electricity_menu(call, redis_client, admin_service)
-
 
 @router.callback_query(F.data.startswith("buy_tariff_"))
 async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admin_service: AdminService):
@@ -298,9 +257,6 @@ async def handle_buy_tariff(call: CallbackQuery, redis_client: redis.Redis, admi
     logger.info(f"User {user_id} bought new tariff '{tariff_name}' for {unlock_price} coins.")
     await call.answer(f"🎉 Тариф '{tariff_name}' успешно куплен и доступен для выбора!", show_alert=True)
     await handle_electricity_menu(call, redis_client, admin_service)
-
-
-# --- ОБРАБОТЧИК ДЛЯ ЧАЕВЫХ ---
 
 @router.message(Command("tip"))
 async def handle_tip_command(message: Message, command: CommandObject, redis_client: redis.Redis, admin_service: AdminService):
@@ -346,10 +302,16 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
     )
     logger.info(f"User {sender.id} tipped {amount:.2f} to {recipient.id}")
 
+# ===============================================================
+# --- БЛОК 2: ПРОФЕССИОНАЛЬНЫЙ КАЛЬКУЛЯТОР (АЛЬФА-ВЕРСИЯ) ---
+# ===============================================================
 
-# ===============================================================
-# --- БЛОК 2: ПРОФЕССИОНАЛЬНЫЙ КАЛЬКУЛЯТОР ДОХОДНОСТИ (ИСПРАВЛЕННЫЙ КОД) ---
-# ===============================================================
+def get_currency_selection_keyboard() -> InlineKeyboardBuilder:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="USD ($)", callback_data="calc_currency_usd")
+    builder.button(text="RUB (₽)", callback_data="calc_currency_rub")
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="prof_calc_cancel"))
+    return builder
 
 def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardBuilder:
     builder = InlineKeyboardBuilder()
@@ -357,7 +319,14 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> Inline
     start = page * items_per_page
     end = start + items_per_page
     for i, asic in enumerate(asics[start:end]):
-        builder.button(text=f"{asic.name}", callback_data=f"prof_calc_select_{i + start}")
+        hash_rate_str = asic.hashrate
+        is_valid = hash_rate_str and hash_rate_str.lower() != 'n/a' and re.search(r'[\d.]+', hash_rate_str)
+        
+        if is_valid:
+            builder.button(text=f"✅ {asic.name}", callback_data=f"prof_calc_select_{i + start}")
+        else:
+            builder.button(text=f"🚫 {asic.name} (нет данных)", callback_data="prof_calc_nodata")
+
     builder.adjust(2)
     nav_buttons = []
     if page > 0:
@@ -368,18 +337,53 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> Inline
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="prof_calc_cancel"))
     return builder
 
-@router.message(F.text.contains("⛏️ Калькулятор"))
-async def start_profit_calculator(message: Message, state: FSMContext, admin_service: AdminService):
+@router.callback_query(F.data == "menu_calculator")
+@router.message(F.text == "⛏️ Калькулятор")
+async def start_profit_calculator(update: Union[Message, CallbackQuery], state: FSMContext, admin_service: AdminService):
     await admin_service.track_command_usage("⛏️ Калькулятор")
-    await message.answer("Введите стоимость вашей электроэнергии в USD (например, <b>0.05</b>):")
+    text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
+    keyboard = get_currency_selection_keyboard().as_markup()
+    if isinstance(update, Message):
+        await update.answer(text, reply_markup=keyboard)
+    else:
+        try:
+            await update.message.edit_text(text, reply_markup=keyboard)
+        except TelegramBadRequest:
+            await update.message.answer(text, reply_markup=keyboard)
+        await update.answer()
+    await state.set_state(ProfitCalculator.waiting_for_currency)
+
+@router.callback_query(ProfitCalculator.waiting_for_currency, F.data.startswith("calc_currency_"))
+async def process_currency_selection(call: CallbackQuery, state: FSMContext):
+    currency = call.data.split("_")[-1]
+    await state.update_data(currency=currency)
+    prompt_text = ""
+    if currency == "usd":
+        prompt_text = "💡 Введите стоимость электроэнергии в <b>USD</b> за кВт/ч (например, <code>0.05</code>):"
+    elif currency == "rub":
+        prompt_text = "💡 Введите стоимость электроэнергии в <b>рублях</b> за кВт/ч (например, <code>4.5</code>):"
+    await call.message.edit_text(prompt_text)
     await state.set_state(ProfitCalculator.waiting_for_electricity_cost)
+    await call.answer()
 
 @router.message(ProfitCalculator.waiting_for_electricity_cost)
-async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService):
+async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService, market_data_service: MarketDataService):
     try:
         cost = float(message.text.replace(',', '.').strip())
         if cost < 0: raise ValueError("Стоимость не может быть отрицательной.")
-        await state.update_data(electricity_cost=cost)
+        user_data = await state.get_data()
+        currency = user_data.get("currency")
+        cost_usd = cost
+        if currency == "rub":
+            await message.answer("⏳ Получаю актуальный курс USD/RUB...")
+            rate_usd_rub = await market_data_service.get_usd_rub_rate()
+            if not rate_usd_rub:
+                await message.answer("❌ Не удалось получить курс валют. Попробуйте позже.")
+                await state.clear()
+                return
+            cost_usd = cost / rate_usd_rub
+        
+        await state.update_data(electricity_cost_usd=cost_usd)
         await message.answer("⏳ Загружаю список актуального оборудования...")
         all_asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
         sorted_asics = sorted(all_asics, key=lambda x: x.name)
@@ -395,8 +399,13 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
         )
         await state.set_state(ProfitCalculator.waiting_for_asic_selection)
     except (ValueError, TypeError):
-        await message.answer("Пожалуйста, введите корректное число (например, <b>0.05</b>).")
+        await message.answer("Пожалуйста, введите корректное число (например, <b>0.05</b> или <b>4.5</b>).")
         return
+
+@router.callback_query(ProfitCalculator.waiting_for_asic_selection, F.data == "prof_calc_nodata")
+async def process_nodata_asic_selection(call: CallbackQuery):
+    """Отвечает на нажатие неактивной кнопки асика."""
+    await call.answer("ℹ️ Для этой модели нет данных о хешрейте, расчет невозможен.", show_alert=True)
 
 @router.callback_query(ProfitCalculator.waiting_for_asic_selection, F.data.startswith("prof_calc_"))
 async def process_asic_selection(call: CallbackQuery, state: FSMContext, mining_service: MiningService):
@@ -420,12 +429,16 @@ async def process_asic_selection(call: CallbackQuery, state: FSMContext, mining_
             await call.answer("❌ Ошибка выбора. Попробуйте снова.", show_alert=True)
             return
         selected_asic = asic_list[asic_index]
-        electricity_cost = user_data.get("electricity_cost")
+        electricity_cost_usd = user_data.get("electricity_cost_usd")
         await call.message.edit_text(f"⏳ Рассчитываю доходность для <b>{selected_asic.name}</b>...")
         try:
-            hash_rate_str = selected_asic.hashrate.lower()
+            hash_rate_str = selected_asic.hashrate
+            if not hash_rate_str or hash_rate_str.lower() == 'n/a':
+                 raise ValueError(f"Hashrate is not available for {selected_asic.name}")
+            hash_rate_str = hash_rate_str.lower()
             hash_value_match = re.search(r'[\d.]+', hash_rate_str)
-            if not hash_value_match: raise ValueError("Could not find numeric value in hashrate string")
+            if not hash_value_match:
+                raise ValueError(f"Could not find numeric value in hashrate string: {hash_rate_str}")
             hash_value = float(hash_value_match.group(0))
             if 'ph/s' in hash_rate_str: hash_value *= 1000
             elif 'gh/s' in hash_rate_str: hash_value /= 1000
@@ -437,7 +450,7 @@ async def process_asic_selection(call: CallbackQuery, state: FSMContext, mining_
             return
         result_text = await mining_service.calculate(
             hashrate_ths=hash_value, power_consumption_watts=selected_asic.power,
-            electricity_cost=electricity_cost
+            electricity_cost=electricity_cost_usd
         )
         await call.message.edit_text(result_text, disable_web_page_preview=True)
         await state.clear()
