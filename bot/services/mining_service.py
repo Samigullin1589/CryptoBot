@@ -1,6 +1,6 @@
 # ===============================================================
 # Файл: bot/services/mining_service.py (Обновленный)
-# Описание: Метод calculate теперь принимает и учитывает
+# Описание: Метод calculate теперь снова принимает и учитывает
 # комиссию пула (pool_commission).
 # ===============================================================
 import logging
@@ -17,7 +17,7 @@ class MiningService:
         hashrate_ths: float, 
         power_consumption_watts: int, 
         electricity_cost: float,
-        pool_commission: float, # <-- НОВЫЙ ПАРАМЕТР
+        pool_commission: float, # <-- ВОЗВРАЩЕННЫЙ ПАРАМЕТР
         coin_symbol: str = "BTC"
     ) -> str:
         """
@@ -48,10 +48,10 @@ class MiningService:
         power_consumption_kwh_day = (power_consumption_watts * 24) / 1000
         electricity_cost_day = power_consumption_kwh_day * electricity_cost
         
-        # --- НОВЫЙ РАСЧЕТ: Учитываем комиссию пула ---
+        # --- ВОЗВРАЩЕН РАСЧЕТ: Учитываем комиссию пула ---
         pool_fee_usd_day = gross_income_usd_day * (pool_commission / 100)
         net_profit_usd_day = gross_income_usd_day - electricity_cost_day - pool_fee_usd_day
-        # --- КОНЕЦ НОВОГО РАСЧЕТА ---
+        # --- КОНЕЦ РАСЧЕТА ---
         
         net_profit_usd_month = net_profit_usd_day * 30
 

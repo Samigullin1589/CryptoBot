@@ -1,6 +1,6 @@
 # ===============================================================
 # Файл: bot/utils/states.py (Обновленный)
-# Описание: Добавлено состояние для выбора валюты в калькуляторе.
+# Описание: Добавлены все состояния для полного сценария калькулятора.
 # ===============================================================
 from aiogram.fsm.state import State, StatesGroup
 
@@ -14,12 +14,10 @@ class ProfitCalculator(StatesGroup):
     """
     Состояния для многошагового процесса калькулятора доходности.
     """
-    # --- НОВОЕ: Добавлено состояние для выбора валюты ---
     waiting_for_currency = State()
-    # ----------------------------------------------------
     waiting_for_electricity_cost = State()
-    waiting_for_pool_commission = State() # Это состояние от старого калькулятора, оставляем для совместимости
     waiting_for_asic_selection = State()
+    waiting_for_pool_commission = State()
 
 class VirtualMining(StatesGroup):
     """

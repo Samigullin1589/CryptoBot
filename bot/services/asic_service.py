@@ -260,4 +260,3 @@ class AsicService:
             data_bytes = await self.redis.hgetall(match_key_str)
             return {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
             
-        return None
