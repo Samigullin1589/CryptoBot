@@ -1,8 +1,9 @@
 # ===============================================================
 # Файл: bot/services/asic_service.py (ФИНАЛЬНАЯ АЛЬФА-ВЕРСИЯ)
 # Описание: Полностью переписана логика обновления. Сервис теперь
-# использует нечеткое сравнение строк (rapidfuzz) для
-# интеллектуального объединения данных из всех источников.
+# использует агрессивную нормализацию имен и нечеткое сравнение
+# строк (rapidfuzz) для интеллектуального объединения данных
+# из всех доступных источников.
 # ===============================================================
 import asyncio
 import logging
@@ -14,7 +15,7 @@ import aiohttp
 import redis.asyncio as redis
 from async_lru import alru_cache
 from bs4 import BeautifulSoup
-from rapidfuzz import process, fuzz # <-- Импортируем для "Альфа" сопоставления
+from rapidfuzz import process, fuzz
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request, parse_power
@@ -28,8 +29,16 @@ class AsicService:
         self.session = http_session
         self.LAST_UPDATE_KEY = "asics_last_update_utc"
 
-    def _normalize_name(self, name: str) -> str:
-        """Приводит имя ASIC к единому формату для сравнения."""
+    def _normalize_name_aggressively(self, name: str) -> str:
+        """
+        Агрессивно очищает имя ASIC, оставляя только суть модели для надежного сравнения.
+        "Bitmain Antminer S19K Pro 110 Th/s" -> "s19kpro110"
+        """
+        # Удаляем названия производителей и общие слова
+        name = re.sub(r'\b(bitmain|antminer|whatsminer|canaan|avalon|jasminer|goldshell)\b', '', name, flags=re.IGNORECASE)
+        # Удаляем единицы измерения и разделители
+        name = re.sub(r'\s*(th/s|ths|gh/s|mh/s|ksol|t|g|m)\b', '', name, flags=re.IGNORECASE)
+        # Удаляем все, кроме букв и цифр
         return re.sub(r'[^a-z0-9]', '', name.lower())
 
     @alru_cache(maxsize=1, ttl=3600 * settings.asic_cache_update_hours)
@@ -42,8 +51,6 @@ class AsicService:
         logger.info("STARTING SCHEDULED ASIC DB UPDATE (INTELLIGENT MERGE LOGIC)")
         logger.info("="*20)
         
-        # 1. Параллельно загружаем данные из всех источников
-        logger.info("Fetching from all sources in parallel...")
         results = await asyncio.gather(
             self._fetch_from_whattomine_api(self.session),
             self._fetch_from_asicminervalue(self.session),
@@ -54,17 +61,14 @@ class AsicService:
         asicvalue_asics = results[1] if isinstance(results[1], list) else []
         fallback_asics = [AsicMiner(**data) for data in settings.fallback_asics]
 
-        # 2. Интеллектуальное слияние с использованием fuzzy matching
         master_asics = self._intelligent_merge(
-            primary_source=asicvalue_asics,
-            sources_to_merge=[whattomine_asics, fallback_asics]
+            sources=[asicvalue_asics, whattomine_asics, fallback_asics]
         )
         
         if not master_asics:
             logger.error("CRITICAL: All data sources failed to provide any valid data. Cache will not be updated.")
             return []
 
-        # 3. Фильтрация и сохранение в Redis
         final_asics = list(master_asics.values())
         valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None]
         
@@ -77,58 +81,47 @@ class AsicService:
         await self.redis.set(self.LAST_UPDATE_KEY, datetime.now(timezone.utc).isoformat())
         return sorted(valid_asics, key=lambda x: x.profitability, reverse=True)
 
-    def _intelligent_merge(self, primary_source: List[AsicMiner], sources_to_merge: List[List[AsicMiner]]) -> Dict[str, AsicMiner]:
+    def _intelligent_merge(self, sources: List[List[AsicMiner]]) -> Dict[str, AsicMiner]:
         """
         Создает "мастер-лист" асиков, обогащая его данными из нескольких источников
         с использованием нечеткого сравнения имен.
         """
         master_asics: Dict[str, AsicMiner] = {}
         
-        # Сначала наполняем мастер-лист основным источником
-        for asic in primary_source:
-            normalized_name = self._normalize_name(asic.name)
-            master_asics[normalized_name] = asic
-        
-        logger.info(f"Created master list with {len(master_asics)} ASICs from primary source.")
-
-        master_keys = list(master_asics.keys())
-        
-        for source in sources_to_merge:
-            if not source: continue
+        for source_list in sources:
+            if not source_list: continue
             
-            enriched_count = 0
-            newly_added_count = 0
+            master_keys = list(master_asics.keys())
             
-            for asic_to_merge in source:
-                normalized_to_merge = self._normalize_name(asic_to_merge.name)
+            for asic_to_merge in source_list:
+                normalized_to_merge = self._normalize_name_aggressively(asic_to_merge.name)
                 
-                # Ищем лучшее совпадение в мастер-листе
-                best_match = process.extractOne(normalized_to_merge, master_keys, scorer=fuzz.WRatio, score_cutoff=85)
+                best_match = process.extractOne(normalized_to_merge, master_keys, scorer=fuzz.WRatio, score_cutoff=90) if master_keys else None
 
                 if best_match:
                     match_key = best_match[0]
                     existing_asic = master_asics[match_key]
                     
                     # Обогащаем данные, отдавая приоритет более полным
-                    if not existing_asic.power and asic_to_merge.power:
+                    if (not existing_asic.power or existing_asic.power == 0) and asic_to_merge.power:
                         existing_asic.power = asic_to_merge.power
-                    if not existing_asic.hashrate or existing_asic.hashrate == 'N/A':
+                    if (not existing_asic.hashrate or existing_asic.hashrate.lower() == 'n/a') and asic_to_merge.hashrate:
                         existing_asic.hashrate = asic_to_merge.hashrate
-                    if (not existing_asic.algorithm or existing_asic.algorithm == 'Unknown') and asic_to_merge.algorithm:
+                    if (not existing_asic.algorithm or existing_asic.algorithm.lower() == 'unknown') and asic_to_merge.algorithm:
                          existing_asic.algorithm = asic_to_merge.algorithm
-                    
-                    enriched_count += 1
+                    if (not existing_asic.efficiency or existing_asic.efficiency.lower() == 'n/a') and asic_to_merge.efficiency:
+                         existing_asic.efficiency = asic_to_merge.efficiency
+                    # Доходность всегда обновляем, если она есть, т.к. она динамическая
+                    if asic_to_merge.profitability is not None:
+                        existing_asic.profitability = asic_to_merge.profitability
+
                 else:
                     # Если совпадений не найдено, это новый асик
                     master_asics[normalized_to_merge] = asic_to_merge
-                    master_keys.append(normalized_to_merge) # Обновляем список ключей для поиска
-                    newly_added_count += 1
-
-            logger.info(f"Merged source. Enriched: {enriched_count}, Newly added: {newly_added_count}.")
-            
+        
+        logger.info(f"Intelligent merge complete. Total unique ASICs found: {len(master_asics)}.")
         return master_asics
 
-    # ... (остальные методы остаются без изменений: _cache_asics_to_redis, _fetch_..., get_top_asics и т.д.) ...
     async def _cache_asics_to_redis(self, asics: List[AsicMiner]):
         logger.info(f"Preparing to cache {len(asics)} ASICs to Redis...")
         async with self.redis.pipeline() as pipe:
@@ -139,7 +132,7 @@ class AsicService:
 
             cached_count = 0
             for asic in asics:
-                model_key = self._normalize_name(asic.name)
+                model_key = self._normalize_name_aggressively(asic.name)
                 redis_key = f"asic_passport:{model_key}"
                 
                 asic_dict = {
@@ -257,12 +250,20 @@ class AsicService:
         return sorted_asics[:count], last_update_time
 
     async def find_asic_by_query(self, model_query: str) -> Optional[dict]:
-        normalized_query = self._normalize_name(model_query)
+        normalized_query = self._normalize_name_aggressively(model_query)
         if not normalized_query: return None
-        keys_bytes = [key async for key in self.redis.scan_iter("asic_passport:*")]
-        for key_bytes in keys_bytes:
-            key_str = key_bytes.decode('utf-8')
-            if normalized_query in key_str.replace('asic_passport:', ''):
-                data_bytes = await self.redis.hgetall(key_str)
-                return {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
+        
+        # --- ИСПРАВЛЕНО: Используем нечеткий поиск по ключам в Redis ---
+        all_keys_bytes = [key async for key in self.redis.scan_iter("asic_passport:*")]
+        if not all_keys_bytes: return None
+        
+        all_keys_str = [key.decode('utf-8').replace('asic_passport:', '') for key in all_keys_bytes]
+        
+        best_match = process.extractOne(normalized_query, all_keys_str, scorer=fuzz.WRatio, score_cutoff=85)
+        
+        if best_match:
+            match_key_str = f"asic_passport:{best_match[0]}"
+            data_bytes = await self.redis.hgetall(match_key_str)
+            return {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
+            
         return None
