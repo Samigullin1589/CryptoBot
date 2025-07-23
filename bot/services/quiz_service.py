@@ -1,13 +1,13 @@
 # ===============================================================
-# Файл: bot/services/quiz_service.py (Path FIX)
+# Файл: bot/services/quiz_service.py (Path FIX v2)
 # Описание: Исправлен путь к fallback_quiz.json для
-# гарантированной загрузки файла.
+# соответствия твоей структуре проекта (папка data в корне).
 # ===============================================================
 import asyncio
 import json
 import logging
 import random
-from pathlib import Path # <-- Добавлен импорт
+from pathlib import Path # <-- Импорт для работы с путями
 from typing import Optional, Dict, List, Tuple
 
 from openai import AsyncOpenAI
@@ -41,10 +41,10 @@ class QuizService:
         """Загружает резервные вопросы из локального JSON файла."""
         file_path = None
         try:
-            # --- ИСПРАВЛЕНО: Используем pathlib для надежного пути к файлу ---
+            # --- ИСПРАВЛЕНО: Используем pathlib для построения правильного пути ---
             # Этот путь будет работать независимо от того, откуда запускается бот.
-            # bot/services/quiz_service.py -> bot/ -> data/
-            file_path = Path(__file__).parent.parent / "data" / "fallback_quiz.json"
+            # bot/services/quiz_service.py -> bot/services -> bot -> корень проекта -> data
+            file_path = Path(__file__).parent.parent.parent / "data" / "fallback_quiz.json"
             # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
             
             with open(file_path, "r", encoding="utf-8") as f:
