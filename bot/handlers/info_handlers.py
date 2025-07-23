@@ -1,3 +1,8 @@
+# ===============================================================
+# Файл: bot/handlers/info_handlers.py (ОКОНЧАТЕЛЬНЫЙ FIX)
+# Описание: Исправлена ошибка в викторине (AttributeError).
+# Удален старый, конфликтующий код калькулятора.
+# ===============================================================
 import asyncio
 import logging
 from typing import Union
@@ -25,7 +30,7 @@ from bot.services.admin_service import AdminService
 from bot.utils.helpers import (get_message_and_chat_id, sanitize_html,
                                      show_main_menu)
 from bot.utils.plotting import generate_fng_image
-from bot.utils.states import PriceInquiry, ProfitCalculator
+from bot.utils.states import PriceInquiry
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -102,7 +107,7 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
         text_lines = [f"🏆 <b>Топ-10 доходных ASIC</b> (чистыми, при цене э/э ${electricity_cost:.4f}/кВт·ч)\n"]
         for miner in top_miners:
             line = (f"<b>{sanitize_html(miner.name)}</b>\n"
-                    f"   Доход: <b>${miner.profitability:.2f}/день</b>"
+                    f"   Доход: <b>${miner.profitability:.2f}/день</b>"
                     f"{f' | {miner.algorithm}' if miner.algorithm and miner.algorithm != 'N/A' else ''}")
             text_lines.append(line)
         
@@ -232,90 +237,8 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     response_text = await format_price_info_text(message.text, price_service)
     await temp_msg.edit_text(response_text, reply_markup=get_main_menu_keyboard())
 
-# --- БЛОК КАЛЬКУЛЯТОРА ---
 
-@router.callback_query(F.data == "menu_calculator")
-@router.message(F.text == "⛏️ Калькулятор")
-async def handle_calculator_menu(update: Union[CallbackQuery, Message], state: FSMContext, admin_service: AdminService):
-    """Шаг 1: Запрашиваем стоимость электроэнергии."""
-    await admin_service.track_command_usage("⛏️ Калькулятор")
-    text = "💡 Введите стоимость электроэнергии в <b>рублях</b> за кВт/ч (например, <code>4.5</code>):"
-    
-    if isinstance(update, CallbackQuery):
-        await safe_edit_or_send(update, text, None)
-    else:
-        await update.answer(text)
-        
-    await state.set_state(ProfitCalculator.waiting_for_electricity_cost)
-
-
-@router.message(ProfitCalculator.waiting_for_electricity_cost)
-async def process_electricity_cost(message: Message, state: FSMContext):
-    """Шаг 2: Проверяем стоимость э/э и запрашиваем комиссию пула."""
-    try:
-        cost_rub = float(message.text.replace(',', '.'))
-        if cost_rub < 0:
-            raise ValueError("Стоимость не может быть отрицательной")
-        
-        await state.update_data(electricity_cost_rub=cost_rub)
-        await state.set_state(ProfitCalculator.waiting_for_pool_commission)
-        
-        await message.answer("📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):")
-    except (ValueError, TypeError):
-        await message.answer("❌ Неверный формат. Введите число (например, <code>4.5</code>).")
-        
-
-@router.message(ProfitCalculator.waiting_for_pool_commission)
-async def process_pool_commission(message: Message, state: FSMContext, market_data_service: MarketDataService, asic_service: AsicService):
-    """Шаг 3: Получаем комиссию, считаем и выводим результат."""
-    try:
-        commission_percent = float(message.text.replace(',', '.'))
-        if not (0 <= commission_percent < 100):
-            raise ValueError("Комиссия должна быть от 0 до 99.9")
-            
-        await message.answer("⏳ Считаю... Это может занять до 30 секунд.")
-
-        user_data = await state.get_data()
-        cost_rub_per_kwh = user_data['electricity_cost_rub']
-        
-        rate_usd_rub = await market_data_service.get_usd_rub_rate()
-        
-        asics, _ = await asic_service.get_top_asics(count=10, electricity_cost=0.0)
-        
-        if not asics or not rate_usd_rub:
-            await message.answer("❌ Не удалось получить данные о курсах или ASIC для расчета. Попробуйте позже.", reply_markup=get_main_menu_keyboard())
-            await state.clear()
-            return
-            
-        res = [f"💰 <b>Расчет доходности (розетка {cost_rub_per_kwh:.2f} ₽, пул {commission_percent:.2f}%)</b>\n"]
-        
-        for asic in asics:
-            if not asic.power: continue
-
-            gross_income_usd = asic.profitability
-            gross_income_rub = gross_income_usd * rate_usd_rub
-            
-            electricity_cost_day_rub = (asic.power / 1000) * 24 * cost_rub_per_kwh
-            pool_fee_rub = gross_income_rub * (commission_percent / 100)
-            
-            net_profit_rub = gross_income_rub - electricity_cost_day_rub - pool_fee_rub
-
-            res.append(
-                f"➖➖➖➖➖➖➖➖➖➖\n"
-                f"<b>{sanitize_html(asic.name)}</b>\n"
-                f" доход: {gross_income_rub:,.0f} ₽\n"
-                f" розетка: -{electricity_cost_day_rub:,.0f} ₽\n"
-                f" пул: -{pool_fee_rub:,.0f} ₽\n"
-                f"✅ <b>Итого: {net_profit_rub:,.0f} ₽/день</b>"
-            )
-
-        await message.answer("\n".join(res), reply_markup=get_main_menu_keyboard())
-
-    except (ValueError, TypeError):
-        await message.answer("❌ Неверный формат. Введите число (например, <code>1.5</code>).")
-    
-    await state.clear()
-
+# --- БЛОК ВИКТОРИНЫ (ИСПРАВЛЕН) ---
 
 @router.callback_query(F.data == "menu_quiz")
 @router.message(F.text == "🧠 Викторина")
@@ -329,15 +252,22 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
 
     temp_message = await message.answer("⏳ Генерирую вопрос...")
 
-    quiz = await quiz_service.generate_quiz_question()
-    if not quiz:
-        await temp_message.edit_text("😕 Не удалось сгенерировать вопрос.", reply_markup=get_main_menu_keyboard())
+    # --- ИСПРАВЛЕНО: Вызываем правильный метод и распаковываем результат ---
+    question, options, correct_option_id = await quiz_service.get_random_question()
+    
+    # Проверяем, что сервис не вернул сообщение об ошибке
+    if not options:
+        await temp_message.edit_text(question, reply_markup=get_main_menu_keyboard())
         return
     
     await temp_message.delete()
     
     await message.answer_poll(
-        question=quiz['question'], options=quiz['options'], type='quiz',
-        correct_option_id=quiz['correct_option_index'], is_anonymous=False,
+        question=question, 
+        options=options, 
+        type='quiz',
+        correct_option_id=correct_option_id, 
+        is_anonymous=False,
         reply_markup=get_quiz_keyboard()
     )
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
