@@ -100,6 +100,7 @@ class AsicService:
                     match_key = best_match[0]
                     existing_asic = master_asics[match_key]
                     
+                    # Обогащаем данные, отдавая приоритет более полным
                     if (not existing_asic.power or existing_asic.power == 0) and asic_to_merge.power:
                         existing_asic.power = asic_to_merge.power
                     if (not existing_asic.hashrate or existing_asic.hashrate.lower() == 'n/a') and asic_to_merge.hashrate:
