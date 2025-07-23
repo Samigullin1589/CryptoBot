@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: main.py (Router FIX)
-# Описание: Исправлен порядок подключения роутеров для
-# корректной работы калькулятора и других команд.
+# Файл: main.py (ОКОНЧАТЕЛЬНЫЙ FIX)
+# Описание: Исправлена инициализация CoinListService для
+# соответствия фоновым задачам.
 # ===============================================================
 import asyncio
 import logging
@@ -94,7 +94,9 @@ async def main():
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
     asic_service = AsicService(redis_client=redis_client, http_session=http_session)
-    coin_list_service = CoinListService()
+    # --- ИСПРАВЛЕНО: Передаем http_session в CoinListService ---
+    coin_list_service = CoinListService(http_session=http_session)
+    # --------------------------------------------------------
     price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
     news_service = NewsService()
     market_data_service = MarketDataService(http_session=http_session)
@@ -118,8 +120,6 @@ async def main():
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
     dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
 
-    # --- ИСПРАВЛЕНО: Изменен порядок подключения роутеров ---
-    # Сначала регистрируем все роутеры с конкретными командами и сценариями
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
@@ -128,11 +128,7 @@ async def main():
     dp.include_router(asic_info_handlers.router) 
     dp.include_router(info_handlers.router)
     dp.include_router(mining_handlers.router)
-    
-    # Роутер с общими обработчиками (поиск монеты по любому тексту)
-    # должен идти в самом конце, чтобы не перехватывать команды из других роутеров.
     dp.include_router(common_handlers.router)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     workflow_data = {
         "user_service": user_service,
