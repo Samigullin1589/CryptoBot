@@ -1,8 +1,8 @@
 # ===============================================================
 # Файл: bot/services/asic_service.py (ФИНАЛЬНАЯ АЛЬФА-ВЕРСИЯ)
 # Описание: Полностью переписана логика обновления. Сервис теперь
-# интеллектуально объединяет данные из нескольких источников для
-# максимальной полноты информации об ASIC-майнерах.
+# использует нечеткое сравнение строк (rapidfuzz) для
+# интеллектуального объединения данных из всех источников.
 # ===============================================================
 import asyncio
 import logging
@@ -14,6 +14,7 @@ import aiohttp
 import redis.asyncio as redis
 from async_lru import alru_cache
 from bs4 import BeautifulSoup
+from rapidfuzz import process, fuzz # <-- Импортируем для "Альфа" сопоставления
 
 from bot.config.settings import settings
 from bot.utils.helpers import make_request, parse_power
@@ -31,8 +32,6 @@ class AsicService:
         """Приводит имя ASIC к единому формату для сравнения."""
         return re.sub(r'[^a-z0-9]', '', name.lower())
 
-    # --- "АЛЬФА" БЛОК ОБНОВЛЕНИЯ БАЗЫ ДАННЫХ ---
-    
     @alru_cache(maxsize=1, ttl=3600 * settings.asic_cache_update_hours)
     async def update_asics_db(self) -> List[AsicMiner]:
         """
@@ -40,11 +39,11 @@ class AsicService:
         параллельно и интеллектуально объединяет их для максимальной полноты.
         """
         logger.info("="*20)
-        logger.info("STARTING SCHEDULED ASIC DB UPDATE (TRUE ALPHA LOGIC)")
+        logger.info("STARTING SCHEDULED ASIC DB UPDATE (INTELLIGENT MERGE LOGIC)")
         logger.info("="*20)
         
-        # 1. Параллельно загружаем данные из всех онлайн-источников
-        logger.info("[Step 1/3] Fetching from all online sources in parallel...")
+        # 1. Параллельно загружаем данные из всех источников
+        logger.info("Fetching from all sources in parallel...")
         results = await asyncio.gather(
             self._fetch_from_whattomine_api(self.session),
             self._fetch_from_asicminervalue(self.session),
@@ -53,68 +52,83 @@ class AsicService:
         
         whattomine_asics = results[0] if isinstance(results[0], list) else []
         asicvalue_asics = results[1] if isinstance(results[1], list) else []
+        fallback_asics = [AsicMiner(**data) for data in settings.fallback_asics]
 
-        # 2. Интеллектуальное слияние и обогащение данных
-        master_asics: Dict[str, AsicMiner] = {}
-
-        # Сначала наполняем данными из более полного источника (парсер)
-        for asic in asicvalue_asics:
-            normalized_name = self._normalize_name(asic.name)
-            master_asics[normalized_name] = asic
-        logger.info(f"Processed {len(master_asics)} ASICs from primary source (AsicMinerValue).")
-
-        # Затем обогащаем данными из второго источника (API)
-        enriched_count = 0
-        newly_added_count = 0
-        for asic in whattomine_asics:
-            normalized_name = self._normalize_name(asic.name)
-            if normalized_name in master_asics:
-                existing_asic = master_asics[normalized_name]
-                updated = False
-                # WhatToMine более точен в доходности и алгоритме
-                if asic.profitability is not None:
-                    existing_asic.profitability = asic.profitability
-                    updated = True
-                if asic.algorithm and asic.algorithm != "Unknown":
-                    existing_asic.algorithm = asic.algorithm
-                    updated = True
-                if updated:
-                    enriched_count += 1
-            else:
-                # Новая запись, которой не было у парсера, добавляем
-                master_asics[normalized_name] = asic
-                newly_added_count += 1
+        # 2. Интеллектуальное слияние с использованием fuzzy matching
+        master_asics = self._intelligent_merge(
+            primary_source=asicvalue_asics,
+            sources_to_merge=[whattomine_asics, fallback_asics]
+        )
         
-        logger.info(f"Enrichment complete. Updated: {enriched_count}, Newly added from WhatToMine: {newly_added_count}.")
-        
+        if not master_asics:
+            logger.error("CRITICAL: All data sources failed to provide any valid data. Cache will not be updated.")
+            return []
+
+        # 3. Фильтрация и сохранение в Redis
         final_asics = list(master_asics.values())
-        
-        # 3. Если онлайн-источники не дали результата, используем локальный резерв
-        if not final_asics:
-            logger.warning("[Step 2/3] FAILED. All online sources returned no valid data.")
-            logger.info("[Step 3/3] Trying final source: Local fallback_asics.json...")
-            if settings.fallback_asics and isinstance(settings.fallback_asics, list):
-                logger.info(f"Loaded {len(settings.fallback_asics)} ASICs from fallback JSON.")
-                final_asics = [AsicMiner(**asic_data) for asic_data in settings.fallback_asics]
-            else:
-                logger.error("Local fallback_asics.json is empty or invalid.")
-                final_asics = []
-
-        if not final_asics:
-            logger.error("CRITICAL: All data sources failed completely. Cache will not be updated.")
-            return []
-
-        # 4. Фильтрация и сохранение в Redis
         valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None]
+        
         if not valid_asics:
-            logger.error("All sources failed to provide any valid ASIC entries. Cache will not be updated.")
+            logger.error("Merging resulted in no valid ASICs. Cache will not be updated.")
             return []
 
-        logger.info(f"Update successful. Total valid ASICs found: {len(valid_asics)}. Caching to Redis.")
+        logger.info(f"Update successful. Total unique and valid ASICs: {len(valid_asics)}. Caching to Redis.")
         await self._cache_asics_to_redis(valid_asics)
         await self.redis.set(self.LAST_UPDATE_KEY, datetime.now(timezone.utc).isoformat())
         return sorted(valid_asics, key=lambda x: x.profitability, reverse=True)
 
+    def _intelligent_merge(self, primary_source: List[AsicMiner], sources_to_merge: List[List[AsicMiner]]) -> Dict[str, AsicMiner]:
+        """
+        Создает "мастер-лист" асиков, обогащая его данными из нескольких источников
+        с использованием нечеткого сравнения имен.
+        """
+        master_asics: Dict[str, AsicMiner] = {}
+        
+        # Сначала наполняем мастер-лист основным источником
+        for asic in primary_source:
+            normalized_name = self._normalize_name(asic.name)
+            master_asics[normalized_name] = asic
+        
+        logger.info(f"Created master list with {len(master_asics)} ASICs from primary source.")
+
+        master_keys = list(master_asics.keys())
+        
+        for source in sources_to_merge:
+            if not source: continue
+            
+            enriched_count = 0
+            newly_added_count = 0
+            
+            for asic_to_merge in source:
+                normalized_to_merge = self._normalize_name(asic_to_merge.name)
+                
+                # Ищем лучшее совпадение в мастер-листе
+                best_match = process.extractOne(normalized_to_merge, master_keys, scorer=fuzz.WRatio, score_cutoff=85)
+
+                if best_match:
+                    match_key = best_match[0]
+                    existing_asic = master_asics[match_key]
+                    
+                    # Обогащаем данные, отдавая приоритет более полным
+                    if not existing_asic.power and asic_to_merge.power:
+                        existing_asic.power = asic_to_merge.power
+                    if not existing_asic.hashrate or existing_asic.hashrate == 'N/A':
+                        existing_asic.hashrate = asic_to_merge.hashrate
+                    if (not existing_asic.algorithm or existing_asic.algorithm == 'Unknown') and asic_to_merge.algorithm:
+                         existing_asic.algorithm = asic_to_merge.algorithm
+                    
+                    enriched_count += 1
+                else:
+                    # Если совпадений не найдено, это новый асик
+                    master_asics[normalized_to_merge] = asic_to_merge
+                    master_keys.append(normalized_to_merge) # Обновляем список ключей для поиска
+                    newly_added_count += 1
+
+            logger.info(f"Merged source. Enriched: {enriched_count}, Newly added: {newly_added_count}.")
+            
+        return master_asics
+
+    # ... (остальные методы остаются без изменений: _cache_asics_to_redis, _fetch_..., get_top_asics и т.д.) ...
     async def _cache_asics_to_redis(self, asics: List[AsicMiner]):
         logger.info(f"Preparing to cache {len(asics)} ASICs to Redis...")
         async with self.redis.pipeline() as pipe:
@@ -145,9 +159,7 @@ class AsicService:
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         try:
             data = await make_request(session, settings.whattomine_asics_url)
-            if not data or "asics" not in data:
-                logger.warning("WTM fetch failed: Invalid data structure or empty response.")
-                return []
+            if not data or "asics" not in data: return []
             asics = []
             for key, asic_data in data["asics"].items():
                 try:
@@ -158,12 +170,7 @@ class AsicService:
                         algorithm=asic_data.get("algorithm"), power=parse_power(str(asic_data.get("power", 0))),
                         hashrate=asic_data.get("hashrate"), efficiency=None
                     ))
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Could not parse WTM ASIC data for key '{key}': {e}. Skipping.")
-                    continue
-            if not asics:
-                logger.warning("WTM parsing resulted in an empty list, though API responded.")
-                return []
+                except (ValueError, TypeError): continue
             logger.info(f"Successfully fetched {len(asics)} ASICs from WhatToMine.")
             return asics
         except Exception as e:
@@ -173,14 +180,10 @@ class AsicService:
     async def _fetch_from_asicminervalue(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         try:
             html_content = await make_request(session, settings.asicminervalue_url, response_type='text')
-            if not html_content:
-                logger.warning("AMV fetch failed: Could not download HTML.")
-                return []
+            if not html_content: return []
             soup = BeautifulSoup(html_content, 'lxml')
             table = soup.find('table', {'id': 'datatable'})
-            if not table or not table.find('tbody'):
-                logger.warning("AMV parsing failed: Could not find data table. Site structure may have changed.")
-                return []
+            if not table or not table.find('tbody'): return []
             asics = []
             for row in table.tbody.find_all('tr'):
                 try:
@@ -195,12 +198,7 @@ class AsicService:
                         power=int(power_text), hashrate=cols[2].text.strip(),
                         efficiency=cols[5].text.strip(), algorithm="Unknown"
                     ))
-                except (AttributeError, ValueError, IndexError, TypeError) as e:
-                    logger.warning(f"Could not parse a row on AMV: {e}. Skipping row.")
-                    continue
-            if not asics:
-                logger.warning("AMV parsing resulted in an empty list, though table was found.")
-                return []
+                except (AttributeError, ValueError, IndexError, TypeError): continue
             logger.info(f"Successfully fetched {len(asics)} ASICs from AsicMinerValue.")
             return asics
         except Exception as e:
@@ -210,8 +208,7 @@ class AsicService:
     async def get_last_update_time(self) -> Optional[datetime]:
         last_update_iso_bytes = await self.redis.get(self.LAST_UPDATE_KEY)
         if last_update_iso_bytes:
-            last_update_iso = last_update_iso_bytes.decode('utf-8')
-            return datetime.fromisoformat(last_update_iso)
+            return datetime.fromisoformat(last_update_iso_bytes.decode('utf-8'))
         return None
 
     @staticmethod
@@ -240,13 +237,9 @@ class AsicService:
             if not data_bytes: continue
             try:
                 data = {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
-                if 'name' not in data:
-                    logger.warning(f"Skipping invalid entry from Redis cache (no 'name' field): {data}")
-                    continue
+                if 'name' not in data: continue
                 name_str = data['name'].strip()
-                if not name_str or name_str.lower() == 'unknown':
-                    logger.warning(f"Skipping invalid/empty name from Redis cache: {data}")
-                    continue
+                if not name_str or name_str.lower() == 'unknown': continue
                 profitability = float(data.get('profitability', '0.0'))
                 power = int(data.get('power', '0'))
                 net_profit = self.calculate_net_profit(profitability, power, electricity_cost)
@@ -256,9 +249,7 @@ class AsicService:
                     hashrate=data.get('hashrate', 'N/A'),
                     efficiency=data.get('efficiency', 'N/A')
                 ))
-            except (ValueError, TypeError, KeyError) as e:
-                logger.warning(f"Could not process cached ASIC data: {data_bytes}. Error: {e}")
-                continue
+            except (ValueError, TypeError, KeyError): continue
         
         sorted_asics = sorted(asics, key=lambda x: x.profitability, reverse=True)
         last_update_time = await self.get_last_update_time()
