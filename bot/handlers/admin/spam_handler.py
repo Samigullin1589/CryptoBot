@@ -1,10 +1,10 @@
 # ===============================================================
 # Файл: bot/handlers/admin/spam_handler.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Добавлена команда !warn. Улучшена команда !ban.
-# Код полностью соответствует "Альфа" стандартам.
+# Описание: Исправлена ошибка NameError (отсутствовал logger).
+# Заменена ссылка на картинку бана на стабильную.
 # ===============================================================
 import re
-import logging
+import logging # <-- Добавлен импорт для логгера
 from datetime import timedelta, datetime
 
 from aiogram import Router, F, Bot
@@ -20,6 +20,10 @@ from bot.utils.helpers import sanitize_html
 
 # Создаем роутер специально для админских команд по борьбе со спамом
 admin_spam_router = Router()
+
+# --- ИСПРАВЛЕНО: Инициализируем логгер ---
+logger = logging.getLogger(__name__)
+# ----------------------------------------
 
 # Ограничиваем все хендлеры в этом роутере:
 # 1. Они будут работать только в группах и супергруппах.
@@ -71,9 +75,9 @@ async def handle_ban_user(message: Message, bot: Bot, user_service: UserService,
         await spam_message.delete()
         await message.delete()
 
-        # --- ИСПРАВЛЕНО: Заменена картинка бана ---
+        # --- ИСПРАВЛЕНО: Заменена картинка бана на надежную ссылку ---
         await message.answer_photo(
-            photo="https://placehold.co/1280x720/ef4444/ffffff?text=BANNED&font=impact",
+            photo="https://i.ytimg.com/vi/zYDRvcUKjSk/maxresdefault.jpg",
             caption=f"✅ Пользователь {sanitize_html(target_user.full_name)} забанен. Сообщение использовано для обучения антиспам-системы."
         )
         await admin_service.track_command_usage("!ban")
@@ -83,7 +87,6 @@ async def handle_ban_user(message: Message, bot: Bot, user_service: UserService,
         await message.reply(f"❌ Не удалось забанить пользователя. Ошибка: {e}")
 
 
-# --- НОВАЯ КОМАНДА: ПРЕДУПРЕЖДЕНИЕ ---
 @admin_spam_router.message(Command("warn", "пред", prefix="!/"))
 async def handle_warn_user(message: Message, user_service: UserService, admin_service: AdminService):
     """
@@ -97,15 +100,13 @@ async def handle_warn_user(message: Message, user_service: UserService, admin_se
     admin_user = message.from_user
     
     try:
-        # Логируем нарушение через сервис
         await user_service.log_violation(
             user_id=target_user.id, 
             chat_id=message.chat.id,
             reason=f"Предупреждение от администратора {admin_user.full_name} (ID: {admin_user.id})",
-            penalty=10 # Снимаем 10 очков за предупреждение
+            penalty=10
         )
         
-        # Получаем обновленный профиль, чтобы показать новый рейтинг
         updated_profile = await user_service.get_or_create_user(target_user.id, message.chat.id)
         
         await message.reply_to_message.delete()
@@ -120,7 +121,6 @@ async def handle_warn_user(message: Message, user_service: UserService, admin_se
     except Exception as e:
         logger.error(f"Failed to warn user {target_user.id}: {e}")
         await message.reply(f"❌ Не удалось вынести предупреждение. Ошибка: {e}")
-# --- КОНЕЦ НОВОЙ КОМАНДЫ ---
 
 
 @admin_spam_router.message(Command("mute", "мут", prefix="!/"))
@@ -149,7 +149,7 @@ async def handle_mute_user(message: Message, bot: Bot, user_service: UserService
         await bot.restrict_chat_member(
             chat_id=message.chat.id,
             user_id=target_user.id,
-            permissions=ChatPermissions(), # Пустые права = полный мут
+            permissions=ChatPermissions(),
             until_date=mute_end_timestamp
         )
         
