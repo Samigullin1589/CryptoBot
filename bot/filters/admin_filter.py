@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/filters/admin_filter.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: "Альфа" версия фильтра администратора. Работает во
-# всех типах чатов и делает одну быструю проверку по ID.
+# Описание: Исправлено имя атрибута на 'global_admins' для
+# соответствия с UserService и устранения AttributeError.
 # ===============================================================
 from typing import Union
 from aiogram.filters import BaseFilter
@@ -25,12 +25,10 @@ class IsAdminFilter(BaseFilter):
         :param user_service: Экземпляр UserService, переданный через DI.
         :return: True, если ID пользователя есть в списке глобальных админов.
         """
-        # 1. Получаем объект пользователя. Он есть и в Message, и в CallbackQuery.
         user = event.from_user
         if not user:
-            return False # Если пользователя нет, это точно не админ
+            return False
 
-        # 2. Проверяем ID пользователя по списку админов, который хранится в user_service.
-        # Этот список загружается из твоих настроек при старте бота.
-        # Это единственная и самая надежная проверка, которая нужна.
-        return user.id in user_service.admin_user_ids
+        # --- ИСПРАВЛЕНО: Обращаемся к правильному атрибуту 'global_admins' ---
+        return user.id in user_service.global_admins
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
