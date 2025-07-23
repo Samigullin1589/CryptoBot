@@ -27,6 +27,10 @@ class AsicService:
         self.session = http_session
         self.LAST_UPDATE_KEY = "asics_last_update_utc"
 
+    def _normalize_name(self, name: str) -> str:
+        """Приводит имя ASIC к единому формату для сравнения."""
+        return re.sub(r'[^a-z0-9]', '', name.lower())
+
     # --- "АЛЬФА" БЛОК ОБНОВЛЕНИЯ БАЗЫ ДАННЫХ ---
     
     @alru_cache(maxsize=1, ttl=3600 * settings.asic_cache_update_hours)
@@ -36,7 +40,7 @@ class AsicService:
         параллельно и интеллектуально объединяет их для максимальной полноты.
         """
         logger.info("="*20)
-        logger.info("STARTING SCHEDULED ASIC DB UPDATE (ALPHA LOGIC)")
+        logger.info("STARTING SCHEDULED ASIC DB UPDATE (TRUE ALPHA LOGIC)")
         logger.info("="*20)
         
         # 1. Параллельно загружаем данные из всех онлайн-источников
@@ -51,10 +55,42 @@ class AsicService:
         asicvalue_asics = results[1] if isinstance(results[1], list) else []
 
         # 2. Интеллектуальное слияние и обогащение данных
-        merged_asics = self._merge_and_enrich_asics(whattomine_asics, asicvalue_asics)
+        master_asics: Dict[str, AsicMiner] = {}
+
+        # Сначала наполняем данными из более полного источника (парсер)
+        for asic in asicvalue_asics:
+            normalized_name = self._normalize_name(asic.name)
+            master_asics[normalized_name] = asic
+        logger.info(f"Processed {len(master_asics)} ASICs from primary source (AsicMinerValue).")
+
+        # Затем обогащаем данными из второго источника (API)
+        enriched_count = 0
+        newly_added_count = 0
+        for asic in whattomine_asics:
+            normalized_name = self._normalize_name(asic.name)
+            if normalized_name in master_asics:
+                # Запись уже есть, обогащаем недостающие поля
+                existing_asic = master_asics[normalized_name]
+                updated = False
+                # WhatToMine более точен в доходности и алгоритме
+                if asic.profitability is not None:
+                    existing_asic.profitability = asic.profitability
+                    updated = True
+                if asic.algorithm and asic.algorithm != "Unknown":
+                    existing_asic.algorithm = asic.algorithm
+                    updated = True
+                if updated:
+                    enriched_count += 1
+            else:
+                # Новая запись, которой не было у парсера, добавляем
+                master_asics[normalized_name] = asic
+                newly_added_count += 1
+        
+        logger.info(f"Enrichment complete. Updated: {enriched_count}, Newly added from WhatToMine: {newly_added_count}.")
+        
+        final_asics = list(master_asics.values())
         
         # 3. Если онлайн-источники не дали результата, используем локальный резерв
-        final_asics = merged_asics
         if not final_asics:
             logger.warning("[Step 2/3] FAILED. All online sources returned no valid data.")
             logger.info("[Step 3/3] Trying final source: Local fallback_asics.json...")
@@ -79,54 +115,6 @@ class AsicService:
         await self._cache_asics_to_redis(valid_asics)
         await self.redis.set(self.LAST_UPDATE_KEY, datetime.now(timezone.utc).isoformat())
         return sorted(valid_asics, key=lambda x: x.profitability, reverse=True)
-
-    def _normalize_name(self, name: str) -> str:
-        """Приводит имя ASIC к единому формату для сравнения."""
-        return re.sub(r'[^a-z0-9]', '', name.lower())
-
-    def _merge_and_enrich_asics(self, primary_list: List[AsicMiner], enrichment_list: List[AsicMiner]) -> List[AsicMiner]:
-        """
-        Объединяет два списка ASIC. Берет первый за основу и дополняет данными из второго.
-        """
-        if not primary_list and not enrichment_list:
-            return []
-        if not enrichment_list:
-            return primary_list
-        if not primary_list:
-            return enrichment_list
-
-        logger.info(f"Starting enrichment process: {len(primary_list)} primary ASICs, {len(enrichment_list)} enrichment ASICs.")
-        
-        # Создаем словарь для быстрого поиска по нормализованному имени
-        enrichment_map = {self._normalize_name(asic.name): asic for asic in enrichment_list}
-        
-        enriched_count = 0
-        final_list = []
-
-        for primary_asic in primary_list:
-            # Проверяем, нужно ли обогащение
-            needs_enrichment = not primary_asic.hashrate or primary_asic.hashrate == 'N/A' or not primary_asic.power
-            
-            if needs_enrichment:
-                normalized_name = self._normalize_name(primary_asic.name)
-                match = enrichment_map.get(normalized_name)
-                
-                if match:
-                    # Обогащаем только недостающие поля
-                    if not primary_asic.hashrate or primary_asic.hashrate == 'N/A':
-                        primary_asic.hashrate = match.hashrate
-                    if not primary_asic.power:
-                        primary_asic.power = match.power
-                    if not primary_asic.efficiency:
-                        primary_asic.efficiency = match.efficiency
-                    
-                    enriched_count += 1
-                    logger.debug(f"Enriched '{primary_asic.name}' with data from secondary source.")
-            
-            final_list.append(primary_asic)
-        
-        logger.info(f"Enrichment complete. {enriched_count} ASICs were updated with additional data.")
-        return final_list
 
     async def _cache_asics_to_redis(self, asics: List[AsicMiner]):
         logger.info(f"Preparing to cache {len(asics)} ASICs to Redis...")
