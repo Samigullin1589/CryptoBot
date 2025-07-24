@@ -1,7 +1,6 @@
 # ===============================================================
-# Файл: bot/config/settings.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Добавлены явные псевдонимы (alias) для всех переменных окружения,
-# чтобы гарантировать их загрузку Pydantic. Обновлены URL и добавлены резервные ASIC.
+# Файл: bot/config/settings.py (АЛЬФА-ВЕРСИЯ)
+# Описание: Добавлены резервные данные и улучшена конфигурация для автономности.
 # ===============================================================
 import json
 from pathlib import Path
@@ -15,10 +14,11 @@ BASE_DIR = Path(__file__).parent.parent.parent
 def load_fallback_asics() -> List[Dict[str, Any]]:
     file_path = BASE_DIR / "data" / "fallback_asics.json"
     if not file_path.exists():
-        # Резервные данные ASIC на случай отсутствия файла
+        # Резервные данные ASIC для автономной работы
         return [
             {"name": "Antminer S19 Pro", "profitability": 10.5, "power": 3250, "hashrate": "110 TH/s", "algorithm": "SHA-256", "efficiency": "29.5 J/TH"},
-            {"name": "WhatsMiner M30S+", "profitability": 12.0, "power": 3470, "hashrate": "112 TH/s", "algorithm": "SHA-256", "efficiency": "31.0 J/TH"}
+            {"name": "WhatsMiner M30S+", "profitability": 12.0, "power": 3470, "hashrate": "112 TH/s", "algorithm": "SHA-256", "efficiency": "31.0 J/TH"},
+            {"name": "Antminer S9", "profitability": 1.5, "power": 1350, "hashrate": "14 TH/s", "algorithm": "SHA-256", "efficiency": "96 J/TH"}
         ]
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
@@ -41,9 +41,7 @@ class AppSettings(BaseSettings):
     coinpaprika_api_base: str = "https://api.coinpaprika.com/v1"
     cryptocompare_api_base: str = "https://min-api.cryptocompare.com"
     minerstat_api_base: str = "https://api.minerstat.com/v2"
-    # Обновленный URL для WhatToMine (исправлен на актуальный формат)
     whattomine_asics_url: str = "https://whattomine.com/coins.json"
-    # Обновленный URL для AsicMinerValue с более точным парсингом таблицы
     asicminervalue_url: str = "https://www.asicminervalue.com/miners"
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
     cbr_daily_json_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
@@ -54,7 +52,7 @@ class AppSettings(BaseSettings):
     # App Settings
     news_rss_feeds: List[str] = ["https://forklog.com/feed", "https://beincrypto.ru/feed/", "https://cointelegraph.com/rss/tag/russia"]
     news_interval_hours: int = 3
-    asic_cache_update_hours: int = 1
+    asic_cache_update_hours: int = 1  # Интервал самообновления ASIC
 
     ticker_aliases: Dict[str, str] = {'бтк': 'BTC', 'биткоин': 'BTC', 'биток': 'BTC', 'eth': 'ETH', 'эфир': 'ETH', 'эфириум': 'ETH'}
     popular_tickers: List[str] = ['BTC', 'ETH', 'SOL', 'TON', 'KAS']
