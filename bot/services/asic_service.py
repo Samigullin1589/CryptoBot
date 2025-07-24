@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/services/asic_service.py (АЛЬФА-ВЕРСИЯ)
-# Описание: Автономное обновление ASIC с резервными данными и улучшенной обработкой ошибок.
-# Эта версия обеспечивает самообновляемое и самодостаточное решение для калькулятора.
+# Описание: Автономное обновление ASIC с приоритетом онлайн-источников и резервными данными как запасом.
+# Эта версия фокусируется на получении данных из WhatToMine и AsicMinerValue, обеспечивая самодостаточность при сбоях.
 # ===============================================================
 import asyncio
 import logging
@@ -36,13 +36,14 @@ class AsicService:
 
     async def update_asics_db(self) -> List[AsicMiner]:
         """
-        Автономное обновление ASIC с использованием всех источников и резервных данных.
+        Автономное обновление ASIC с приоритетом онлайн-источников и резервными данными как запасом.
         Выполняется по расписанию с интервалом из settings.asic_cache_update_hours.
         """
         logger.info("="*20)
         logger.info("STARTING SCHEDULED ASIC DB UPDATE (AUTONOMOUS MODE)")
         logger.info("="*20)
         
+        # Попытка загрузки данных из онлайн-источников
         results = await asyncio.gather(
             self._fetch_from_whattomine_api(self.session),
             self._fetch_from_asicminervalue(self.session),
@@ -51,27 +52,33 @@ class AsicService:
         
         whattomine_asics = results[0] if isinstance(results[0], list) else []
         asicvalue_asics = results[1] if isinstance(results[1], list) else []
-        fallback_asics = [AsicMiner(**data) for data in settings.fallback_asics]
 
         if not whattomine_asics and not asicvalue_asics:
-            logger.warning("External API sources failed. Falling back to reserve ASIC data.")
+            logger.warning("Both WhatToMine and AsicMinerValue failed. Attempting to use fallback data.")
+            fallback_asics = [AsicMiner(**data) for data in settings.fallback_asics]
+            if not fallback_asics:
+                logger.error("No fallback ASIC data available. Update failed.")
+                return []
+            master_asics = {self._normalize_name_aggressively(asic.name): asic for asic in fallback_asics}
         else:
             logger.info(f"Fetched {len(whattomine_asics)} from WhatToMine, {len(asicvalue_asics)} from AsicMinerValue.")
+            master_asics = self._intelligent_merge(
+                sources=[whattomine_asics, asicvalue_asics]
+            )
+            if not master_asics and settings.fallback_asics:
+                logger.warning("No valid data from online sources. Using fallback as a last resort.")
+                master_asics = {self._normalize_name_aggressively(asic.name): asic for asic in [AsicMiner(**data) for data in settings.fallback_asics]}
 
-        master_asics = self._intelligent_merge(
-            sources=[whattomine_asics, asicvalue_asics, fallback_asics]
-        )
-        
         if not master_asics:
-            logger.error("No valid ASIC data after merge. Using only fallback data.")
-            master_asics = {self._normalize_name_aggressively(asic.name): asic for asic in fallback_asics}
+            logger.error("No valid ASIC data from any source. Update failed.")
+            return []
 
         final_asics = list(master_asics.values())
         valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None and asic.hashrate and re.search(r'[\d.]+', asic.hashrate)]
         
         if not valid_asics:
-            logger.error("No valid ASICs with hashrate. Using unfiltered fallback data.")
-            valid_asics = [asic for asic in fallback_asics if asic.hashrate and re.search(r'[\d.]+', asic.hashrate)]
+            logger.error("No valid ASICs with hashrate found. Update failed due to data quality.")
+            return []
 
         logger.info(f"Update complete. Total valid ASICs: {len(valid_asics)}. Caching to Redis.")
         await self._cache_asics_to_redis(valid_asics)
@@ -306,6 +313,6 @@ class AsicService:
             logger.info(f"Key {key.decode('utf-8')}: {data}")
 
 # Обновления для альфа-решения:
-# - Удален @alru_cache из update_asics_db, так как самообновление обеспечивается планировщиком.
-# - Логика остается полной и самодостаточной, с использованием резервных данных при сбоях.
-# - Гарантируется доступность данных для калькулятора даже при отсутствии внешних источников.
+# - Приоритет отдан онлайн-источникам (WhatToMine и AsicMinerValue).
+# - Резервные данные используются только при полной недоступности онлайн-источников.
+# - Уведомления и логи помогают диагностировать проблемы с доступом к данным.
