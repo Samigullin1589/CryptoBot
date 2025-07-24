@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/services/mining_service.py (Обновленный)
-# Описание: Метод calculate теперь снова принимает и учитывает
-# комиссию пула (pool_commission).
+# Файл: bot/services/mining_service.py (АЛЬФА-ВЕРСИЯ)
+# Описание: Метод calculate оптимизирован для надежного расчета
+# доходности с учетом комиссии пула и валидных входных данных.
 # ===============================================================
 import logging
 from bot.services.market_data_service import MarketDataService
@@ -17,7 +17,7 @@ class MiningService:
         hashrate_ths: float, 
         power_consumption_watts: int, 
         electricity_cost: float,
-        pool_commission: float, # <-- ВОЗВРАЩЕННЫЙ ПАРАМЕТР
+        pool_commission: float,
         coin_symbol: str = "BTC"
     ) -> str:
         """
@@ -28,30 +28,31 @@ class MiningService:
             f"coin: {coin_symbol}, electricity_cost: ${electricity_cost}/kWh, pool_fee: {pool_commission}%"
         )
 
+        if hashrate_ths <= 0 or power_consumption_watts <= 0 or electricity_cost < 0 or pool_commission < 0:
+            return "❌ Неверные входные данные для расчета. Проверьте параметры."
+
         network_data = await self.market_data_service.get_coin_network_data(coin_symbol)
         if not network_data:
             return "❌ Не удалось получить данные о сети для расчета. Попробуйте позже."
 
-        coin_price_usd = network_data["price"]
-        network_hashrate_ths = network_data["network_hashrate"] / 1_000_000_000_000
-        block_reward_coins = network_data["block_reward"]
+        coin_price_usd = network_data.get("price", 0.0)
+        network_hashrate_ths = network_data.get("network_hashrate", 0.0) / 1_000_000_000_000
+        block_reward_coins = network_data.get("block_reward", 0.0)
         
         if network_hashrate_ths == 0 or coin_price_usd == 0:
             logger.error(f"Received zero values from API for {coin_symbol}. Hashrate: {network_hashrate_ths}, Price: {coin_price_usd}")
             return "❌ Получены неверные данные от API (цена или хешрейт равны нулю). Расчет невозможен."
 
         user_share = hashrate_ths / network_hashrate_ths
-        blocks_per_day = (60 / 10) * 24
+        blocks_per_day = (60 / 10) * 24  # Предполагаем среднее время блока 10 минут для BTC
         coins_per_day = user_share * block_reward_coins * blocks_per_day
         gross_income_usd_day = coins_per_day * coin_price_usd
         
         power_consumption_kwh_day = (power_consumption_watts * 24) / 1000
         electricity_cost_day = power_consumption_kwh_day * electricity_cost
         
-        # --- ВОЗВРАЩЕН РАСЧЕТ: Учитываем комиссию пула ---
         pool_fee_usd_day = gross_income_usd_day * (pool_commission / 100)
         net_profit_usd_day = gross_income_usd_day - electricity_cost_day - pool_fee_usd_day
-        # --- КОНЕЦ РАСЧЕТА ---
         
         net_profit_usd_month = net_profit_usd_day * 30
 

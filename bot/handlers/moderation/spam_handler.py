@@ -1,7 +1,7 @@
 import logging
 from aiogram import Router, Bot
 from aiogram.types import Message
-from bot.filters.spam_filter import SpamFilter
+from bot.filters.spam_filter_alpha import SpamFilter
 from bot.config.settings import settings
 from bot.utils.helpers import sanitize_html
 

@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/config/settings.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Добавлены явные псевдонимы (alias) для всех
-# переменных окружения, чтобы гарантировать их загрузку Pydantic.
+# Описание: Добавлены явные псевдонимы (alias) для всех переменных окружения,
+# чтобы гарантировать их загрузку Pydantic. Обновлены URL и добавлены резервные ASIC.
 # ===============================================================
 import json
 from pathlib import Path
@@ -15,13 +15,16 @@ BASE_DIR = Path(__file__).parent.parent.parent
 def load_fallback_asics() -> List[Dict[str, Any]]:
     file_path = BASE_DIR / "data" / "fallback_asics.json"
     if not file_path.exists():
-        return []
+        # Резервные данные ASIC на случай отсутствия файла
+        return [
+            {"name": "Antminer S19 Pro", "profitability": 10.5, "power": 3250, "hashrate": "110 TH/s", "algorithm": "SHA-256", "efficiency": "29.5 J/TH"},
+            {"name": "WhatsMiner M30S+", "profitability": 12.0, "power": 3470, "hashrate": "112 TH/s", "algorithm": "SHA-256", "efficiency": "31.0 J/TH"}
+        ]
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 class AppSettings(BaseSettings):
     # --- Основные секреты и ID ---
-    # Используем Field(alias=...) для явного указания имени переменной в .env или окружении
     bot_token: str = Field(alias='BOT_TOKEN')
     redis_url: str = Field(alias='REDIS_URL')
     openai_api_key: str = Field(alias='OPENAI_API_KEY', default="")
@@ -31,17 +34,17 @@ class AppSettings(BaseSettings):
     news_chat_id: int = Field(alias='NEWS_CHAT_ID')
     cmc_api_key: str = Field(alias='CMC_API_KEY', default="")
     
-    # --- ИСПРАВЛЕНИЕ: Явно указываем псевдоним для ключа ---
     cryptocompare_api_key: str = Field(alias='CRYPTOCOMPARE_API_KEY', default="")
-    # ----------------------------------------------------
 
     # API Endpoints
     coingecko_api_base: str = "https://api.coingecko.com/api/v3"
     coinpaprika_api_base: str = "https://api.coinpaprika.com/v1"
     cryptocompare_api_base: str = "https://min-api.cryptocompare.com"
     minerstat_api_base: str = "https://api.minerstat.com/v2"
-    whattomine_asics_url: str = "https://whattomine.com/asics.json"
-    asicminervalue_url: str = "https://www.asicminervalue.com/"
+    # Обновленный URL для WhatToMine (исправлен на актуальный формат)
+    whattomine_asics_url: str = "https://whattomine.com/coins.json"
+    # Обновленный URL для AsicMinerValue с более точным парсингом таблицы
+    asicminervalue_url: str = "https://www.asicminervalue.com/miners"
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
     cbr_daily_json_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     btc_halving_url: str = "https://mempool.space/api/blocks/tip/height"
@@ -49,7 +52,7 @@ class AppSettings(BaseSettings):
     btc_mempool_url: str = "https://mempool.space/api/mempool"
 
     # App Settings
-    news_rss_feeds: List[str] = [ "https://forklog.com/feed", "https://beincrypto.ru/feed/", "https://cointelegraph.com/rss/tag/russia" ]
+    news_rss_feeds: List[str] = ["https://forklog.com/feed", "https://beincrypto.ru/feed/", "https://cointelegraph.com/rss/tag/russia"]
     news_interval_hours: int = 3
     asic_cache_update_hours: int = 1
 

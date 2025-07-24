@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/handlers/mining_handlers.py (ФИНАЛЬНАЯ АЛЬФА-ВЕРСИЯ)
-# Описание: Полностью переписан калькулятор. Добавлен выбор
-# валюты, ввод комиссии пула и корректная обработка асиков без данных.
+# Описание: Полностью переписан калькулятор. Добавлен выбор валюты,
+# ввод комиссии пула и корректная обработка асиков без данных. Улучшена фильтрация.
 # ===============================================================
 import time
 import logging
@@ -321,7 +321,6 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> Inline
     for i, asic in enumerate(asics[start:end]):
         hash_rate_str = asic.hashrate
         is_valid = hash_rate_str and hash_rate_str.lower() != 'n/a' and re.search(r'[\d.]+', hash_rate_str)
-        
         if is_valid:
             builder.button(text=f"✅ {asic.name}", callback_data=f"prof_calc_select_{i + start}")
         else:
@@ -370,14 +369,15 @@ async def process_currency_selection(call: CallbackQuery, state: FSMContext):
 async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService, market_data_service: MarketDataService):
     try:
         cost = float(message.text.replace(',', '.').strip())
-        if cost < 0: raise ValueError("Стоимость не может быть отрицательной.")
+        if cost < 0:
+            raise ValueError("Стоимость не может быть отрицательной.")
         user_data = await state.get_data()
         currency = user_data.get("currency")
         cost_usd = cost
         if currency == "rub":
             await message.answer("⏳ Получаю актуальный курс USD/RUB...")
             rate_usd_rub = await market_data_service.get_usd_rub_rate()
-            if not rate_usd_rub:
+            if not rate_usd_rub or rate_usd_rub <= 0:
                 await message.answer("❌ Не удалось получить курс валют. Попробуйте позже.")
                 await state.clear()
                 return
@@ -386,9 +386,13 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
         await state.update_data(electricity_cost_usd=cost_usd)
         await message.answer("⏳ Загружаю список актуального оборудования...")
         all_asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
-        sorted_asics = sorted(all_asics, key=lambda x: x.name)
-        if not sorted_asics:
+        if not all_asics:
             await message.answer("❌ Не удалось загрузить список оборудования. Попробуйте позже.")
+            await state.clear()
+            return
+        sorted_asics = [asic for asic in all_asics if asic.hashrate and re.search(r'[\d.]+', asic.hashrate)]
+        if not sorted_asics:
+            await message.answer("❌ Нет доступных ASIC с валидным хешрейтом. Обновите данные позже.")
             await state.clear()
             return
         await state.update_data(asic_list=[asic.model_dump() for asic in sorted_asics])
@@ -421,7 +425,8 @@ async def process_asic_selection(call: CallbackQuery, state: FSMContext):
         keyboard = get_asic_selection_keyboard(asic_list, page=page)
         try:
             await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard.as_markup())
-        except TelegramBadRequest: await call.answer()
+        except TelegramBadRequest:
+            await call.answer()
         return
     if action == "select":
         asic_index = int(call.data.split("_")[3])
@@ -444,25 +449,43 @@ async def process_pool_commission(message: Message, state: FSMContext, mining_se
         await message.answer("⏳ Считаю...")
         user_data = await state.get_data()
         selected_asic_data = user_data.get("selected_asic")
+        if not selected_asic_data:
+            await message.answer("❌ Данные об ASIC не найдены. Начните расчет заново.")
+            await state.clear()
+            return
         selected_asic = AsicMiner(**selected_asic_data)
         electricity_cost_usd = user_data.get("electricity_cost_usd")
+        if not electricity_cost_usd or electricity_cost_usd < 0:
+            await message.answer("❌ Ошибка в стоимости электроэнергии. Начните расчет заново.")
+            await state.clear()
+            return
 
         hash_rate_str = selected_asic.hashrate.lower()
+        if not hash_rate_str or hash_rate_str == 'n/a' or not re.search(r'[\d.]+', hash_rate_str):
+            await message.answer("❌ Для этого ASIC нет данных о хешрейте. Выберите другой.")
+            await state.clear()
+            return
         hash_value_match = re.search(r'[\d.]+', hash_rate_str)
         hash_value = float(hash_value_match.group(0))
-        if 'ph/s' in hash_rate_str: hash_value *= 1000
-        elif 'gh/s' in hash_rate_str: hash_value /= 1000
-        elif 'mh/s' in hash_rate_str: hash_value /= 1_000_000
+        if 'ph/s' in hash_rate_str:
+            hash_value *= 1000
+        elif 'gh/s' in hash_rate_str:
+            hash_value /= 1000
+        elif 'mh/s' in hash_rate_str:
+            hash_value /= 1_000_000
+        elif 'th/s' not in hash_rate_str:
+            logger.warning(f"Unexpected hashrate unit in {hash_rate_str}, assuming TH/s")
+            hash_value = hash_value  # Предполагаем TH/s по умолчанию
 
         result_text = await mining_service.calculate(
-            hashrate_ths=hash_value, 
+            hashrate_ths=hash_value,
             power_consumption_watts=selected_asic.power,
             electricity_cost=electricity_cost_usd,
             pool_commission=commission_percent
         )
         await message.answer(result_text, disable_web_page_preview=True)
-
-    except (ValueError, TypeError):
+    except (ValueError, TypeError) as e:
+        logger.error(f"Error in final calculation: {e}")
         await message.answer("❌ Неверный формат. Введите число (например, <code>1.5</code>).")
     except Exception as e:
         logger.error(f"Error in final calculation: {e}")

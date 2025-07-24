@@ -1,0 +1,32 @@
+[
+  {
+    "question": "Как называется самая первая криптовалюта?",
+    "options": [
+      "Ethereum",
+      "Bitcoin",
+      "Litecoin",
+      "Ripple"
+    ],
+    "correct_option_index": 1
+  },
+  {
+    "question": "Что такое 'блокчейн'?",
+    "options": [
+      "Тип кошелька",
+      "Криптовалютная биржа",
+      "Распределенный реестр данных",
+      "Имя создателя Bitcoin"
+    ],
+    "correct_option_index": 2
+  },
+  {
+    "question": "Кто является создателем Ethereum?",
+    "options": [
+      "Сатоши Накамото",
+      "Чарли Ли",
+      "Виталик Бутерин",
+      "Илон Маск"
+    ],
+    "correct_option_index": 2
+  }
+]

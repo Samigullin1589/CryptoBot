@@ -1,3 +1,8 @@
+# ===============================================================
+# Файл: bot/services/asic_service.py (АЛЬФА-ВЕРСИЯ)
+# Описание: Улучшена фильтрация ASIC с валидным hashrate, добавлено
+# надежное обновление данных и логирование для диагностики.
+# ===============================================================
 import asyncio
 import logging
 import re
@@ -34,8 +39,8 @@ class AsicService:
     @alru_cache(maxsize=1, ttl=3600 * settings.asic_cache_update_hours)
     async def update_asics_db(self) -> List[AsicMiner]:
         """
-        Главный "Альфа" метод обновления. Загружает данные из всех источников
-        параллельно и интеллектуально объединяет их для максимальной полноты.
+        Главный метод обновления. Загружает данные из всех источников параллельно
+        и интеллектуально объединяет их для максимальной полноты.
         """
         logger.info("="*20)
         logger.info("STARTING SCHEDULED ASIC DB UPDATE (INTELLIGENT MERGE LOGIC)")
@@ -71,10 +76,10 @@ class AsicService:
             return []
 
         final_asics = list(master_asics.values())
-        valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None]
+        valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None and asic.hashrate and re.search(r'[\d.]+', asic.hashrate)]
         
         if not valid_asics:
-            logger.error("Merging resulted in no valid ASICs. Cache will not be updated.")
+            logger.error("Merging resulted in no valid ASICs with hashrate. Cache will not be updated.")
             return []
 
         logger.info(f"Update successful. Total unique and valid ASICs: {len(valid_asics)}. Caching to Redis.")
@@ -106,10 +111,9 @@ class AsicService:
                     match_key = best_match[0]
                     existing_asic = master_asics[match_key]
                     
-                    # Обогащаем данные, отдавая приоритет более полным
                     if (not existing_asic.power or existing_asic.power == 0) and asic_to_merge.power:
                         existing_asic.power = asic_to_merge.power
-                    if (not existing_asic.hashrate or existing_asic.hashrate.lower() == 'n/a') and asic_to_merge.hashrate:
+                    if (not existing_asic.hashrate or existing_asic.hashrate.lower() == 'n/a' or not re.search(r'[\d.]+', existing_asic.hashrate)) and asic_to_merge.hashrate and re.search(r'[\d.]+', asic_to_merge.hashrate):
                         existing_asic.hashrate = asic_to_merge.hashrate
                     if (not existing_asic.algorithm or existing_asic.algorithm.lower() == 'unknown') and asic_to_merge.algorithm:
                         existing_asic.algorithm = asic_to_merge.algorithm
@@ -153,19 +157,22 @@ class AsicService:
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         try:
             data = await make_request(session, settings.whattomine_asics_url)
-            if not data or "asics" not in data:
+            if not data or "coins" not in data:  # Обновлено для coins.json
                 logger.warning("No ASIC data returned from WhatToMine API.")
                 return []
             asics = []
-            for key, asic_data in data["asics"].items():
+            for coin in data["coins"]:
                 try:
-                    if "revenue" not in asic_data:
+                    if "revenue" not in coin:
                         continue
-                    profitability_str = asic_data.get("revenue", "0").replace("$", "").strip()
+                    profitability_str = coin.get("revenue", "0").replace("$", "").strip()
                     asics.append(AsicMiner(
-                        name=key, profitability=float(profitability_str),
-                        algorithm=asic_data.get("algorithm"), power=parse_power(str(asic_data.get("power", 0))),
-                        hashrate=asic_data.get("hashrate"), efficiency=None
+                        name=coin.get("tag", "Unknown ASIC"),
+                        profitability=float(profitability_str),
+                        algorithm=coin.get("algorithm"),
+                        power=parse_power(str(coin.get("power", 0))),
+                        hashrate=coin.get("hashrate", "N/A"),
+                        efficiency=None
                     ))
                 except (ValueError, TypeError):
                     continue
@@ -182,7 +189,7 @@ class AsicService:
                 logger.warning("No HTML content returned from AsicMinerValue.")
                 return []
             soup = BeautifulSoup(html_content, 'lxml')
-            table = soup.find('table', {'id': 'datatable'})
+            table = soup.find('table', {'id': 'miners'})
             if not table or not table.find('tbody'):
                 logger.warning("No valid table found in AsicMinerValue HTML.")
                 return []
@@ -195,12 +202,16 @@ class AsicService:
                     name = cols[1].find('a').text.strip()
                     profitability_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
                     power_text = cols[4].text.strip().replace('W', '').strip()
-                    if not name or not profitability_text or not power_text:
+                    hashrate_text = cols[2].text.strip()
+                    if not name or not profitability_text or not power_text or not hashrate_text:
                         continue
                     asics.append(AsicMiner(
-                        name=name, profitability=float(profitability_text),
-                        power=int(power_text), hashrate=cols[2].text.strip(),
-                        efficiency=cols[5].text.strip(), algorithm="Unknown"
+                        name=name,
+                        profitability=float(profitability_text),
+                        power=int(power_text),
+                        hashrate=hashrate_text,
+                        efficiency=cols[5].text.strip(),
+                        algorithm="Unknown"
                     ))
                 except (AttributeError, ValueError, IndexError, TypeError):
                     continue
@@ -245,18 +256,23 @@ class AsicService:
                 continue
             try:
                 data = {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
-                if 'name' not in data:
+                if 'name' not in data or 'hashrate' not in data:
                     continue
                 name_str = data['name'].strip()
                 if not name_str or name_str.lower() == 'unknown':
                     continue
                 profitability = float(data.get('profitability', '0.0'))
                 power = int(data.get('power', '0'))
+                hashrate = data.get('hashrate', 'N/A')
+                if not hashrate or hashrate.lower() == 'N/A' or not re.search(r'[\d.]+', hashrate):
+                    continue
                 net_profit = self.calculate_net_profit(profitability, power, electricity_cost)
                 asics.append(AsicMiner(
-                    name=name_str, profitability=net_profit, power=power,
+                    name=name_str,
+                    profitability=net_profit,
+                    power=power,
                     algorithm=data.get('algorithm', 'Unknown'),
-                    hashrate=data.get('hashrate', 'N/A'),
+                    hashrate=hashrate,
                     efficiency=data.get('efficiency', 'N/A')
                 ))
             except (ValueError, TypeError, KeyError):
@@ -264,7 +280,6 @@ class AsicService:
         
         sorted_asics = sorted(asics, key=lambda x: x.profitability, reverse=True)
         last_update_time = await self.get_last_update_time()
-        
         return sorted_asics[:count], last_update_time
 
     async def find_asic_by_query(self, model_query: str) -> Optional[dict]:
