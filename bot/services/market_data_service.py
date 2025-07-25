@@ -2,7 +2,7 @@
 # Файл: bot/services/market_data_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
 # Описание: Исправлена ошибка с регистром при обращении к
 # 'settings.cryptocompare_api_key'. Исправлен доступ к hashrate
-# и обработка данных mempool.space.
+# с улучшенной диагностикой и обработкой mempool.space.
 # ===============================================================
 
 import asyncio
@@ -69,10 +69,14 @@ class MarketDataService:
             net_info = network_data["Data"]
             logger.info(f"Available keys in net_info: {list(net_info.keys())}")  # Диагностика ключей
             price = float(price_data["USD"])
-            # Проверяем оба варианта: "hashrate" и "hash_rate"
-            network_hashrate = float(net_info.get("hashrate", net_info.get("hash_rate", 0))) / 1e12  # Конверсия из H/s в TH/s
+            # Проверяем hashrate с явным приведением типа
+            hashrate_value = net_info.get("hashrate")
+            if hashrate_value is None or hashrate_value == 0:
+                hashrate_value = net_info.get("hash_rate", 0)
+            network_hashrate = float(hashrate_value) / 1e12 if hashrate_value else 0  # Конверсия из H/s в TH/s
 
-            logger.info(f"Converted hashrate for {symbol}: {network_hashrate} TH/s from {net_info.get('hashrate', net_info.get('hash_rate', 0))} H/s")
+            logger.info(f"Raw hashrate value for {symbol}: {hashrate_value} (type: {type(hashrate_value)})")
+            logger.info(f"Converted hashrate for {symbol}: {network_hashrate} TH/s")
 
             # Резервный источник для hashrate, если равно 0
             if network_hashrate == 0 and symbol == "BTC":
