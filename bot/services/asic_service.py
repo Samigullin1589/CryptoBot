@@ -2,7 +2,9 @@
 # Файл: bot/services/asic_service.py (АЛЬФА-ВЕРСИЯ)
 # Описание: Автономное обновление ASIC с приоритетом онлайн-источников и резервными данными как запасом.
 # Эта версия фокусируется на получении данных из WhatToMine и AsicMinerValue, обеспечивая самодостаточность при сбоях.
+# Обновлено: Добавлена диагностика API-ответов для устранения ошибки "неверные данные".
 # ===============================================================
+
 import asyncio
 import logging
 import re
@@ -53,6 +55,9 @@ class AsicService:
         whattomine_asics = results[0] if isinstance(results[0], list) else []
         asicvalue_asics = results[1] if isinstance(results[1], list) else []
 
+        logger.info(f"Whattomine ASICs fetched: {len(whattomine_asics)} - Sample: {whattomine_asics[:1] if whattomine_asics else 'None'}")
+        logger.info(f"AsicMinerValue ASICs fetched: {len(asicvalue_asics)} - Sample: {asicvalue_asics[:1] if asicvalue_asics else 'None'}")
+
         if not whattomine_asics and not asicvalue_asics:
             logger.warning("Both WhatToMine and AsicMinerValue failed. Attempting to use fallback data.")
             fallback_asics = [AsicMiner(**data) for data in settings.fallback_asics]
@@ -75,9 +80,10 @@ class AsicService:
 
         final_asics = list(master_asics.values())
         valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None and asic.hashrate and re.search(r'[\d.]+', asic.hashrate)]
+        logger.info(f"Valid ASICs after filter: {len(valid_asics)} - Sample: {valid_asics[:1] if valid_asics else 'None'}")
         
         if not valid_asics:
-            logger.error("No valid ASICs with hashrate found. Update failed due to data quality.")
+            logger.error(f"No valid ASICs with hashrate found. Final ASICs: {[asic.__dict__ for asic in final_asics]}")
             return []
 
         logger.info(f"Update complete. Total valid ASICs: {len(valid_asics)}. Caching to Redis.")
@@ -152,6 +158,7 @@ class AsicService:
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         try:
             data = await make_request(session, settings.whattomine_asics_url)
+            logger.info(f"Raw WhatToMine data: {data}")
             if not data or "coins" not in data:
                 logger.warning("No ASIC data from WhatToMine. Skipping.")
                 return []
@@ -159,8 +166,12 @@ class AsicService:
             for coin in data["coins"]:
                 try:
                     if "revenue" not in coin or not coin.get("hashrate"):
+                        logger.debug(f"Skipping coin {coin.get('tag')} due to missing revenue or hashrate.")
                         continue
                     profitability_str = coin.get("revenue", "0").replace("$", "").strip()
+                    if not profitability_str or float(profitability_str) == 0:
+                        logger.debug(f"Skipping coin {coin.get('tag')} due to zero profitability.")
+                        continue
                     asics.append(AsicMiner(
                         name=coin.get("tag", "Unknown ASIC"),
                         profitability=float(profitability_str),
@@ -169,7 +180,8 @@ class AsicService:
                         hashrate=coin.get("hashrate", "N/A"),
                         efficiency=None
                     ))
-                except (ValueError, TypeError, KeyError):
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(f"Error parsing WhatToMine coin: {e}. Skipping.")
                     continue
             logger.info(f"Fetched {len(asics)} ASICs from WhatToMine.")
             return asics
@@ -180,6 +192,7 @@ class AsicService:
     async def _fetch_from_asicminervalue(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
         try:
             html_content = await make_request(session, settings.asicminervalue_url, response_type='text')
+            logger.info(f"Raw AsicMinerValue data: {html_content[:500]}...")  # Логируем первые 500 символов
             if not html_content:
                 logger.warning("No HTML from AsicMinerValue. Skipping.")
                 return []
@@ -193,12 +206,17 @@ class AsicService:
                 try:
                     cols = row.find_all('td')
                     if len(cols) < 6:
+                        logger.debug("Skipping row with insufficient columns.")
                         continue
                     name = cols[1].find('a').text.strip()
                     profitability_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
                     power_text = cols[4].text.strip().replace('W', '').strip()
                     hashrate_text = cols[2].text.strip()
                     if not name or not profitability_text or not power_text or not hashrate_text:
+                        logger.debug(f"Skipping row with missing data: {name}")
+                        continue
+                    if float(profitability_text) == 0 or not re.search(r'[\d.]+', hashrate_text):
+                        logger.debug(f"Skipping {name} due to zero profitability or invalid hashrate.")
                         continue
                     asics.append(AsicMiner(
                         name=name,
@@ -208,7 +226,8 @@ class AsicService:
                         efficiency=cols[5].text.strip(),
                         algorithm="Unknown"
                     ))
-                except (AttributeError, ValueError, IndexError, TypeError):
+                except (AttributeError, ValueError, IndexError, TypeError) as e:
+                    logger.warning(f"Error parsing AsicMinerValue row: {e}. Skipping.")
                     continue
             logger.info(f"Fetched {len(asics)} ASICs from AsicMinerValue.")
             return asics
@@ -316,3 +335,4 @@ class AsicService:
 # - Приоритет отдан онлайн-источникам (WhatToMine и AsicMinerValue).
 # - Резервные данные используются только при полной недоступности онлайн-источников.
 # - Уведомления и логи помогают диагностировать проблемы с доступом к данным.
+# - Добавлена диагностика сырых данных API для устранения ошибки "неверные данные".
