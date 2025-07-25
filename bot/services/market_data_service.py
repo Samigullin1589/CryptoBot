@@ -1,8 +1,10 @@
 # ===============================================================
 # Файл: bot/services/market_data_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
 # Описание: Исправлена ошибка с регистром при обращении к
-# 'settings.cryptocompare_api_key'.
+# 'settings.cryptocompare_api_key'. Добавлена диагностика API и
+# резервный источник для hashrate при нулевых значениях.
 # ===============================================================
+
 import asyncio
 import logging
 from typing import Optional, Dict
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 BLOCKCHAIN_INFO_BLOCK_COUNT_URL = "https://blockchain.info/q/getblockcount"
 BLOCKCHAIR_BTC_STATS_URL = "https://api.blockchair.com/bitcoin/stats"
 CRYPTOCOMPARE_BASE_URL = "https://min-api.cryptocompare.com/data"
+MEMPOOL_SPACE_HASH_RATE_URL = "https://mempool.space/api/v1/mining/hashrate"
 
 class MarketDataService:
     def __init__(self, http_session: aiohttp.ClientSession):
@@ -31,7 +34,7 @@ class MarketDataService:
     async def get_coin_network_data(self, coin_symbol: str) -> Optional[Dict]:
         """
         Получает ключевые данные о сети монеты (хешрейт, награда за блок) и ее цену.
-        Использует CryptoCompare API.
+        Использует CryptoCompare API с резервным источником для hashrate.
         """
         symbol = coin_symbol.upper()
         logger.info(f"Fetching network data and price for {symbol} from CryptoCompare...")
@@ -52,6 +55,9 @@ class MarketDataService:
             network_data = network_task.result()
             price_data = price_task.result()
 
+            logger.info(f"Raw CryptoCompare network data for {symbol}: {network_data}")
+            logger.info(f"Raw CryptoCompare price data for {symbol}: {price_data}")
+
             if not network_data or "Data" not in network_data or network_data.get("Response") == "Error":
                 logger.error(f"Invalid network data response for {symbol}: {network_data}")
                 return None
@@ -61,11 +67,27 @@ class MarketDataService:
                 return None
 
             net_info = network_data["Data"]
-            
+            price = float(price_data["USD"])
+            network_hashrate = float(net_info.get("hash_rate", 0))  # Поле может называться "hash_rate"
+
+            # Резервный источник для hashrate, если равно 0
+            if network_hashrate == 0 and symbol == "BTC":
+                logger.warning("Zero hashrate from CryptoCompare. Fetching from mempool.space...")
+                mempool_data = await make_request(self.http_session, MEMPOOL_SPACE_HASH_RATE_URL)
+                logger.info(f"Raw mempool.space data: {mempool_data}")
+                if mempool_data and "avgHashrate" in mempool_data:
+                    network_hashrate = float(mempool_data["avgHashrate"]) / 1e12  # Конверсия в TH/s
+
+            block_reward = float(net_info.get("block_reward", 0))
+
+            if network_hashrate == 0:
+                logger.error(f"Zero hashrate for {symbol} after all sources. Calculation may fail.")
+                return None
+
             return {
-                "price": float(price_data["USD"]),
-                "network_hashrate": float(net_info.get("hash_rate", 0)),
-                "block_reward": float(net_info.get("block_reward", 0))
+                "price": price,
+                "network_hashrate": network_hashrate,
+                "block_reward": block_reward
             }
 
         except Exception as e:
