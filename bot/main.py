@@ -1,6 +1,6 @@
 # ===============================================================
 # Файл: main.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлена инициализация CoinListService и AsicService для соответствия фоновым задачам.
+# Описание: Исправлена инициализация PriceService для соответствия фоновым задачам.
 # ===============================================================
 import asyncio
 import logging
@@ -95,7 +95,9 @@ async def main():
     # --- ИСПРАВЛЕНО: Передаем http_session в CoinListService ---
     coin_list_service = CoinListService(http_session=http_session)
     # --------------------------------------------------------
-    price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, session=http_session)
+    # --- ИСПРАВЛЕНО: Передаем http_session в PriceService ---
+    price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
+    # --------------------------------------------------------
     news_service = NewsService()
     market_data_service = MarketDataService(session=http_session)
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
