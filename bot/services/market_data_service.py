@@ -1,3 +1,8 @@
+# ===============================================================
+# Файл: bot/services/market_data_service.py
+# Описание: Сервис для получения данных о рынке и сети Bitcoin, включая курс USD/RUB.
+# ===============================================================
+
 import asyncio
 import logging
 from typing import Optional, Dict
@@ -17,7 +22,6 @@ MAX_NETWORK_HASHRATE_THS = 10_000_000_000
 CURRENT_BLOCK_SUBSIDY_BTC = 3.125
 # Максимальная ожидаемая награда за блок (субсидия + комиссии)
 MAX_BLOCK_REWARD_BTC = 10.0
-
 
 class MarketDataService:
     """
@@ -151,6 +155,42 @@ class MarketDataService:
             log.error(f"Не удалось получить награду за блок: {e}")
             return None
 
+    @alru_cache(ttl=600)
+    async def get_usd_rub_rate(self) -> Optional[float]:
+        """
+        Получает текущий курс USD/RUB.
+        Использует CoinGecko как основной источник и mempool.space как резервный.
+        Результат кэшируется на 10 минут.
+        """
+        # Попытка 1: Основной источник - CoinGecko
+        try:
+            url = "https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=rub"
+            data = await self._fetch_json(url)
+            rate = float(data.get("usd", {}).get("rub", 0))
+            if rate <= 0:
+                raise ValueError("Неверный курс от CoinGecko")
+            log.info(f"Курс USD/RUB (CoinGecko): {rate:.2f}")
+            return rate
+        except Exception as e:
+            log.warning(
+                f"Не удалось получить курс от CoinGecko: {e}. "
+                f"Переключение на резервный источник."
+            )
+
+        # Попытка 2: Резервный источник - mempool.space (если доступно)
+        try:
+            url = "https://mempool.space/api/v1/prices"  # Проверка наличия курса, если есть
+            data = await self._fetch_json(url)
+            # Предполагаем, что mempool.space может дать косвенные данные или нет
+            rate = float(data.get("USD", {}).get("RUB", 0)) if "USD" in data else 0
+            if rate <= 0:
+                raise ValueError("Неверный курс от mempool.space")
+            log.info(f"Курс USD/RUB (mempool.space): {rate:.2f}")
+            return rate
+        except Exception as e_fallback:
+            log.error(f"Все источники курса недоступны. Ошибка резервного источника: {e_fallback}")
+            return None
+
 # Пример использования (для демонстрации и тестирования)
 async def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -159,10 +199,11 @@ async def main():
         service = MarketDataService(session)
         
         # Параллельное выполнение всех запросов
-        price, hashrate, reward = await asyncio.gather(
+        price, hashrate, reward, rate = await asyncio.gather(
             service.get_btc_price_usd(),
             service.get_network_hashrate_ths(),
-            service.get_block_reward_btc()
+            service.get_block_reward_btc(),
+            service.get_usd_rub_rate()
         )
         
         print("-" * 50)
@@ -180,6 +221,11 @@ async def main():
             print(f"Награда за последний блок: {reward:.8f} BTC")
         else:
             print("Не удалось получить награду за блок.")
+            
+        if rate:
+            print(f"Курс USD/RUB: {rate:.2f}")
+        else:
+            print("Не удалось получить курс USD/RUB.")
         print("-" * 50)
 
 if __name__ == "__main__":
