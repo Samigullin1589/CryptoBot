@@ -1,8 +1,8 @@
 # ===============================================================
 # Файл: bot/services/market_data_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
 # Описание: Исправлена ошибка с регистром при обращении к
-# 'settings.cryptocompare_api_key'. Добавлена корректная конверсия
-# hashrate и исправлен URL mempool.space.
+# 'settings.cryptocompare_api_key'. Исправлен доступ к hashrate
+# и обработка данных mempool.space.
 # ===============================================================
 
 import asyncio
@@ -67,18 +67,21 @@ class MarketDataService:
                 return None
 
             net_info = network_data["Data"]
+            logger.info(f"Available keys in net_info: {list(net_info.keys())}")  # Диагностика ключей
             price = float(price_data["USD"])
-            network_hashrate = float(net_info.get("hash_rate", 0)) / 1e12  # Конверсия из H/s в TH/s
+            # Проверяем оба варианта: "hashrate" и "hash_rate"
+            network_hashrate = float(net_info.get("hashrate", net_info.get("hash_rate", 0))) / 1e12  # Конверсия из H/s в TH/s
 
-            logger.info(f"Converted hashrate for {symbol}: {network_hashrate} TH/s from {net_info.get('hash_rate', 0)} H/s")
+            logger.info(f"Converted hashrate for {symbol}: {network_hashrate} TH/s from {net_info.get('hashrate', net_info.get('hash_rate', 0))} H/s")
 
             # Резервный источник для hashrate, если равно 0
             if network_hashrate == 0 and symbol == "BTC":
                 logger.warning("Zero hashrate from CryptoCompare. Fetching from mempool.space...")
                 mempool_data = await make_request(self.http_session, MEMPOOL_SPACE_HASH_RATE_URL)
                 logger.info(f"Raw mempool.space data: {mempool_data}")
-                if mempool_data and "avgHashrate" in mempool_data:
-                    network_hashrate = float(mempool_data["avgHashrate"]) / 1e12  # Конверсия в TH/s
+                if mempool_data and "currentHashrate" in mempool_data:
+                    network_hashrate = float(mempool_data["currentHashrate"]) / 1e12  # Конверсия в TH/s
+                    logger.info(f"Using mempool.space hashrate: {network_hashrate} TH/s")
 
             block_reward = float(net_info.get("block_reward", 0))
 
