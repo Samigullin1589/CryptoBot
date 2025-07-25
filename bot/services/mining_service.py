@@ -1,8 +1,8 @@
 # ===============================================================
 # Файл: bot/services/mining_service.py (АЛЬФА-ВЕРСИЯ)
 # Описание: Метод calculate оптимизирован для надежного расчета
-# доходности с учетом комиссии пула, валидных входных данных и
-# принудительного обновления данных сети.
+# доходности с учетом комиссии пула, валидных входных данных,
+# принудительного обновления данных и коррекции единиц хешрейта.
 # ===============================================================
 
 import logging
@@ -46,12 +46,21 @@ class MiningService:
         network_hashrate_ths = network_data.get("network_hashrate", 0.0)
         block_reward_coins = network_data.get("block_reward", 0.0)
         
-        if network_hashrate_ths == 0 or coin_price_usd == 0:
+        if network_hashrate_ths <= 0 or coin_price_usd <= 0:
             logger.error(
-                f"Received zero values from API for {coin_symbol}. "
+                f"Received zero or invalid values from API for {coin_symbol}. "
                 f"Hashrate: {network_hashrate_ths} TH/s, Price: ${coin_price_usd}"
             )
-            return "❌ Получены неверные данные от API (цена или хешрейт равны нулю). Расчет невозможен."
+            return "❌ Получены неверные данные от API (цена или хешрейт равны нулю или некорректны). Расчет невозможен."
+
+        # Проверка реалистичности network_hashrate_ths (для BTC ожидается ~200,000-900,000 TH/s)
+        if coin_symbol == "BTC" and (network_hashrate_ths < 1000 or network_hashrate_ths > 1e6):
+            logger.warning(f"Unrealistic network hashrate for BTC: {network_hashrate_ths} TH/s. Falling back to mempool.space.")
+            network_data = await self.market_data_service.get_coin_network_data(coin_symbol, force_refresh=True)
+            if network_data:
+                network_hashrate_ths = network_data.get("network_hashrate", network_hashrate_ths)
+            if network_hashrate_ths <= 0:
+                return "❌ Не удалось получить реалистичный хешрейт сети. Расчет невозможен."
 
         # Расчет доли пользователя в сети
         user_share = hashrate_ths / network_hashrate_ths
