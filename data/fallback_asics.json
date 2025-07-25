@@ -3,660 +3,770 @@
     "name": "Antminer S19 K Pro 110 Th/s",
     "profitability": 7.08,
     "algorithm": "SHA-256",
-    "power": 2760
+    "power": 2760,
+    "hashrate": "110 Th/s"
   },
   {
     "name": "Antminer S19 K Pro 115 Th/s",
     "profitability": 7.39,
     "algorithm": "SHA-256",
-    "power": 2875
+    "power": 2875,
+    "hashrate": "115 Th/s"
   },
   {
     "name": "Antminer S19 K Pro 120 Th/s",
     "profitability": 8.03,
     "algorithm": "SHA-256",
-    "power": 3240
+    "power": 3240,
+    "hashrate": "120 Th/s"
   },
   {
     "name": "Antminer S19 K Pro 120 Th/s бу",
     "profitability": 5.72,
     "algorithm": "SHA-256",
-    "power": 3240
+    "power": 3240,
+    "hashrate": "120 Th/s"
   },
   {
     "name": "Antminer S19 XP 134 Th/s бу",
     "profitability": 9.43,
     "algorithm": "SHA-256",
-    "power": 3010
+    "power": 3010,
+    "hashrate": "134 Th/s"
   },
   {
     "name": "Antminer S19 XP 141 Th/s бу",
     "profitability": 10.18,
     "algorithm": "SHA-256",
-    "power": 3031
+    "power": 3031,
+    "hashrate": "141 Th/s"
   },
   {
     "name": "Antminer S19J XP 136 Th/s",
     "profitability": 11.9,
     "algorithm": "SHA-256",
-    "power": 3060
+    "power": 3060,
+    "hashrate": "136 Th/s"
   },
   {
     "name": "Antminer S19J XP 143 Th/s",
     "profitability": 12.85,
     "algorithm": "SHA-256",
-    "power": 3217
+    "power": 3217,
+    "hashrate": "143 Th/s"
   },
   {
     "name": "Antminer S19J XP 151 Th/s",
     "profitability": 13.44,
     "algorithm": "SHA-256",
-    "power": 3397
+    "power": 3397,
+    "hashrate": "151 Th/s"
   },
   {
     "name": "Antminer S19 XP HYDRO 257 Th/s",
     "profitability": 19.83,
     "algorithm": "SHA-256",
-    "power": 5304
+    "power": 5304,
+    "hashrate": "257 Th/s"
   },
   {
     "name": "Antminer S19e XP HYDRO 240 Th/s",
     "profitability": 18.37,
     "algorithm": "SHA-256",
-    "power": 5040
+    "power": 5040,
+    "hashrate": "240 Th/s"
   },
   {
     "name": "Antminer S19e XP HYDRO 251 Th/s",
     "profitability": 19.31,
     "algorithm": "SHA-256",
-    "power": 5271
+    "power": 5271,
+    "hashrate": "251 Th/s"
   },
   {
     "name": "Antminer T21 180 Th/s",
     "profitability": 19.1,
     "algorithm": "SHA-256",
-    "power": 3420
+    "power": 3420,
+    "hashrate": "180 Th/s"
   },
   {
     "name": "Antminer T21 186 Th/s",
     "profitability": 19.83,
     "algorithm": "SHA-256",
-    "power": 3534
+    "power": 3534,
+    "hashrate": "186 Th/s"
   },
   {
     "name": "Antminer T21 190 Th/s",
     "profitability": 21.23,
     "algorithm": "SHA-256",
-    "power": 3610
+    "power": 3610,
+    "hashrate": "190 Th/s"
   },
   {
     "name": "Antminer T21 190 Th/s бу",
     "profitability": 15.21,
     "algorithm": "SHA-256",
-    "power": 3610
+    "power": 3610,
+    "hashrate": "190 Th/s"
   },
   {
     "name": "Antminer S21 188 Th/s бу",
     "profitability": 18.15,
     "algorithm": "SHA-256",
-    "power": 3515
+    "power": 3515,
+    "hashrate": "188 Th/s"
   },
   {
     "name": "Antminer S21 200 Th/s бу",
     "profitability": 19.1,
     "algorithm": "SHA-256",
-    "power": 3550
+    "power": 3550,
+    "hashrate": "200 Th/s"
   },
   {
     "name": "Antminer S21+ 225 Th/s",
     "profitability": 26.37,
     "algorithm": "SHA-256",
-    "power": 3825
+    "power": 3825,
+    "hashrate": "225 Th/s"
   },
   {
     "name": "Antminer S21+ 235 Th/s",
     "profitability": 26.82,
     "algorithm": "SHA-256",
-    "power": 3995
+    "power": 3995,
+    "hashrate": "235 Th/s"
   },
   {
     "name": "Antminer S21 XP 270 Th/s",
     "profitability": 52.52,
     "algorithm": "SHA-256",
-    "power": 4650
+    "power": 4650,
+    "hashrate": "270 Th/s"
   },
   {
     "name": "Antminer S21 HYDRO 302 Th/s",
     "profitability": 40.77,
     "algorithm": "SHA-256",
-    "power": 5360
+    "power": 5360,
+    "hashrate": "302 Th/s"
   },
   {
     "name": "Antminer S21 HYDRO 319 Th/s",
     "profitability": 42.98,
     "algorithm": "SHA-256",
-    "power": 5370
+    "power": 5370,
+    "hashrate": "319 Th/s"
   },
   {
     "name": "Antminer S21 HYDRO 335 Th/s",
     "profitability": 45.17,
     "algorithm": "SHA-256",
-    "power": 5360
+    "power": 5360,
+    "hashrate": "335 Th/s"
   },
   {
     "name": "Antminer S21+ HYDRO 358 Th/s",
     "profitability": 44.38,
     "algorithm": "SHA-256",
-    "power": 5549
+    "power": 5549,
+    "hashrate": "358 Th/s"
   },
   {
     "name": "Antminer S21+ HYDRO 395 Th/s",
     "profitability": 47.01,
     "algorithm": "SHA-256",
-    "power": 5925
+    "power": 5925,
+    "hashrate": "395 Th/s"
   },
   {
     "name": "Antminer S21 XP HYDRO 437 Th/s",
     "profitability": 94.77,
     "algorithm": "SHA-256",
-    "power": 7500
+    "power": 7500,
+    "hashrate": "437 Th/s"
   },
   {
     "name": "Antminer S21 XP HYDRO 473 Th/s",
     "profitability": 93.65,
     "algorithm": "SHA-256",
-    "power": 7500
+    "power": 7500,
+    "hashrate": "473 Th/s"
   },
   {
     "name": "Antminer Z15 pro 840 ksol бу",
     "profitability": 14.0,
     "algorithm": "Equihash",
-    "power": 2400
+    "power": 2400,
+    "hashrate": "840 ksol"
   },
   {
     "name": "Antminer L7 8050 Mh/s бу",
     "profitability": 19.03,
     "algorithm": "Scrypt",
-    "power": 3425
+    "power": 3425,
+    "hashrate": "8050 Mh/s"
   },
   {
     "name": "Antminer L7 8800 Mh/s бу",
     "profitability": 22.62,
     "algorithm": "Scrypt",
-    "power": 3425
+    "power": 3425,
+    "hashrate": "8800 Mh/s"
   },
   {
     "name": "Antminer L7 9050 Mh/s бу",
     "profitability": 21.16,
     "algorithm": "Scrypt",
-    "power": 3425
+    "power": 3425,
+    "hashrate": "9050 Mh/s"
   },
   {
     "name": "Antminer L7 9300 Mh/s бу",
     "profitability": 21.89,
     "algorithm": "Scrypt",
-    "power": 3425
+    "power": 3425,
+    "hashrate": "9300 Mh/s"
   },
   {
     "name": "Antminer L7 9500 Mh/s бу",
     "profitability": 31.81,
     "algorithm": "Scrypt",
-    "power": 3425
+    "power": 3425,
+    "hashrate": "9500 Mh/s"
   },
   {
     "name": "Antminer L9 15 Gh/s",
     "profitability": 63.54,
     "algorithm": "Scrypt",
-    "power": 3300
+    "power": 3300,
+    "hashrate": "15 Gh/s"
   },
   {
     "name": "Antminer L9 16 Gh/s",
     "profitability": 65.16,
     "algorithm": "Scrypt",
-    "power": 3360
+    "power": 3360,
+    "hashrate": "16 Gh/s"
   },
   {
     "name": "Antminer L9 16.5 Gh/s",
     "profitability": 66.26,
     "algorithm": "Scrypt",
-    "power": 3465
+    "power": 3465,
+    "hashrate": "16.5 Gh/s"
   },
   {
     "name": "Antminer L9 17 Gh/s",
     "profitability": 68.83,
     "algorithm": "Scrypt",
-    "power": 3570
+    "power": 3570,
+    "hashrate": "17 Gh/s"
   },
   {
     "name": "Antminer D9 1770 Gh/s",
     "profitability": 30.63,
     "algorithm": "X11",
-    "power": 2839
+    "power": 2839,
+    "hashrate": "1770 Gh/s"
   },
   {
     "name": "Antminer KA3 166 Th/s",
     "profitability": 27.77,
     "algorithm": "Kadena",
-    "power": 3154
+    "power": 3154,
+    "hashrate": "166 Th/s"
   },
   {
     "name": "Antminer K7 58 Th/s",
     "profitability": 21.82,
     "algorithm": "kHeavyHash",
-    "power": 3080
+    "power": 3080,
+    "hashrate": "58 Th/s"
   },
   {
     "name": "Antminer K7 60 Th/s",
     "profitability": 22.55,
     "algorithm": "kHeavyHash",
-    "power": 3080
+    "power": 3080,
+    "hashrate": "60 Th/s"
   },
   {
     "name": "Antminer K7 63.5 Th/s",
     "profitability": 23.29,
     "algorithm": "kHeavyHash",
-    "power": 3080
+    "power": 3080,
+    "hashrate": "63.5 Th/s"
   },
   {
     "name": "Antminer K7 66 Th/s",
     "profitability": 24.31,
     "algorithm": "kHeavyHash",
-    "power": 3080
+    "power": 3080,
+    "hashrate": "66 Th/s"
   },
   {
     "name": "Antminer KS5pro 21 T",
     "profitability": 11.31,
     "algorithm": "kHeavyHash",
-    "power": 3150
+    "power": 3150,
+    "hashrate": "21 T"
   },
   {
     "name": "Antminer HS3 9 Th/s",
     "profitability": 17.41,
     "algorithm": "Blake2B-Sia",
-    "power": 2079
+    "power": 2079,
+    "hashrate": "9 Th/s"
   },
   {
     "name": "Avalon Miner A1466 150 Th/s",
     "profitability": 10.64,
     "algorithm": "SHA-256",
-    "power": 3230
+    "power": 3230,
+    "hashrate": "150 Th/s"
   },
   {
     "name": "Avalon Miner A1566 150 Th/s",
     "profitability": 10.46,
     "algorithm": "SHA-256",
-    "power": 3150
+    "power": 3150,
+    "hashrate": "150 Th/s"
   },
   {
     "name": "Avalon Miner A1566 209 Th/s",
     "profitability": 21.06,
     "algorithm": "SHA-256",
-    "power": 3866
+    "power": 3866,
+    "hashrate": "209 Th/s"
   },
   {
     "name": "Avalon Miner A1566 212 Th/s",
     "profitability": 21.29,
     "algorithm": "SHA-256",
-    "power": 3922
+    "power": 3922,
+    "hashrate": "212 Th/s"
   },
   {
     "name": "Whatsminer M50 112 Th/s",
     "profitability": 5.29,
     "algorithm": "SHA-256",
-    "power": 3304
+    "power": 3304,
+    "hashrate": "112 Th/s"
   },
   {
     "name": "Whatsminer M50 114 Th/s",
     "profitability": 5.36,
     "algorithm": "SHA-256",
-    "power": 3306
+    "power": 3306,
+    "hashrate": "114 Th/s"
   },
   {
     "name": "Whatsminer M50 118 Th/s",
     "profitability": 5.75,
     "algorithm": "SHA-256",
-    "power": 3422
+    "power": 3422,
+    "hashrate": "118 Th/s"
   },
   {
     "name": "Whatsminer M50 120 Th/s",
     "profitability": 5.5,
     "algorithm": "SHA-256",
-    "power": 3480
+    "power": 3480,
+    "hashrate": "120 Th/s"
   },
   {
     "name": "Whatsminer M50 122 Th/s",
     "profitability": 6.12,
     "algorithm": "SHA-256",
-    "power": 3538
+    "power": 3538,
+    "hashrate": "122 Th/s"
   },
   {
     "name": "Whatsminer M50 124 Th/s",
     "profitability": 6.25,
     "algorithm": "SHA-256",
-    "power": 3596
+    "power": 3596,
+    "hashrate": "124 Th/s"
   },
   {
     "name": "Whatsminer M50s 116 Th/s",
     "profitability": 7.35,
     "algorithm": "SHA-256",
-    "power": 3016
+    "power": 3016,
+    "hashrate": "116 Th/s"
   },
   {
     "name": "Whatsminer M50s 122 Th/s",
     "profitability": 7.68,
     "algorithm": "SHA-256",
-    "power": 3172
+    "power": 3172,
+    "hashrate": "122 Th/s"
   },
   {
     "name": "Whatsminer M50s 124 Th/s",
     "profitability": 7.63,
     "algorithm": "SHA-256",
-    "power": 3224
+    "power": 3224,
+    "hashrate": "124 Th/s"
   },
   {
     "name": "Whatsminer M50s 126 Th/s",
     "profitability": 7.7,
     "algorithm": "SHA-256",
-    "power": 3276
+    "power": 3276,
+    "hashrate": "126 Th/s"
   },
   {
     "name": "Whatsminer M50s 128 Th/s",
     "profitability": 7.75,
     "algorithm": "SHA-256",
-    "power": 3328
+    "power": 3328,
+    "hashrate": "128 Th/s"
   },
   {
     "name": "Whatsminer M50s 130 Th/s",
     "profitability": 7.9,
     "algorithm": "SHA-256",
-    "power": 3380
+    "power": 3380,
+    "hashrate": "130 Th/s"
   },
   {
     "name": "Whatsminer M50s 132 Th/s",
     "profitability": 8.01,
     "algorithm": "SHA-256",
-    "power": 3432
+    "power": 3432,
+    "hashrate": "132 Th/s"
   },
   {
     "name": "Whatsminer M50s 134 Th/s",
     "profitability": 8.1,
     "algorithm": "SHA-256",
-    "power": 3484
+    "power": 3484,
+    "hashrate": "134 Th/s"
   },
   {
     "name": "Whatsminer M50s+ 142 Th/s",
     "profitability": 10.18,
     "algorithm": "SHA-256",
-    "power": 3550
+    "power": 3550,
+    "hashrate": "142 Th/s"
   },
   {
     "name": "Whatsminer M50s+ 144 Th/s",
     "profitability": 10.32,
     "algorithm": "SHA-256",
-    "power": 3600
+    "power": 3600,
+    "hashrate": "144 Th/s"
   },
   {
     "name": "Whatsminer M50s+ 146 Th/s",
     "profitability": 10.46,
     "algorithm": "SHA-256",
-    "power": 3650
+    "power": 3650,
+    "hashrate": "146 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 146 Th/s",
     "profitability": 11.53,
     "algorithm": "SHA-256",
-    "power": 3358
+    "power": 3358,
+    "hashrate": "146 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 154 Th/s",
     "profitability": 12.85,
     "algorithm": "SHA-256",
-    "power": 3542
+    "power": 3542,
+    "hashrate": "154 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 156 Th/s",
     "profitability": 13.15,
     "algorithm": "SHA-256",
-    "power": 3588
+    "power": 3588,
+    "hashrate": "156 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 158 Th/s",
     "profitability": 13.37,
     "algorithm": "SHA-256",
-    "power": 3634
+    "power": 3634,
+    "hashrate": "158 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 160 Th/s",
     "profitability": 13.15,
     "algorithm": "SHA-256",
-    "power": 3680
+    "power": 3680,
+    "hashrate": "160 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 162 Th/s",
     "profitability": 13.31,
     "algorithm": "SHA-256",
-    "power": 3726
+    "power": 3726,
+    "hashrate": "162 Th/s"
   },
   {
     "name": "Whatsminer M50s++ 164 Th/s",
     "profitability": 13.44,
     "algorithm": "SHA-256",
-    "power": 3772
+    "power": 3772,
+    "hashrate": "164 Th/s"
   },
   {
     "name": "Whatsminer M60 164 Th/s",
     "profitability": 15.57,
     "algorithm": "SHA-256",
-    "power": 3116
+    "power": 3116,
+    "hashrate": "164 Th/s"
   },
   {
     "name": "Whatsminer M60 172 Th/s",
     "profitability": 16.24,
     "algorithm": "SHA-256",
-    "power": 3268
+    "power": 3268,
+    "hashrate": "172 Th/s"
   },
   {
     "name": "Whatsminer M60 174 Th/s",
     "profitability": 16.46,
     "algorithm": "SHA-256",
-    "power": 3306
+    "power": 3306,
+    "hashrate": "174 Th/s"
   },
   {
     "name": "Whatsminer M60 176 Th/s",
     "profitability": 16.68,
     "algorithm": "SHA-256",
-    "power": 3344
+    "power": 3344,
+    "hashrate": "176 Th/s"
   },
   {
     "name": "Whatsminer M60 178 Th/s",
     "profitability": 17.48,
     "algorithm": "SHA-256",
-    "power": 3115
+    "power": 3115,
+    "hashrate": "178 Th/s"
   },
   {
     "name": "Whatsminer M60 180 Th/s",
     "profitability": 18.81,
     "algorithm": "SHA-256",
-    "power": 3240
+    "power": 3240,
+    "hashrate": "180 Th/s"
   },
   {
     "name": "Whatsminer M60s 176 Th/s",
     "profitability": 18.73,
     "algorithm": "SHA-256",
-    "power": 3256
+    "power": 3256,
+    "hashrate": "176 Th/s"
   },
   {
     "name": "Whatsminer M60s 178 Th/s",
     "profitability": 18.95,
     "algorithm": "SHA-256",
-    "power": 3293
+    "power": 3293,
+    "hashrate": "178 Th/s"
   },
   {
     "name": "Whatsminer M60s 182 Th/s",
     "profitability": 19.39,
     "algorithm": "SHA-256",
-    "power": 3367
+    "power": 3367,
+    "hashrate": "182 Th/s"
   },
   {
     "name": "Whatsminer M60s 184 Th/s",
     "profitability": 19.62,
     "algorithm": "SHA-256",
-    "power": 3404
+    "power": 3404,
+    "hashrate": "184 Th/s"
   },
   {
     "name": "Whatsminer M60s 186 Th/s",
     "profitability": 19.83,
     "algorithm": "SHA-256",
-    "power": 3441
+    "power": 3441,
+    "hashrate": "186 Th/s"
   },
   {
     "name": "Whatsminer M61 198 Th/s",
     "profitability": 19.43,
     "algorithm": "SHA-256",
-    "power": 3564
+    "power": 3564,
+    "hashrate": "198 Th/s"
   },
   {
     "name": "Whatsminer M61 200 Th/s",
     "profitability": 18.81,
     "algorithm": "SHA-256",
-    "power": 3600
+    "power": 3600,
+    "hashrate": "200 Th/s"
   },
   {
     "name": "Whatsminer M61 200 Th/s бу",
     "profitability": 17.48,
     "algorithm": "SHA-256",
-    "power": 3600
+    "power": 3600,
+    "hashrate": "200 Th/s"
   },
   {
     "name": "Whatsminer M61 202 Th/s",
     "profitability": 18.95,
     "algorithm": "SHA-256",
-    "power": 3636
+    "power": 3636,
+    "hashrate": "202 Th/s"
   },
   {
     "name": "Whatsminer M61 204 Th/s",
     "profitability": 19.18,
     "algorithm": "SHA-256",
-    "power": 3672
+    "power": 3672,
+    "hashrate": "204 Th/s"
   },
   {
     "name": "Whatsminer M64 184 Th/s",
     "profitability": 20.05,
     "algorithm": "SHA-256",
-    "power": 3312
+    "power": 3312,
+    "hashrate": "184 Th/s"
   },
   {
     "name": "Whatsminer M64 188 Th/s",
     "profitability": 20.5,
     "algorithm": "SHA-256",
-    "power": 3384
+    "power": 3384,
+    "hashrate": "188 Th/s"
   },
   {
     "name": "Whatsminer M64 190 Th/s",
     "profitability": 20.72,
     "algorithm": "SHA-256",
-    "power": 3420
+    "power": 3420,
+    "hashrate": "190 Th/s"
   },
   {
     "name": "Whatsminer M64 194 Th/s",
     "profitability": 21.01,
     "algorithm": "SHA-256",
-    "power": 3492
+    "power": 3492,
+    "hashrate": "194 Th/s"
   },
   {
     "name": "Jasminer X16-QE 1650 Mh/s",
     "profitability": 7.45,
     "algorithm": "Etchash",
-    "power": 620
+    "power": 620,
+    "hashrate": "1650 Mh/s"
   },
   {
     "name": "Jasminer X16-QE 1750 Mh/s",
     "profitability": 6.58,
     "algorithm": "Etchash",
-    "power": 620
+    "power": 620,
+    "hashrate": "1750 Mh/s"
   },
   {
     "name": "Jasminer X16-QE 1850 Mh/s",
     "profitability": 7.82,
     "algorithm": "Etchash",
-    "power": 620
+    "power": 620,
+    "hashrate": "1850 Mh/s"
   },
   {
     "name": "Jasminer X16-Q 1950 Mh/s",
     "profitability": 10.09,
     "algorithm": "Etchash",
-    "power": 620
+    "power": 620,
+    "hashrate": "1950 Mh/s"
   },
   {
     "name": "Jasminer X16-Q Pro 2050 Mh/s",
     "profitability": 11.53,
     "algorithm": "Etchash",
-    "power": 620
+    "power": 620,
+    "hashrate": "2050 Mh/s"
   },
   {
     "name": "Jasminer X16-P 5800 Mh/s",
     "profitability": 28.5,
     "algorithm": "Etchash",
-    "power": 1900
+    "power": 1900,
+    "hashrate": "5800 Mh/s"
   },
   {
     "name": "Elphapex DG HOME1 2.1 Gh/s",
     "profitability": 10.55,
     "algorithm": "Scrypt",
-    "power": 950
+    "power": 950,
+    "hashrate": "2.1 Gh/s"
   },
   {
     "name": "Elphapex DG1+ 13 Gh/s",
     "profitability": 39.66,
     "algorithm": "Scrypt",
-    "power": 3400
+    "power": 3400,
+    "hashrate": "13 Gh/s"
   },
   {
     "name": "Elphapex DG1+ 13.5 Gh/s",
     "profitability": 42.23,
     "algorithm": "Scrypt",
-    "power": 3500
+    "power": 3500,
+    "hashrate": "13.5 Gh/s"
   },
   {
     "name": "Elphapex DG1+ 14 Gh/s",
     "profitability": 43.19,
     "algorithm": "Scrypt",
-    "power": 3600
+    "power": 3600,
+    "hashrate": "14 Gh/s"
   },
   {
     "name": "Elphapex DG1+ 14.4 Gh/s",
     "profitability": 44.44,
     "algorithm": "Scrypt",
-    "power": 3700
+    "power": 3700,
+    "hashrate": "14.4 Gh/s"
   },
   {
     "name": "Bombax EZ100-C 4000 Mh/s",
     "profitability": 19.83,
     "algorithm": "Equihash",
-    "power": 650
+    "power": 650,
+    "hashrate": "4000 Mh/s"
   },
   {
     "name": "Bombax EZ-100 12500 Mh/s",
     "profitability": 69.1,
     "algorithm": "Equihash",
-    "power": 2400
+    "power": 2400,
+    "hashrate": "12500 Mh/s"
   },
   {
     "name": "Goldshell DG MAX 6.5 Gh/s",
     "profitability": 15.77,
     "algorithm": "Scrypt",
-    "power": 2800
+    "power": 2800,
+    "hashrate": "6.5 Gh/s"
   },
   {
     "name": "Goldshell AE BOX II 54 Mh/s",
     "profitability": 7.09,
     "algorithm": "Eaglesong",
-    "power": 210
+    "power": 210,
+    "hashrate": "54 Mh/s"
   },
   {
     "name": "Fluminer L1 5.3 Gh/s",
     "profitability": 25.94,
     "algorithm": "Scrypt",
-    "power": 3400
+    "power": 3400,
+    "hashrate": "5.3 Gh/s"
   }
 ]
