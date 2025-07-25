@@ -9,3 +9,4 @@ pydantic-settings
 pydantic
 async-lru
 rapidfuzz
+backoff>=2.0.0
