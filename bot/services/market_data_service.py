@@ -1,8 +1,9 @@
 # ===============================================================
 # Файл: bot/services/market_data_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
 # Описание: Исправлена ошибка с регистром при обращении к
-# 'settings.cryptocompare_api_key'. Исправлен доступ к hashrate
-# с улучшенной диагностикой и обработкой mempool.space.
+# 'settings.cryptocompare_api_key'. Улучшена обработка hashrate
+# с принудительным обновлением, усиленной диагностикой и
+# резервным источником mempool.space.
 # ===============================================================
 
 import asyncio
@@ -31,13 +32,14 @@ class MarketDataService:
         # --------------------------------------------------------------------
 
     @alru_cache(maxsize=10, ttl=600)
-    async def get_coin_network_data(self, coin_symbol: str) -> Optional[Dict]:
+    async def get_coin_network_data(self, coin_symbol: str, force_refresh: bool = False) -> Optional[Dict]:
         """
         Получает ключевые данные о сети монеты (хешрейт, награда за блок) и ее цену.
         Использует CryptoCompare API с резервным источником для hashrate.
+        force_refresh: принудительно обновляет данные, игнорируя кэш.
         """
         symbol = coin_symbol.upper()
-        logger.info(f"Fetching network data and price for {symbol} from CryptoCompare...")
+        logger.info(f"Fetching network data and price for {symbol} from CryptoCompare... (force_refresh={force_refresh})")
 
         if not self.cryptocompare_api_key:
             logger.error("CryptoCompare API key is missing. Mining calculator will not work correctly.")
@@ -69,11 +71,15 @@ class MarketDataService:
             net_info = network_data["Data"]
             logger.info(f"Available keys in net_info: {list(net_info.keys())}")  # Диагностика ключей
             price = float(price_data["USD"])
-            # Проверяем hashrate с явным приведением типа
+            # Явное извлечение и приведение hashrate
             hashrate_value = net_info.get("hashrate")
-            if hashrate_value is None or hashrate_value == 0:
+            if hashrate_value is None or str(hashrate_value).lower() == "null" or hashrate_value == 0:
                 hashrate_value = net_info.get("hash_rate", 0)
-            network_hashrate = float(hashrate_value) / 1e12 if hashrate_value else 0  # Конверсия из H/s в TH/s
+            try:
+                network_hashrate = float(hashrate_value) / 1e12 if hashrate_value else 0  # Конверсия из H/s в TH/s
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid hashrate value for {symbol}: {hashrate_value} (type: {type(hashrate_value)})")
+                network_hashrate = 0
 
             logger.info(f"Raw hashrate value for {symbol}: {hashrate_value} (type: {type(hashrate_value)})")
             logger.info(f"Converted hashrate for {symbol}: {network_hashrate} TH/s")
@@ -84,8 +90,11 @@ class MarketDataService:
                 mempool_data = await make_request(self.http_session, MEMPOOL_SPACE_HASH_RATE_URL)
                 logger.info(f"Raw mempool.space data: {mempool_data}")
                 if mempool_data and "currentHashrate" in mempool_data:
-                    network_hashrate = float(mempool_data["currentHashrate"]) / 1e12  # Конверсия в TH/s
-                    logger.info(f"Using mempool.space hashrate: {network_hashrate} TH/s")
+                    try:
+                        network_hashrate = float(mempool_data["currentHashrate"]) / 1e12  # Конверсия в TH/s
+                        logger.info(f"Using mempool.space hashrate: {network_hashrate} TH/s")
+                    except (ValueError, TypeError):
+                        logger.warning(f"Invalid hashrate from mempool.space: {mempool_data['currentHashrate']}")
 
             block_reward = float(net_info.get("block_reward", 0))
 
