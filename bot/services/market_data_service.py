@@ -1,10 +1,3 @@
-# ===============================================================
-# Файл: bot/services/market_data_service.py (АЛЬФА-РЕШЕНИЕ)
-# Описание: Использует https://api.blockchain.info/q/hashrate для
-# хешрейта и https://blockchain.info/latestblock для награды,
-# исключая фиксированные значения.
-# ===============================================================
-
 import asyncio
 import logging
 from typing import Optional, Dict
@@ -12,153 +5,182 @@ from typing import Optional, Dict
 import aiohttp
 from async_lru import alru_cache
 
-from bot.config.settings import settings
-from bot.utils.helpers import make_request
+# Настройка логирования
+log = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+# Константы для валидации данных
+# Минимальный правдоподобный хешрейт сети Bitcoin в TH/s (100 EH/s)
+MIN_NETWORK_HASHRATE_THS = 100_000_000
+# Максимальный правдоподобный хешрейт сети Bitcoin в TH/s (10 000 EH/s)
+MAX_NETWORK_HASHRATE_THS = 10_000_000_000
+# Текущая субсидия за блок в BTC
+CURRENT_BLOCK_SUBSIDY_BTC = 3.125
+# Максимальная ожидаемая награда за блок (субсидия + комиссии)
+MAX_BLOCK_REWARD_BTC = 10.0
 
-# --- ИСТОЧНИКИ ДАННЫХ ---
-BLOCKCHAIN_INFO_BLOCK_COUNT_URL = "https://blockchain.info/q/getblockcount"
-BLOCKCHAIR_BTC_STATS_URL = "https://api.blockchair.com/bitcoin/stats"
-CRYPTOCOMPARE_BASE_URL = "https://min-api.cryptocompare.com/data"
-MEMPOOL_SPACE_HASH_RATE_URL = "https://mempool.space/api/v1/mining/hashrate/1w"
-BLOCKCHAIN_INFO_HASH_RATE_URL = "https://api.blockchain.info/q/hashrate"
-BLOCKCHAIN_INFO_LATEST_BLOCK_URL = "https://blockchain.info/latestblock"
 
 class MarketDataService:
-    def __init__(self, http_session: aiohttp.ClientSession):
-        self.http_session = http_session
-        self.cryptocompare_api_key = settings.cryptocompare_api_key
+    """
+    Сервис для получения данных о рынке и сети Bitcoin из внешних API.
+    Обеспечивает отказоустойчивость за счет кэширования, валидации
+    и механизмов резервного переключения.
+    """
 
-    @alru_cache(maxsize=10, ttl=600)
-    async def get_coin_network_data(self, coin_symbol: str, force_refresh: bool = False) -> Optional[Dict]:
+    def __init__(self, session: aiohttp.ClientSession):
         """
-        Получает ключевые данные о сети монеты (хешрейт, награда за блок) и ее цену.
-        Использует CryptoCompare для цены и Blockchain.com для хешрейта и награды.
-        force_refresh: принудительно обновляет данные, игнорируя кэш.
+        Инициализация сервиса.
+        :param session: Клиентская сессия aiohttp для выполнения HTTP-запросов.
         """
-        symbol = coin_symbol.upper()
-        logger.info(f"Fetching network data and price for {symbol}... (force_refresh={force_refresh})")
+        self.session = session
 
-        if not self.cryptocompare_api_key:
-            logger.error("CryptoCompare API key is missing. Mining calculator will not work correctly.")
-            return None
-
-        headers = {"authorization": f"Apikey {self.cryptocompare_api_key}"}
-        price_url = f"{CRYPTOCOMPARE_BASE_URL}/price?fsym={symbol}&tsyms=USD"
-
+    async def _fetch_json(self, url: str) -> Dict:
+        """
+        Вспомогательная асинхронная функция для выполнения GET-запроса и получения JSON.
+        Вызывает исключение в случае неудачного запроса или не-JSON ответа.
+        """
+        log.debug(f"Выполнение запроса к URL: {url}")
         try:
-            # Получение цены из CryptoCompare
-            price_data = await make_request(self.http_session, price_url, headers=headers)
-            logger.info(f"Raw CryptoCompare price data for {symbol}: {price_data}")
-
-            if not price_data or "USD" not in price_data:
-                logger.error(f"Invalid price data response from CryptoCompare for {symbol}: {price_data}")
-                return None
-
-            price = float(price_data["USD"])
-
-            # Получение хешрейта из Blockchain.com
-            hashrate_data = await make_request(self.http_session, BLOCKCHAIN_INFO_HASH_RATE_URL, response_type='text')
-            logger.info(f"Raw Blockchain.com hashrate data for {symbol}: {hashrate_data}")
-            if not hashrate_data or not hashrate_data.strip():
-                logger.error("Failed to fetch hashrate data from Blockchain.com.")
-                return None
-
-            network_hashrate_ths = float(hashrate_data) / 1e12  # Конверсия из H/s в TH/s
-            logger.info(f"Using Blockchain.com hashrate: {network_hashrate_ths} TH/s")
-
-            # Получение награды за блок из Blockchain.com
-            latest_block = await make_request(self.http_session, BLOCKCHAIN_INFO_LATEST_BLOCK_URL)
-            logger.info(f"Raw latest block data: {latest_block}")
-            if not latest_block or "reward" not in latest_block:
-                logger.error("Failed to fetch block reward data from Blockchain.com.")
-                return None
-
-            block_reward = float(latest_block["reward"]) / 1e8  # Конверсия из сатоши в BTC
-            logger.info(f"Using Blockchain.com block reward: {block_reward} BTC")
-
-            if network_hashrate_ths <= 0 or block_reward <= 0:
-                logger.error(f"Zero hashrate or block reward for {symbol} from Blockchain.com. Calculation may fail.")
-                return None
-
-            return {
-                "price": price,
-                "network_hashrate": network_hashrate_ths,
-                "block_reward": block_reward
-            }
-
+            async with self.session.get(url, timeout=10) as response:
+                response.raise_for_status()  # Вызовет исключение для статусов 4xx/5xx
+                data = await response.json()
+                log.debug(f"Получен сырой JSON от {url}: {data}")
+                return data
+        except aiohttp.ClientError as e:
+            log.error(f"Сетевая ошибка при запросе к {url}: {e}")
+            raise
+        except asyncio.TimeoutError:
+            log.error(f"Тайм-аут при запросе к {url}")
+            raise
         except Exception as e:
-            logger.exception(f"Failed to fetch data for {symbol}: {e}")
+            log.error(f"Неожиданная ошибка при обработке запроса к {url}: {e}")
+            raise
+
+    @alru_cache(ttl=600)
+    async def get_btc_price_usd(self) -> Optional[float]:
+        """
+        Получает текущую цену BTC в USD.
+        Использует CryptoCompare как основной источник и mempool.space как резервный.
+        Результат кэшируется на 10 минут.
+        """
+        # Попытка 1: Основной источник - CryptoCompare
+        try:
+            url = "https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD"
+            data = await self._fetch_json(url)
+            price = float(data["USD"])
+            log.info(f"Цена BTC/USD (CryptoCompare): ${price:.2f}")
+            return price
+        except Exception as e:
+            log.warning(
+                f"Не удалось получить цену от CryptoCompare: {e}. "
+                f"Переключение на резервный источник (mempool.space)."
+            )
+
+        # Попытка 2: Резервный источник - mempool.space
+        try:
+            url = "https://mempool.space/api/v1/prices"
+            data = await self._fetch_json(url)
+            price = float(data.get("BTC", {}).get("USD", 0))
+            log.info(f"Цена BTC/USD (mempool.space): ${price:.2f}")
+            return price
+        except Exception as e_fallback:
+            log.error(f"Все источники цен недоступны. Ошибка резервного источника: {e_fallback}")
             return None
 
-    @alru_cache(maxsize=1, ttl=14400)
-    async def get_fear_and_greed_index(self) -> Optional[dict]:
-        logger.info("Fetching Fear & Greed Index...")
-        if settings.cmc_api_key:
-            headers = {'X-CMC_PRO_API_KEY': settings.cmc_api_key}
-            data = await make_request(self.http_session, "https://pro-api.coinmarketcap.com/v1/crypto/fng", headers=headers)
-            if data and 'data' in data and data['data']:
-                fng_data = data['data'][0]
-                logger.info("Fetched F&G index from CoinMarketCap")
-                return {'value': fng_data['score'], 'value_classification': fng_data['rating']}
-            logger.warning("Failed to fetch from CMC, falling back to Alternative.me")
-        
-        data = await make_request(self.http_session, settings.fear_and_greed_api_url)
-        if data and 'data' in data and data['data']:
-            logger.info("Fetched F&G index from Alternative.me")
-            return data['data'][0]
-        
-        logger.error("Failed to fetch F&G index from all sources.")
-        return None
-
-    @alru_cache(maxsize=1, ttl=43200)
-    async def get_usd_rub_rate(self) -> float:
-        logger.info("Fetching USD/RUB exchange rate.")
-        data = await make_request(self.http_session, settings.cbr_daily_json_url)
-        if data and "Valute" in data and "USD" in data["Valute"]:
-            rate = data["Valute"]["USD"]["Value"]
-            logger.info(f"Current USD/RUB rate: {rate}")
-            return float(rate)
-        logger.warning("Could not fetch USD/RUB rate. Using fallback rate 90.0.")
-        return 90.0
-
-    async def get_halving_info(self) -> str:
-        logger.info("Fetching Bitcoin halving info from blockchain.info...")
-        current_block = None
-        height_str = await make_request(self.http_session, BLOCKCHAIN_INFO_BLOCK_COUNT_URL, response_type='text', timeout=7)
-        if height_str and height_str.isdigit():
-            current_block = int(height_str)
-            logger.info(f"Fetched block height from blockchain.info: {current_block}")
-
-        if current_block is None:
-            logger.error("Failed to fetch block height from blockchain.info.")
-            return "❌ Не удалось получить данные о халвинге. Внешний сервис временно недоступен."
-        
-        halving_interval = 210000
-        blocks_left = halving_interval - (current_block % halving_interval)
-        days_left = blocks_left / 144
-        
-        return (f"⏳ <b>До халвинга Bitcoin осталось:</b>\n\n"
-                f"🧱 <b>Блоков:</b> <code>{blocks_left:,}</code>\n"
-                f"🗓 <b>Примерно дней:</b> <code>{days_left:.1f}</code>")
-
-    async def get_btc_network_status(self) -> str:
-        logger.info("Fetching Bitcoin network status from blockchair.com...")
+    @alru_cache(ttl=600)
+    async def get_network_hashrate_ths(self) -> Optional[float]:
+        """
+        Рассчитывает текущий хешрейт сети Bitcoin в TH/s на основе сложности.
+        Использует mempool.space как единственный источник.
+        Результат кэшируется на 10 минут.
+        """
         try:
-            data = await make_request(self.http_session, BLOCKCHAIR_BTC_STATS_URL, timeout=7)
-            if not data or "data" not in data:
-                logger.error("Failed to fetch BTC network status from blockchair.com, response has invalid structure.")
-                return "❌ Не удалось получить статус сети BTC. Внешний сервис вернул неверные данные."
+            url = "https://mempool.space/api/v1/difficulty-adjustment"
+            data = await self._fetch_json(url)
+            difficulty = float(data["difficulty"])
+
+            # Формула: hashrate = difficulty * 2^32 / 600
+            # 600 секунд - целевое время нахождения блока в сети Bitcoin
+            hashrate_hs = (difficulty * (2**32)) / 600
+            hashrate_ths = hashrate_hs / 1e12  # Конвертация из H/s в TH/s
+
+            # Валидация полученного значения
+            if not (MIN_NETWORK_HASHRATE_THS <= hashrate_ths <= MAX_NETWORK_HASHRATE_THS):
+                log.error(f"Рассчитанный хешрейт {hashrate_ths:.2f} TH/s выходит за пределы допустимого диапазона.")
+                return None
+
+            log.info(f"Хешрейт сети (рассчитан по сложности): {hashrate_ths / 1e6:.2f} EH/s")
+            return hashrate_ths
+        except Exception as e:
+            log.error(f"Не удалось рассчитать хешрейт сети: {e}")
+            return None
+
+    @alru_cache(ttl=600)
+    async def get_block_reward_btc(self) -> Optional[float]:
+        """
+        Получает награду за последний блок (субсидия + комиссии).
+        Использует mempool.space для получения данных о последнем блоке.
+        Результат кэшируется на 10 минут.
+        """
+        try:
+            # Шаг 1: Получить хеш последнего блока
+            tip_hash_url = "https://mempool.space/api/blocks/tip/hash"
+            async with self.session.get(tip_hash_url, timeout=10) as response:
+                response.raise_for_status()
+                latest_block_hash = await response.text()
+                log.debug(f"Хеш последнего блока: {latest_block_hash}")
+
+            # Шаг 2: Получить детали блока по хешу
+            block_details_url = f"https://mempool.space/api/block/{latest_block_hash}"
+            block_data = await self._fetch_json(block_details_url)
             
-            stats = data["data"]
-            fee_mb = stats.get('suggested_transaction_fee_per_byte_sat', 0)
+            # Сумма комиссий в сатоши
+            total_fees_satoshi = int(block_data.get("extras", {}).get("totalFees", 0))
+            fees_btc = total_fees_satoshi / 1e8  # Конвертация в BTC
 
-            return (f"📡 <b>Статус сети Bitcoin:</b>\n\n"
-                    f"📈 <b>Транзакций в мемпуле:</b> <code>{stats.get('mempool_transactions', 'N/A'):,}</code>\n\n"
-                    f"💸 <b>Рекомендуемая комиссия:</b>\n"
-                    f"  - 🚶‍♂️ Средняя: <code>{fee_mb} sat/vB</code>")
-        
+            # Полная награда = субсидия + комиссии
+            total_reward_btc = CURRENT_BLOCK_SUBSIDY_BTC + fees_btc
+
+            # Валидация
+            if not (CURRENT_BLOCK_SUBSIDY_BTC <= total_reward_btc <= MAX_BLOCK_REWARD_BTC):
+                log.error(f"Рассчитанная награда за блок {total_reward_btc:.8f} BTC выходит за пределы допустимого диапазона.")
+                return None
+
+            log.info(f"Награда за последний блок: {total_reward_btc:.8f} BTC (Субсидия: {CURRENT_BLOCK_SUBSIDY_BTC}, Комиссии: {fees_btc:.8f})")
+            return total_reward_btc
         except Exception as e:
-            logger.error(f"An unexpected error occurred while fetching BTC network status: {e}")
-            return "❌ Произошла непредвиденная ошибка при получении статуса сети BTC."
+            log.error(f"Не удалось получить награду за блок: {e}")
+            return None
+
+# Пример использования (для демонстрации и тестирования)
+async def main():
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    async with aiohttp.ClientSession() as session:
+        service = MarketDataService(session)
+        
+        # Параллельное выполнение всех запросов
+        price, hashrate, reward = await asyncio.gather(
+            service.get_btc_price_usd(),
+            service.get_network_hashrate_ths(),
+            service.get_block_reward_btc()
+        )
+        
+        print("-" * 50)
+        if price:
+            print(f"Текущая цена BTC: ${price:,.2f}")
+        else:
+            print("Не удалось получить цену BTC.")
+            
+        if hashrate:
+            print(f"Текущий хешрейт сети: {hashrate:,.2f} TH/s ({hashrate / 1e6:,.2f} EH/s)")
+        else:
+            print("Не удалось получить хешрейт сети.")
+            
+        if reward:
+            print(f"Награда за последний блок: {reward:.8f} BTC")
+        else:
+            print("Не удалось получить награду за блок.")
+        print("-" * 50)
+
+if __name__ == "__main__":
+    asyncio.run(main())
