@@ -1,8 +1,8 @@
 # ===============================================================
 # Файл: bot/services/market_data_service.py (ОКОНЧАТЕЛЬНЫЙ FIX)
 # Описание: Исправлена ошибка с регистром при обращении к
-# 'settings.cryptocompare_api_key'. Добавлена диагностика API и
-# резервный источник для hashrate при нулевых значениях.
+# 'settings.cryptocompare_api_key'. Добавлена корректная конверсия
+# hashrate и исправлен URL mempool.space.
 # ===============================================================
 
 import asyncio
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 BLOCKCHAIN_INFO_BLOCK_COUNT_URL = "https://blockchain.info/q/getblockcount"
 BLOCKCHAIR_BTC_STATS_URL = "https://api.blockchair.com/bitcoin/stats"
 CRYPTOCOMPARE_BASE_URL = "https://min-api.cryptocompare.com/data"
-MEMPOOL_SPACE_HASH_RATE_URL = "https://mempool.space/api/v1/mining/hashrate"
+MEMPOOL_SPACE_HASH_RATE_URL = "https://mempool.space/api/v1/mining/hashrate/1w"
 
 class MarketDataService:
     def __init__(self, http_session: aiohttp.ClientSession):
@@ -68,7 +68,9 @@ class MarketDataService:
 
             net_info = network_data["Data"]
             price = float(price_data["USD"])
-            network_hashrate = float(net_info.get("hash_rate", 0))  # Поле может называться "hash_rate"
+            network_hashrate = float(net_info.get("hash_rate", 0)) / 1e12  # Конверсия из H/s в TH/s
+
+            logger.info(f"Converted hashrate for {symbol}: {network_hashrate} TH/s from {net_info.get('hash_rate', 0)} H/s")
 
             # Резервный источник для hashrate, если равно 0
             if network_hashrate == 0 and symbol == "BTC":
