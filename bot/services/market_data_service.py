@@ -1,7 +1,8 @@
 # ===============================================================
 # Файл: bot/services/market_data_service.py (АЛЬФА-РЕШЕНИЕ)
-# Описание: Использует Blockchain.com как основной источник данных
-# для хешрейта и награды за блок, исключая фиксированные значения.
+# Описание: Использует https://api.blockchain.info/q/hashrate для
+# хешрейта и https://blockchain.info/latestblock для награды,
+# исключая фиксированные значения.
 # ===============================================================
 
 import asyncio
@@ -21,7 +22,7 @@ BLOCKCHAIN_INFO_BLOCK_COUNT_URL = "https://blockchain.info/q/getblockcount"
 BLOCKCHAIR_BTC_STATS_URL = "https://api.blockchair.com/bitcoin/stats"
 CRYPTOCOMPARE_BASE_URL = "https://min-api.cryptocompare.com/data"
 MEMPOOL_SPACE_HASH_RATE_URL = "https://mempool.space/api/v1/mining/hashrate/1w"
-BLOCKCHAIN_INFO_POOLS_URL = "https://api.blockchain.info/pools"
+BLOCKCHAIN_INFO_HASH_RATE_URL = "https://api.blockchain.info/q/hashrate"
 BLOCKCHAIN_INFO_LATEST_BLOCK_URL = "https://blockchain.info/latestblock"
 
 class MarketDataService:
@@ -57,17 +58,17 @@ class MarketDataService:
 
             price = float(price_data["USD"])
 
-            # Получение хешрейта и награды за блок из Blockchain.com
-            pools_data = await make_request(self.http_session, BLOCKCHAIN_INFO_POOLS_URL)
-            logger.info(f"Raw Blockchain.com pools data for {symbol}: {pools_data}")
-            if not pools_data or "pools" not in pools_data:
+            # Получение хешрейта из Blockchain.com
+            hashrate_data = await make_request(self.http_session, BLOCKCHAIN_INFO_HASH_RATE_URL, response_type='text')
+            logger.info(f"Raw Blockchain.com hashrate data for {symbol}: {hashrate_data}")
+            if not hashrate_data or not hashrate_data.strip():
                 logger.error("Failed to fetch hashrate data from Blockchain.com.")
                 return None
 
-            total_hashrate = sum(pool.get("hashRate", 0) for pool in pools_data["pools"])
-            network_hashrate_ths = total_hashrate / 1e12  # Конверсия из H/s в TH/s
+            network_hashrate_ths = float(hashrate_data) / 1e12  # Конверсия из H/s в TH/s
             logger.info(f"Using Blockchain.com hashrate: {network_hashrate_ths} TH/s")
 
+            # Получение награды за блок из Blockchain.com
             latest_block = await make_request(self.http_session, BLOCKCHAIN_INFO_LATEST_BLOCK_URL)
             logger.info(f"Raw latest block data: {latest_block}")
             if not latest_block or "reward" not in latest_block:
