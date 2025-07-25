@@ -1,6 +1,6 @@
 # ===============================================================
 # Файл: main.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлена инициализация AsicService для соответствия фоновым задачам.
+# Описание: Исправлена инициализация CoinListService и AsicService для соответствия фоновым задачам.
 # ===============================================================
 import asyncio
 import logging
@@ -91,9 +91,9 @@ async def main():
     user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
-    asic_service = AsicService(redis_client=redis_client, http_session=http_session)  # Исправлено на http_session
+    asic_service = AsicService(redis_client=redis_client, http_session=http_session)
     # --- ИСПРАВЛЕНО: Передаем http_session в CoinListService ---
-    coin_list_service = CoinListService(session=http_session)
+    coin_list_service = CoinListService(http_session=http_session)
     # --------------------------------------------------------
     price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, session=http_session)
     news_service = NewsService()
