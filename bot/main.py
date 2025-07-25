@@ -1,6 +1,6 @@
 # ===============================================================
 # Файл: main.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлена инициализация CoinListService для
+# Описание: Исправлена инициализация CoinListService и MarketDataService для
 # соответствия фоновым задачам.
 # ===============================================================
 import asyncio
@@ -76,7 +76,6 @@ async def on_shutdown(
     logger.info("Bot session has been closed.")
     logger.info("Graceful shutdown complete.")
 
-
 async def main():
     """Основная асинхронная функция для настройки и запуска бота."""
     if not all([settings.bot_token, settings.redis_url, settings.gemini_api_key]):
@@ -92,14 +91,14 @@ async def main():
 
     user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
-    ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
-    asic_service = AsicService(redis_client=redis_client, http_session=http_session)
+    ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, session=http_session)
+    asic_service = AsicService(redis_client=redis_client, session=http_session)
     # --- ИСПРАВЛЕНО: Передаем http_session в CoinListService ---
-    coin_list_service = CoinListService(http_session=http_session)
+    coin_list_service = CoinListService(session=http_session)
     # --------------------------------------------------------
-    price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
+    price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, session=http_session)
     news_service = NewsService()
-    market_data_service = MarketDataService(http_session=http_session)
+    market_data_service = MarketDataService(session=http_session)
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
     admin_service = AdminService(redis_client=redis_client)
     
@@ -160,7 +159,6 @@ async def main():
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
     finally:
         logger.info("Polling finished.")
-
 
 if __name__ == '__main__':
     try:
