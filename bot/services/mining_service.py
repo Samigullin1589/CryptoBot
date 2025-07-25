@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/services/mining_service.py (АЛЬФА-ВЕРСИЯ)
-# Описание: Метод calculate оптимизирован для надежного расчета
-# доходности с учетом комиссии пула, валидных входных данных,
-# принудительного обновления данных и коррекции единиц хешрейта.
+# Файл: bot/services/mining_service.py (АЛЬФА-РЕШЕНИЕ)
+# Описание: Метод calculate оптимизирован с использованием
+# Blockchain.com как основного источника данных.
 # ===============================================================
 
 import logging
@@ -21,7 +20,7 @@ class MiningService:
         electricity_cost: float,
         pool_commission: float,
         coin_symbol: str = "BTC",
-        force_refresh: bool = False
+        force_refresh: bool = True
     ) -> str:
         """
         Производит расчет доходности, используя все параметры, включая комиссию пула.
@@ -37,7 +36,7 @@ class MiningService:
         if hashrate_ths <= 0 or power_consumption_watts <= 0 or electricity_cost < 0 or pool_commission < 0:
             return "❌ Неверные входные данные для расчета. Проверьте параметры (hashrate, мощность, стоимость электроэнергии и комиссию пула должны быть положительными)."
 
-        # Получение данных сети с принудительным обновлением при необходимости
+        # Получение данных сети с принудительным обновлением
         network_data = await self.market_data_service.get_coin_network_data(coin_symbol, force_refresh)
         if not network_data:
             return "❌ Не удалось получить данные о сети для расчета. Попробуйте позже или проверьте подключение к API."
@@ -46,21 +45,12 @@ class MiningService:
         network_hashrate_ths = network_data.get("network_hashrate", 0.0)
         block_reward_coins = network_data.get("block_reward", 0.0)
         
-        if network_hashrate_ths <= 0 or coin_price_usd <= 0:
+        if network_hashrate_ths <= 0 or coin_price_usd <= 0 or block_reward_coins <= 0:
             logger.error(
                 f"Received zero or invalid values from API for {coin_symbol}. "
-                f"Hashrate: {network_hashrate_ths} TH/s, Price: ${coin_price_usd}"
+                f"Hashrate: {network_hashrate_ths} TH/s, Price: ${coin_price_usd}, Block Reward: {block_reward_coins} BTC"
             )
-            return "❌ Получены неверные данные от API (цена или хешрейт равны нулю или некорректны). Расчет невозможен."
-
-        # Проверка реалистичности network_hashrate_ths (для BTC ожидается ~200,000-900,000 TH/s)
-        if coin_symbol == "BTC" and (network_hashrate_ths < 1000 or network_hashrate_ths > 1e6):
-            logger.warning(f"Unrealistic network hashrate for BTC: {network_hashrate_ths} TH/s. Falling back to mempool.space.")
-            network_data = await self.market_data_service.get_coin_network_data(coin_symbol, force_refresh=True)
-            if network_data:
-                network_hashrate_ths = network_data.get("network_hashrate", network_hashrate_ths)
-            if network_hashrate_ths <= 0:
-                return "❌ Не удалось получить реалистичный хешрейт сети. Расчет невозможен."
+            return "❌ Получены неверные данные от API (цена, хешрейт или награда за блок равны нулю или некорректны). Расчет невозможен."
 
         # Расчет доли пользователя в сети
         user_share = hashrate_ths / network_hashrate_ths
