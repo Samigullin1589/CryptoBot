@@ -1,9 +1,9 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (Версия с веб-скрапингом)
+# Файл: bot/services/market_data_service.py (Версия с веб-скрапингом v2)
 # Описание: Сервис для получения данных с 3-уровневой системой отказоустойчивости:
 # Уровень 1: Основное API
 # Уровень 2: Резервное API
-# Уровень 3: Веб-скрапинг как последний рубеж
+# Уровень 3: Веб-скрапинг как последний рубеж (цель: blockchain.com)
 # ===============================================================
 
 # --- НОВЫЕ ЗАВИСИМОСТИ ---
@@ -14,25 +14,27 @@
 import asyncio
 import logging
 import re
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict
 
 import aiohttp
 from async_lru import alru_cache
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 # Настройка логирования
 log = logging.getLogger(__name__)
 
 # --- КОНСТАНТЫ ---
-# Константы для валидации данных
 MIN_NETWORK_HASHRATE_THS = 100_000_000
 MAX_NETWORK_HASHRATE_THS = 10_000_000_000
 CURRENT_BLOCK_SUBSIDY_BTC = 3.125
 MAX_BLOCK_REWARD_BTC = 10.0
 FALLBACK_USD_RUB_RATE = 95.0
-# Заголовок для скрапинга, чтобы выглядеть как реальный браузер
 SCRAPING_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+    'Connection': 'keep-alive',
 }
 
 
@@ -56,58 +58,49 @@ class MarketDataService:
             return None
 
     async def _fetch_and_parse_html(self, url: str) -> Optional[BeautifulSoup]:
-        """Загружает и парсит HTML-страницу, используя lxml."""
         log.debug(f"Выполнение HTML-запроса к URL: {url}")
         try:
             async with self.session.get(url, headers=SCRAPING_HEADERS, timeout=15) as response:
                 response.raise_for_status()
                 html = await response.text()
-                # Используем 'lxml' как более быстрый и надежный парсер
                 return BeautifulSoup(html, 'lxml')
         except Exception as e:
             log.error(f"Ошибка при скрапинге страницы {url}: {e}")
             return None
 
     # --- МЕТОДЫ ВЕБ-СКРАПИНГА (УРОВЕНЬ 3) ---
-    async def _scrape_hashrate_from_btc_com(self) -> Optional[float]:
+    async def _scrape_hashrate_from_blockchain_com(self) -> Optional[float]:
         """
-        Извлекает хешрейт с сайта btc.com.
-        Это более хрупкий метод, используется как последний резерв.
+        Извлекает хешрейт с сайта blockchain.com/explorer.
         """
-        log.info("Скрапинг хешрейта с btc.com...")
-        soup = await self._fetch_and_parse_html("https://btc.com/btc")
+        log.info("Скрапинг хешрейта с blockchain.com...")
+        soup = await self._fetch_and_parse_html("https://www.blockchain.com/explorer")
         if not soup:
             return None
 
         try:
-            # Ищем заголовок "Hashrate", чтобы найти соответствующее ему значение.
-            # Это надежнее, чем искать по CSS-классу, который может измениться.
-            hashrate_title_element = soup.find('dt', string=re.compile(r'Hashrate'))
-            if not hashrate_title_element:
-                log.error("Не удалось найти элемент с заголовком 'Hashrate' на btc.com")
-                return None
+            # Ищем карточку со статистикой, в которой есть текст "Hash Rate"
+            hash_rate_card = soup.find(lambda tag: tag.name == 'div' and 'Hash Rate' in tag.text and 'EH/s' in tag.text)
             
-            # Значение хешрейта находится в следующем за заголовком теге <dd>
-            hashrate_value_element = hashrate_title_element.find_next_sibling('dd')
-            if not hashrate_value_element:
-                log.error("Не удалось найти элемент со значением хешрейта на btc.com")
+            if not hash_rate_card:
+                log.error("Не удалось найти карточку 'Hash Rate' на blockchain.com")
                 return None
 
-            hashrate_text = hashrate_value_element.text.strip() # Пример: "650.12 EH/s"
-            value_match = re.search(r'[\d\.]+', hashrate_text)
-            if not value_match:
+            # Внутри карточки ищем текст, содержащий число и "EH/s"
+            hashrate_text = hash_rate_card.get_text(separator=' ', strip=True)
+            match = re.search(r'([\d,\.]+)\s*EH/s', hashrate_text)
+            
+            if not match:
+                log.error(f"Не удалось извлечь значение хешрейта из текста: '{hashrate_text}'")
                 return None
 
-            value = float(value_match.group(0))
-            if 'EH/s' in hashrate_text:
-                return value * 1_000_000 # Конвертируем EH/s в TH/s
-            elif 'PH/s' in hashrate_text:
-                 return value * 1_000 # Конвертируем PH/s в TH/s
+            value_str = match.group(1).replace(',', '')
+            value_ehs = float(value_str)
             
-            log.error(f"Неизвестные единицы измерения хешрейта на btc.com: {hashrate_text}")
-            return None
+            # Конвертируем EH/s в TH/s (1 EH/s = 1,000,000 TH/s)
+            return value_ehs * 1_000_000
         except Exception as e:
-            log.error(f"Исключение при парсинге хешрейта с btc.com: {e}")
+            log.error(f"Исключение при парсинге хешрейта с blockchain.com: {e}")
             return None
 
 
@@ -130,12 +123,12 @@ class MarketDataService:
             return price
         
         log.error("Все API-источники цен на BTC недоступны.")
-        return None # В данном примере не добавляем скрапинг для цены, чтобы не усложнять
+        return None
 
     @alru_cache(ttl=600)
     async def get_network_hashrate_ths(self) -> Optional[float]:
         log.info("Запрос хешрейта сети...")
-        # Уровень 1 & 2: mempool.space API (считается надежным)
+        # Уровень 1 & 2: mempool.space API
         data = await self._fetch_json("https://mempool.space/api/v1/difficulty-adjustment")
         if data and isinstance(data.get("difficulty"), (int, float)) and data["difficulty"] > 0:
             difficulty = float(data["difficulty"])
@@ -147,9 +140,9 @@ class MarketDataService:
         log.warning("API mempool.space недоступен или вернул неверные данные.")
         # Уровень 3: Веб-скрапинг
         log.info("Переключение на Уровень 3: Веб-скрапинг для хешрейта.")
-        scraped_hashrate = await self._scrape_hashrate_from_btc_com()
+        scraped_hashrate = await self._scrape_hashrate_from_blockchain_com()
         if scraped_hashrate and MIN_NETWORK_HASHRATE_THS <= scraped_hashrate <= MAX_NETWORK_HASHRATE_THS:
-             log.info(f"Уровень 3 (Скрапинг): Хешрейт сети (btc.com): {scraped_hashrate / 1e6:,.2f} EH/s")
+             log.info(f"Уровень 3 (Скрапинг): Хешрейт сети (blockchain.com): {scraped_hashrate / 1e6:,.2f} EH/s")
              return scraped_hashrate
         
         log.error("Все источники хешрейта (API и скрапинг) недоступны.")
@@ -158,7 +151,6 @@ class MarketDataService:
     @alru_cache(ttl=600)
     async def get_block_reward_btc(self) -> Optional[float]:
         log.info("Запрос награды за блок...")
-        # mempool.space API
         block_data = await self._fetch_json("https://mempool.space/api/v1/blocks/tip")
         if block_data and 'extras' in block_data:
             total_fees_satoshi = block_data.get("extras", {}).get("totalFees", 0)
@@ -174,7 +166,6 @@ class MarketDataService:
     @alru_cache(ttl=3600)
     async def get_usd_rub_rate(self) -> float:
         log.info("Запрос курса USD/RUB...")
-        # CoinGecko API
         data = await self._fetch_json("https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=rub")
         if data and data.get("usd", {}).get("rub"):
             rate = float(data["usd"]["rub"])
@@ -183,4 +174,3 @@ class MarketDataService:
         
         log.error(f"Все источники курса USD/RUB недоступны. Возвращаю резервный курс: {FALLBACK_USD_RUB_RATE}")
         return FALLBACK_USD_RUB_RATE
-
