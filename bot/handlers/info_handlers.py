@@ -1,7 +1,8 @@
 # ===============================================================
-# Файл: bot/handlers/info_handlers.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлена ошибка в викторине (AttributeError).
-# Удален старый, конфликтующий код калькулятора.
+# Файл: bot/handlers/info_handlers.py (Финальная исправленная версия)
+# Описание: Исправлен конфликт состояний (FSM).
+# Теперь запуск сценария "Курс" принудительно сбрасывает
+# любое предыдущее незавершенное состояние.
 # ===============================================================
 import asyncio
 import logging
@@ -121,18 +122,24 @@ async def handle_asics_menu(update: Union[CallbackQuery, Message], asic_service:
     await temp_message.edit_text(text, reply_markup=get_main_menu_keyboard(), disable_web_page_preview=True)
 
 
+# <<< НАЧАЛО ИЗМЕНЕНИЙ: ГЕНИАЛЬНЫЙ FIX ДЛЯ FSM >>>
 @router.callback_query(F.data == "menu_price")
 @router.message(F.text == "💹 Курс")
 async def handle_price_menu(update: Union[CallbackQuery, Message], state: FSMContext, admin_service: AdminService):
     await admin_service.track_command_usage("💹 Курс")
+    # Альфа-решение: принудительно сбрасываем ЛЮБОЕ предыдущее состояние
+    await state.clear()
     
     text = "Курс какой монеты вас интересует?"
     markup = get_price_keyboard()
     
     message, _ = await get_message_and_chat_id(update)
+    # Используем message.answer вместо safe_edit_or_send для простоты в стартовом хендлере
     await message.answer(text, reply_markup=markup)
     
+    # Устанавливаем новое, чистое состояние
     await state.set_state(PriceInquiry.waiting_for_ticker)
+# <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 
 @router.callback_query(F.data == "menu_news")
@@ -212,14 +219,15 @@ async def handle_btc_status_menu(update: Union[CallbackQuery, Message], market_d
 
 @router.callback_query(F.data.startswith("price_"))
 async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService, admin_service: AdminService):
-    await state.clear()
+    # Этот хендлер теперь не должен ничего сбрасывать, т.к. стартовый уже это сделал
     query = call.data.split('_', 1)[1]
     
     if query == "other":
         await call.message.edit_text("Введите тикер монеты (напр. Aleo):")
-        await state.set_state(PriceInquiry.waiting_for_ticker)
+        # Состояние уже установлено, просто ждем ввода
         await call.answer()
     else:
+        await state.clear() # Сбрасываем состояние, т.к. получили тикер из кнопки
         await admin_service.track_command_usage(f"Курс: {query.upper()}")
         await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
         
@@ -231,6 +239,7 @@ async def handle_price_callback(call: CallbackQuery, state: FSMContext, price_se
 @router.message(PriceInquiry.waiting_for_ticker)
 async def process_ticker_input(message: Message, state: FSMContext, price_service: PriceService, admin_service: AdminService):
     await admin_service.track_command_usage("Курс: Другая монета")
+    # Сбрасываем состояние после получения ответа
     await state.clear()
     temp_msg = await message.answer("⏳ Получаю курс...")
     
@@ -238,7 +247,7 @@ async def process_ticker_input(message: Message, state: FSMContext, price_servic
     await temp_msg.edit_text(response_text, reply_markup=get_main_menu_keyboard())
 
 
-# --- БЛОК ВИКТОРИНЫ (ИСПРАВЛЕН) ---
+# --- БЛОК ВИКТОРИНЫ (БЕЗ ИЗМЕНЕНИЙ) ---
 
 @router.callback_query(F.data == "menu_quiz")
 @router.message(F.text == "🧠 Викторина")
@@ -252,10 +261,8 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
 
     temp_message = await message.answer("⏳ Генерирую вопрос...")
 
-    # --- ИСПРАВЛЕНО: Вызываем правильный метод и распаковываем результат ---
     question, options, correct_option_id = await quiz_service.get_random_question()
     
-    # Проверяем, что сервис не вернул сообщение об ошибке
     if not options:
         await temp_message.edit_text(question, reply_markup=get_main_menu_keyboard())
         return
@@ -270,4 +277,3 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         is_anonymous=False,
         reply_markup=get_quiz_keyboard()
     )
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
