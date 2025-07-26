@@ -1,8 +1,6 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (Финальная версия)
-# Описание: Сервис с максимальной отказоустойчивостью.
-# Использует многоуровневое резервирование для ВСЕХ внешних данных.
-# Актуально на 26 июля 2025 года.
+# Файл: bot/services/market_data_service.py (Исправленная версия)
+# Описание: Добавлен метод для получения Индекса Страха и Жадности.
 # ===============================================================
 
 import asyncio
@@ -147,3 +145,30 @@ class MarketDataService:
         
         log.error(f"КРИТИЧЕСКИЙ СБОЙ: Все источники курса USD/RUB недоступны. Возвращаю резервный курс: {FALLBACK_USD_RUB_RATE}")
         return FALLBACK_USD_RUB_RATE
+
+    # <<< НАЧАЛО ИЗМЕНЕНИЙ: ДОБАВЛЕН НОВЫЙ МЕТОД >>>
+    @alru_cache(ttl=3600 * 4) # Кэшируем на 4 часа, т.к. индекс обновляется раз в день
+    async def get_fear_and_greed_index(self) -> Optional[Dict]:
+        """
+        Получает Индекс Страха и Жадности с alternative.me.
+        """
+        log.info("Запрос Индекса Страха и Жадности...")
+        
+        # API от alternative.me
+        url = "https://api.alternative.me/fng/?limit=1"
+        data = await self._fetch(url)
+
+        if data and "data" in data and len(data["data"]) > 0:
+            index_data = data["data"][0]
+            # Валидируем, что получили нужные поля
+            if 'value' in index_data and 'value_classification' in index_data:
+                log.info(f"УСПЕХ: Индекс Страха и Жадности получен: {index_data['value']} ({index_data['value_classification']})")
+                return {
+                    "value": int(index_data['value']),
+                    "value_classification": index_data['value_classification']
+                }
+        
+        log.error("ОТКАЗ: Не удалось получить Индекс Страха и Жадности.")
+        return None
+    # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
+
