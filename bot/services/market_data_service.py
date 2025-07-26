@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (ФИНАЛЬНАЯ ВЕРСИЯ)
+# Файл: bot/services/market_data_service.py (ИСТИННО ФИНАЛЬНАЯ ВЕРСИЯ)
 # Описание: Сервис для получения данных с 3-уровневой системой
-# отказоустойчивости на базе нескольких независимых API.
-# Веб-скрапинг полностью удален в пользу надежности.
+# отказоустойчивости на базе трёх независимых API.
 # ===============================================================
 
 import asyncio
@@ -49,49 +48,62 @@ class MarketDataService:
         data = await self._fetch_json("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD")
         if data and isinstance(data.get("USD"), (int, float)) and data["USD"] > 0:
             price = float(data["USD"])
-            log.info(f"Уровень 1 (API): Цена BTC/USD (CryptoCompare): ${price:,.2f}")
+            log.info(f"УСПЕХ (Уровень 1): Цена BTC/USD (CryptoCompare): ${price:,.2f}")
             return price
         
         # Уровень 2: CoinGecko API
         data = await self._fetch_json("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")
         if data and data.get("bitcoin", {}).get("usd"):
             price = float(data["bitcoin"]["usd"])
-            log.info(f"Уровень 2 (API): Цена BTC/USD (CoinGecko): ${price:,.2f}")
+            log.info(f"УСПЕХ (Уровень 2): Цена BTC/USD (CoinGecko): ${price:,.2f}")
             return price
         
-        log.error("Все API-источники цен на BTC недоступны.")
+        log.error("КРИТИЧЕСКИЙ СБОЙ: Все API-источники цен на BTC недоступны.")
         return None
 
     @alru_cache(ttl=600)
     async def get_network_hashrate_ths(self) -> Optional[float]:
         log.info("Запрос хешрейта сети...")
-        # Уровень 1: mempool.space API
+
+        # --- Уровень 1: mempool.space ---
+        log.info("Уровень 1: Попытка получить хешрейт через mempool.space...")
         data = await self._fetch_json("https://mempool.space/api/v1/difficulty-adjustment")
         if data and isinstance(data.get("difficulty"), (int, float)) and data["difficulty"] > 0:
             difficulty = float(data["difficulty"])
             hashrate_ths = (difficulty * (2**32)) / 600 / 1e12
             if MIN_NETWORK_HASHRATE_THS <= hashrate_ths <= MAX_NETWORK_HASHRATE_THS:
-                log.info(f"Уровень 1 (API): Хешрейт сети (mempool.space): {hashrate_ths / 1e6:,.2f} EH/s")
+                log.info(f"УСПЕХ (Уровень 1): Хешрейт сети (mempool.space): {hashrate_ths / 1e6:,.2f} EH/s")
                 return hashrate_ths
+        log.warning("ОТКАЗ (Уровень 1): API mempool.space недоступен или вернул неверные данные.")
 
-        log.warning("API mempool.space недоступен. Переключение на Уровень 2.")
-        
-        # Уровень 2: Blockchair API
+        # --- Уровень 2: Blockchair ---
+        log.info("Уровень 2: Попытка получить хешрейт через Blockchair...")
         data = await self._fetch_json("https://api.blockchair.com/bitcoin/stats")
         if data and isinstance(data.get("data", {}).get("hashrate_24h"), (int, float)):
             hashrate_hs = float(data["data"]["hashrate_24h"])
             hashrate_ths = hashrate_hs / 1e12 # Конвертация из H/s в TH/s
             if MIN_NETWORK_HASHRATE_THS <= hashrate_ths <= MAX_NETWORK_HASHRATE_THS:
-                log.info(f"Уровень 2 (API): Хешрейт сети (Blockchair): {hashrate_ths / 1e6:,.2f} EH/s")
+                log.info(f"УСПЕХ (Уровень 2): Хешрейт сети (Blockchair): {hashrate_ths / 1e6:,.2f} EH/s")
                 return hashrate_ths
+        log.warning("ОТКАЗ (Уровень 2): API Blockchair недоступен или вернул неверные данные.")
+        
+        # --- Уровень 3: BTC.com ---
+        log.info("Уровень 3: Попытка получить хешрейт через BTC.com...")
+        data = await self._fetch_json("https://chain.api.btc.com/v3/block/latest")
+        if data and isinstance(data.get('data', {}).get('difficulty'), (int, float)) and data['data']['difficulty'] > 0:
+            difficulty = float(data['data']['difficulty'])
+            hashrate_ths = (difficulty * (2**32)) / 600 / 1e12
+            if MIN_NETWORK_HASHRATE_THS <= hashrate_ths <= MAX_NETWORK_HASHRATE_THS:
+                log.info(f"УСПЕХ (Уровень 3): Хешрейт сети (BTC.com): {hashrate_ths / 1e6:,.2f} EH/s")
+                return hashrate_ths
+        log.warning("ОТКАЗ (Уровень 3): API BTC.com недоступен или вернул неверные данные.")
 
-        log.error("Все API-источники хешрейта недоступны.")
+        log.error("КРИТИЧЕСКИЙ СБОЙ: Все API-источники хешрейта недоступны.")
         return None
 
     @alru_cache(ttl=600)
     async def get_block_reward_btc(self) -> Optional[float]:
         log.info("Запрос награды за блок...")
-        # Источник: mempool.space API
         block_data = await self._fetch_json("https://mempool.space/api/v1/blocks/tip")
         if block_data and 'extras' in block_data:
             total_fees_satoshi = block_data.get("extras", {}).get("totalFees", 0)
@@ -107,7 +119,6 @@ class MarketDataService:
     @alru_cache(ttl=3600)
     async def get_usd_rub_rate(self) -> float:
         log.info("Запрос курса USD/RUB...")
-        # Источник: CoinGecko API
         data = await self._fetch_json("https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=rub")
         if data and data.get("usd", {}).get("rub"):
             rate = float(data["usd"]["rub"])
