@@ -15,3 +15,4 @@ pydantic
 async-lru
 backoff
 rapidfuzz
+requests
