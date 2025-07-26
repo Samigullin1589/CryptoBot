@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/mining_handlers.py (v9 - Финальный)
-# Описание: Разделен хэндлер выбора ASIC на два (пагинация и выбор)
-# для повышения надежности и исправления "тихой" ошибки.
+# Файл: bot/handlers/mining_handlers.py (v11 - Полная финальная версия)
+# Описание: Исправлено отображение названий в калькуляторе.
+# Восстановлен полный код "Виртуального майнинга".
 # ===============================================================
 import time
 import logging
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 # ===============================================================
-# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (ПОЛНЫЙ КОД) ---
 # ===============================================================
 
 @router.callback_query(F.data == "menu_mining")
@@ -331,10 +331,13 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> Inline
             asic.power and asic.power > 0,
             asic.algorithm and asic.algorithm != "Unknown"
         ])
+        
+        display_name = getattr(asic, 'model', asic.name)
+
         if is_valid:
-            builder.button(text=f"✅ {asic.name}", callback_data=f"prof_calc_select_{i + start}")
+            builder.button(text=f"✅ {display_name}", callback_data=f"prof_calc_select_{i + start}")
         else:
-            builder.button(text=f"🚫 {asic.name} (нет данных)", callback_data="prof_calc_nodata")
+            builder.button(text=f"🚫 {display_name} (нет данных)", callback_data="prof_calc_nodata")
 
     builder.adjust(2)
     nav_buttons = []
@@ -426,7 +429,6 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
 async def process_nodata_asic_selection(call: CallbackQuery):
     await call.answer("ℹ️ Для этой модели нет всех необходимых данных, расчет невозможен.", show_alert=True)
 
-# <<< НАЧАЛО ИЗМЕНЕНИЙ >>>
 @router.callback_query(ProfitCalculator.waiting_for_asic_selection, F.data.startswith("prof_calc_page_"))
 async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     page = int(call.data.split("_")[3])
@@ -443,7 +445,6 @@ async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     try:
         await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard.as_markup())
     except TelegramBadRequest:
-        # Сообщение не изменилось, просто отвечаем на колбэк
         pass
     finally:
         await call.answer()
@@ -468,7 +469,6 @@ async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
     logger.info(f"User {call.from_user.id} proceeds to commission entry. Setting state to waiting_for_pool_commission.")
     await state.set_state(ProfitCalculator.waiting_for_pool_commission)
     await call.answer()
-# <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 @router.message(ProfitCalculator.waiting_for_pool_commission)
 async def process_pool_commission(message: Message, state: FSMContext, mining_service: MiningService):
