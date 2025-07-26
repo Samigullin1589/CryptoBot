@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/admin/spam_handler.py (v6 - Финальный)
-# Описание: Исправлен текст уведомления о бане для корректного
-# отображения ограничений Telegram API.
+# Файл: bot/handlers/admin/spam_handler.py (v7 - Фикс удаления)
+# Описание: Улучшена логика удаления команды администратора,
+# чтобы избежать проблем с race condition.
 # ===============================================================
 import re
 import logging
@@ -45,13 +45,24 @@ async def handle_ban_user(message: types.Message, bot: Bot, user_service: UserSe
 
     # --- Определение режима работы ---
     if message.reply_to_message and message.chat.type != 'private':
+        # <<< ИЗМЕНЕНИЕ: Сначала пытаемся удалить команду админа >>>
+        try:
+            await message.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete admin's command message {message.message_id}: {e}")
+            try:
+                await bot.send_message(admin_user.id, f"ℹ️ Не удалось удалить вашу команду <code>!ban</code> в чате. Возможно, у меня недостаточно прав или прошло слишком много времени.")
+            except Exception:
+                pass # Если не можем уведомить, ничего страшного
+        # <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
+
         target_user_id = message.reply_to_message.from_user.id
         target_chat_id = message.chat.id
         spam_message_to_learn = message.reply_to_message
         args = message.text.split(maxsplit=1)
         if len(args) > 1: reason = args[1]
-        await message.delete()
-    else:
+
+    else: # Режим бана из ЛС
         args = message.text.split()[1:]
         if len(args) < 2:
             await message.reply("⚠️ Неверный формат. Используйте:\n- В группе (ответом): <code>!ban [причина]</code>\n- Из ЛС: <code>!ban [chat_id] [user_id] [причина]</code>")
@@ -69,7 +80,6 @@ async def handle_ban_user(message: types.Message, bot: Bot, user_service: UserSe
         if not bot_member.status == ChatMemberStatus.ADMINISTRATOR or not bot_member.can_restrict_members:
             await message.reply(f"❌ Я не администратор в чате <code>{target_chat_id}</code> или у меня нет права банить.")
             return
-        # <<< ИЗМЕНЕНИЕ: Добавлена проверка права на удаление сообщений >>>
         can_delete = bot_member.can_delete_messages
     except Exception as e:
         logger.error(f"Could not get bot status in chat {target_chat_id}: {e}")
@@ -107,7 +117,6 @@ async def handle_ban_user(message: types.Message, bot: Bot, user_service: UserSe
         except Exception:
             target_link = f"Пользователь с ID <code>{target_user_id}</code>"
         
-        # <<< ИЗМЕНЕНИЕ: Улучшен текст публичного уведомления >>>
         if can_delete:
             deletion_info = "<i>Последние сообщения пользователя в этом чате были удалены.</i>"
         else:
@@ -157,6 +166,11 @@ async def handle_warn_user_command(message: types.Message, bot: Bot, user_servic
     if not message.reply_to_message:
         await message.reply("⚠️ Эту команду нужно использовать в ответ на сообщение пользователя.")
         return
+    
+    try:
+        await message.delete()
+    except Exception: pass
+
     target_user, admin_user = message.reply_to_message.from_user, message.from_user
     reason = "Нарушение правил."
     args = message.text.split(maxsplit=1)
@@ -165,22 +179,27 @@ async def handle_warn_user_command(message: types.Message, bot: Bot, user_servic
     updated_profile = await user_service.get_user_profile(target_user.id, message.chat.id)
     admin_link, target_link = f"<a href='tg://user?id={admin_user.id}'>{sanitize_html(admin_user.full_name)}</a>", f"<a href='tg://user?id={target_user.id}'>{sanitize_html(target_user.full_name)}</a>"
     public_text = f"❗️ Администратор {admin_link} вынес предупреждение пользователю {target_link}.\n\n<b>Причина:</b> {sanitize_html(reason)}\n📉 Рейтинг доверия снижен. Текущий рейтинг: <b>{updated_profile.trust_score}</b>."
-    await message.reply_to_message.delete()
-    await message.delete()
     await bot.send_message(message.chat.id, public_text)
+    await message.reply_to_message.delete()
+
 
 @admin_spam_router.message(Command("mute", "мут", prefix="!/"), IsAdminFilter(), GROUP_ONLY_FILTER)
 async def handle_mute_user_command(message: types.Message, bot: Bot):
     if not message.reply_to_message:
         await message.reply("⚠️ Эту команду нужно использовать в ответ на сообщение пользователя.")
         return
+    
+    try:
+        await message.delete()
+    except Exception: pass
+        
     args = message.text.split(maxsplit=2)
     if len(args) < 2:
-        await message.reply("⚠️ Укажите длительность мута. Например: <code>!mute 30m Причина</code>")
+        await message.answer("⚠️ Укажите длительность мута. Например: <code>!mute 30m Причина</code>")
         return
     duration = parse_duration(args[1])
     if not duration:
-        await message.reply("⚠️ Неверный формат времени. Используйте 'm', 'h', 'd'.")
+        await message.answer("⚠️ Неверный формат времени. Используйте 'm', 'h', 'd'.")
         return
     reason = "Нарушение правил."
     if len(args) > 2: reason = args[2]
@@ -189,9 +208,9 @@ async def handle_mute_user_command(message: types.Message, bot: Bot):
     await bot.restrict_chat_member(chat_id=message.chat.id, user_id=target_user.id, permissions=types.ChatPermissions(), until_date=mute_end_timestamp)
     admin_link, target_link = f"<a href='tg://user?id={admin_user.id}'>{sanitize_html(admin_user.full_name)}</a>", f"<a href='tg://user?id={target_user.id}'>{sanitize_html(target_user.full_name)}</a>"
     public_text = f"🔇 Пользователь {target_link} был замучен администратором {admin_link} до {mute_end_timestamp.strftime('%Y-%m-%d %H:%M')}.\n\n<b>Причина:</b> {sanitize_html(reason)}"
-    await message.reply_to_message.delete()
-    await message.delete()
     await bot.send_message(message.chat.id, public_text)
+    await message.reply_to_message.delete()
+
 
 @admin_spam_router.message(Command("unmute", "размут", prefix="!/"), IsAdminFilter(), GROUP_ONLY_FILTER)
 async def handle_unmute_user_command(message: types.Message, bot: Bot, user_service: UserService):
@@ -205,6 +224,7 @@ async def handle_unmute_user_command(message: types.Message, bot: Bot, user_serv
     await message.delete()
     await message.answer(f"✅ С пользователя {sanitize_html(target_user.full_name)} сняты ограничения.")
 
+
 @admin_spam_router.message(Command("add_stop_word", prefix="!/"), IsAdminFilter())
 async def handle_add_stop_word_command(message: types.Message, ai_service: AIService):
     command_args = message.text.split(maxsplit=1)
@@ -216,6 +236,7 @@ async def handle_add_stop_word_command(message: types.Message, ai_service: AISer
     if success: await message.reply(f"✅ Слово '<code>{word}</code>' добавлено в стоп-лист.")
     else: await message.reply(f"⚠️ Слово '<code>{word}</code>' уже было в стоп-листе.")
 
+
 @admin_spam_router.message(Command("del_stop_word", prefix="!/"), IsAdminFilter())
 async def handle_delete_stop_word_command(message: types.Message, ai_service: AIService):
     command_args = message.text.split(maxsplit=1)
@@ -226,6 +247,7 @@ async def handle_delete_stop_word_command(message: types.Message, ai_service: AI
     success = await ai_service.remove_stop_word(word)
     if success: await message.reply(f"✅ Слово '<code>{word}</code>' удалено.")
     else: await message.reply(f"⚠️ Слово '<code>{word}</code>' не найдено в стоп-листе.")
+
 
 @admin_spam_router.message(Command("list_stop_words", prefix="!/"), IsAdminFilter())
 async def handle_list_stop_words_command(message: types.Message, ai_service: AIService):
