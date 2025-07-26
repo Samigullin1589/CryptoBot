@@ -1,5 +1,6 @@
 # ===============================================================
-# Файл: bot/handlers/common_handlers.py (Полная и исправленная версия)
+# Файл: bot/handlers/common_handlers.py (Финальная исправленная версия)
+# Описание: Убран ошибочный импорт.
 # ===============================================================
 import asyncio
 import logging
@@ -15,7 +16,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config.settings import settings
-from bot.keyboards.keyboards import get_main_menu_keyboard, get_onboarding_start_keyboard, get_onboarding_step_keyboard
+# <<< ИСПРАВЛЕНИЕ: Удалены get_onboarding_start_keyboard и get_onboarding_step_keyboard, так как они определены в этом же файле >>>
+from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.utils.helpers import sanitize_html
 from bot.services.user_service import UserService
 from bot.services.ai_consultant_service import AIConsultantService
@@ -26,6 +28,7 @@ from bot.utils.states import PriceInquiry
 router = Router()
 logger = logging.getLogger(__name__)
 
+# --- Функции для онбординга, которые должны быть здесь ---
 def get_onboarding_start_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="🚀 Начать знакомство", callback_data="onboarding_start")
