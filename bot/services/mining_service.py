@@ -1,89 +1,135 @@
 # ===============================================================
-# Файл: bot/services/mining_service.py (АЛЬФА-РЕШЕНИЕ)
-# Описание: Метод calculate оптимизирован с использованием
-# Blockchain.com как основного источника данных.
+# Файл: bot/services/mining_service.py
+# Описание: Сервис для выполнения расчетов доходности майнинга.
 # ===============================================================
 
 import logging
+import asyncio
+from textwrap import dedent
+
 from bot.services.market_data_service import MarketDataService
 
-logger = logging.getLogger(__name__)
+# Настройка логирования
+log = logging.getLogger(__name__)
 
 class MiningService:
+    """
+    Сервис, отвечающий за расчеты, связанные с майнингом.
+    """
+
     def __init__(self, market_data_service: MarketDataService):
-        self.market_data_service = market_data_service
+        """
+        Инициализация сервиса.
+        :param market_data_service: Экземпляр сервиса для получения рыночных данных.
+        """
+        self.market_data = market_data_service
+        log.info("MiningService инициализирован.")
 
     async def calculate(
-        self, 
-        hashrate_ths: float, 
-        power_consumption_watts: int, 
+        self,
+        hashrate_ths: float,
+        power_consumption_watts: int,
         electricity_cost: float,
-        pool_commission: float,
-        coin_symbol: str = "BTC",
-        force_refresh: bool = True
+        pool_commission: float
     ) -> str:
         """
-        Производит расчет доходности, используя все параметры, включая комиссию пула.
-        force_refresh: принудительно обновляет данные сети, игнорируя кэш.
+        Выполняет полный расчет доходности майнинга.
+
+        :param hashrate_ths: Хешрейт оборудования в TH/s.
+        :param power_consumption_watts: Потребляемая мощность в Ваттах.
+        :param electricity_cost: Стоимость электроэнергии в USD за кВт/ч.
+        :param pool_commission: Комиссия пула в процентах.
+        :return: Отформатированная строка с результатами расчета.
         """
-        logger.info(
-            f"Calculating for {hashrate_ths} TH/s, {power_consumption_watts}W, "
-            f"coin: {coin_symbol}, electricity_cost: ${electricity_cost}/kWh, pool_fee: {pool_commission}%, "
-            f"force_refresh={force_refresh}"
+        log.info(
+            f"Запуск расчета для {hashrate_ths} TH/s, {power_consumption_watts}W, "
+            f"э/э: ${electricity_cost}/kWh, комиссия пула: {pool_commission}%"
         )
 
-        # Валидация входных данных
-        if hashrate_ths <= 0 or power_consumption_watts <= 0 or electricity_cost < 0 or pool_commission < 0:
-            return "❌ Неверные входные данные для расчета. Проверьте параметры (hashrate, мощность, стоимость электроэнергии и комиссию пула должны быть положительными)."
-
-        # Получение данных сети с принудительным обновлением
-        network_data = await self.market_data_service.get_coin_network_data(coin_symbol, force_refresh)
-        if not network_data:
-            return "❌ Не удалось получить данные о сети для расчета. Попробуйте позже или проверьте подключение к API."
-
-        coin_price_usd = network_data.get("price", 0.0)
-        network_hashrate_ths = network_data.get("network_hashrate", 0.0)
-        block_reward_coins = network_data.get("block_reward", 0.0)
-        
-        if network_hashrate_ths <= 0 or coin_price_usd <= 0 or block_reward_coins <= 0:
-            logger.error(
-                f"Received zero or invalid values from API for {coin_symbol}. "
-                f"Hashrate: {network_hashrate_ths} TH/s, Price: ${coin_price_usd}, Block Reward: {block_reward_coins} BTC"
-            )
-            return "❌ Получены неверные данные от API (цена, хешрейт или награда за блок равны нулю или некорректны). Расчет невозможен."
-
-        # Расчет доли пользователя в сети
-        user_share = hashrate_ths / network_hashrate_ths
-        blocks_per_day = (60 / 10) * 24  # Предполагаем среднее время блока 10 минут для BTC
-        coins_per_day = user_share * block_reward_coins * blocks_per_day
-        gross_income_usd_day = coins_per_day * coin_price_usd
-        
-        # Расчет расходов на электроэнергию
-        power_consumption_kwh_day = (power_consumption_watts * 24) / 1000
-        electricity_cost_day = power_consumption_kwh_day * electricity_cost
-        
-        # Расчет комиссии пула
-        pool_fee_usd_day = gross_income_usd_day * (pool_commission / 100)
-        net_profit_usd_day = gross_income_usd_day - electricity_cost_day - pool_fee_usd_day
-        
-        net_profit_usd_month = net_profit_usd_day * 30
-
-        # Форматирование ответа
-        response_message = (
-            f"<b>📊 Результаты расчета для {hashrate_ths} TH/s ({power_consumption_watts} Вт):</b>\n\n"
-            f"<b>Доход (грязными):</b>\n"
-            f"  - В день: <b>${gross_income_usd_day:.2f}</b>\n"
-            f"  - В месяц: <b>${gross_income_usd_day * 30:.2f}</b>\n\n"
-            f"<b>Расходы:</b>\n"
-            f"  - Электричество: <b>${electricity_cost_day:.2f}/день</b> (при ${electricity_cost:.4f}/кВтч)\n"
-            f"  - Комиссия пула: <b>${pool_fee_usd_day:.2f}/день</b> ({pool_commission}%)\n\n"
-            f"<b>✅ Чистая прибыль:</b>\n"
-            f"  - В день: <b>${net_profit_usd_day:.2f}</b>\n"
-            f"  - В месяц: <b>${net_profit_usd_month:.2f}</b>\n\n"
-            f"<pre>Расчет основан на текущих данных:\n"
-            f"Цена {coin_symbol}: ${coin_price_usd:,.2f}\n"
-            f"Хешрейт сети: {network_hashrate_ths:,.4f} TH/s\n"
-            f"Награда за блок: {block_reward_coins:.8f} {coin_symbol}</pre>"
+        # Шаг 1: Асинхронно получаем все необходимые данные от market_data_service
+        # Это гораздо эффективнее, чем делать запросы последовательно.
+        results = await asyncio.gather(
+            self.market_data.get_btc_price_usd(),
+            self.market_data.get_network_hashrate_ths(),
+            self.market_data.get_block_reward_btc(),
+            self.market_data.get_usd_rub_rate(),
+            return_exceptions=True  # Возвращаем исключения вместо падения
         )
-        
-        return response_message
+
+        # Распаковываем результаты
+        btc_price_usd, network_hashrate_ths, block_reward_btc, usd_rub_rate = results
+
+        # Шаг 2: Проверяем, все ли данные были успешно получены
+        missing_data = []
+        if isinstance(btc_price_usd, Exception) or not btc_price_usd:
+            missing_data.append("цену BTC")
+            log.error(f"Ошибка получения цены BTC: {btc_price_usd}")
+        if isinstance(network_hashrate_ths, Exception) or not network_hashrate_ths:
+            missing_data.append("хешрейт сети")
+            log.error(f"Ошибка получения хешрейта сети: {network_hashrate_ths}")
+        if isinstance(block_reward_btc, Exception) or not block_reward_btc:
+            missing_data.append("награду за блок")
+            log.error(f"Ошибка получения награды за блок: {block_reward_btc}")
+
+        if missing_data:
+            error_message = f"Не удалось получить ключевые данные для расчета: {', '.join(missing_data)}. Попробуйте позже."
+            log.error(f"Расчет прерван из-за отсутствия данных: {missing_data}")
+            return f"❌ <b>Ошибка:</b> {error_message}"
+
+        # Шаг 3: Выполняем расчеты
+        # 3.1 Расчет "грязного" дохода
+        seconds_in_day = 86400.0
+        # Доля майнера в общем хешрейте сети
+        user_share_of_network = hashrate_ths / network_hashrate_ths
+        # Приблизительное количество блоков, находимых в день
+        blocks_found_per_day = seconds_in_day / 600  # Целевое время блока ~10 минут
+        # Доход в BTC и USD
+        gross_revenue_btc_daily = user_share_of_network * blocks_found_per_day * block_reward_btc
+        gross_revenue_usd_daily = gross_revenue_btc_daily * btc_price_usd
+
+        # 3.2 Расчет расходов
+        # Расходы на электроэнергию
+        power_kwh_daily = (power_consumption_watts / 1000.0) * 24
+        electricity_cost_usd_daily = power_kwh_daily * electricity_cost
+        # Расходы на комиссию пула
+        pool_fee_decimal = pool_commission / 100.0
+        pool_fee_usd_daily = gross_revenue_usd_daily * pool_fee_decimal
+
+        # 3.3 Расчет чистой прибыли
+        net_profit_usd_daily = gross_revenue_usd_daily - electricity_cost_usd_daily - pool_fee_usd_daily
+
+        # Шаг 4: Форматируем итоговый текст
+        # Используем dedent для удаления лишних отступов в многострочной f-строке
+        result_text = dedent(f"""
+            📊 <b>Результаты расчета доходности</b>
+
+            <b>Исходные данные:</b>
+            - Цена BTC: <code>${btc_price_usd:,.2f}</code>
+            - Курс USD/RUB: <code>{usd_rub_rate:,.2f} ₽</code> (если доступен)
+            - Хешрейт сети: <code>{network_hashrate_ths / 1_000_000:,.2f} EH/s</code>
+            - Награда за блок: <code>{block_reward_btc:.4f} BTC</code>
+
+            ---
+
+            <b>💰 Доходы (грязными):</b>
+            - В день: <code>${gross_revenue_usd_daily:.2f}</code> / <code>{gross_revenue_usd_daily * usd_rub_rate:.2f} ₽</code>
+            - В месяц: <code>${gross_revenue_usd_daily * 30.44:.2f}</code> / <code>{gross_revenue_usd_daily * 30.44 * usd_rub_rate:.2f} ₽</code>
+
+            <b>🔌 Расходы:</b>
+            - Электричество/день: <code>${electricity_cost_usd_daily:.2f}</code>
+            - Комиссия пула ({pool_commission}%)/день: <code>${pool_fee_usd_daily:.2f}</code>
+            - <b>Всего расходов/день:</b> <code>${electricity_cost_usd_daily + pool_fee_usd_daily:.2f}</code>
+
+            ---
+
+            ✅ <b>Чистая прибыль:</b>
+            - <b>В день:</b> <code>${net_profit_usd_daily:.2f}</code> / <code>{net_profit_usd_daily * usd_rub_rate:.2f} ₽</code>
+            - <b>В месяц:</b> <code>${net_profit_usd_daily * 30.44:.2f}</code> / <code>{net_profit_usd_daily * 30.44 * usd_rub_rate:.2f} ₽</code>
+            - <b>В год:</b> <code>${net_profit_usd_daily * 365.25:.2f}</code> / <code>{net_profit_usd_daily * 365.25 * usd_rub_rate:.2f} ₽</code>
+        """)
+
+        if net_profit_usd_daily < 0:
+            result_text += "\n\n⚠️ <b>Внимание:</b> при текущих параметрах майнинг невыгоден."
+
+        log.info(f"Расчет успешно завершен. Чистая прибыль: ${net_profit_usd_daily:.2f}/день.")
+        return result_text.strip()
