@@ -1,5 +1,6 @@
 # ===============================================================
-# Файл: main.py (Полная и исправленная версия)
+# Файл: main.py (Финальная версия)
+# Описание: Подключены все актуальные роутеры, старые удалены.
 # ===============================================================
 import asyncio
 import logging
@@ -110,7 +111,7 @@ async def main():
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
-    dp.include_router(spam_handler.admin_spam_router)
+    dp.include_router(spam_handler.admin_spam_router) # <<< ЕДИНЫЙ РОУТЕР ДЛЯ МОДЕРАЦИИ
     dp.include_router(crypto_center_handlers.router)
     dp.include_router(asic_info_handlers.router) 
     dp.include_router(info_handlers.router)
@@ -132,8 +133,9 @@ async def main():
         "mining_service": mining_service,
         "quiz_service": quiz_service,
         "coin_list_service": coin_list_service,
-        "scheduler": setup_scheduler()
     }
+    
+    scheduler = setup_scheduler()
     
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
@@ -141,7 +143,7 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode...")
-        await dp.start_polling(bot, **workflow_data)
+        await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
     finally:
