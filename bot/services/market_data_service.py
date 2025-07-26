@@ -1,6 +1,6 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (Финальная версия)
-# Описание: Добавлены все недостающие методы для инфо-раздела.
+# Файл: bot/services/market_data_service.py (Финальная версия v2)
+# Описание: Исправлен источник данных для Халвинга.
 # ===============================================================
 
 import asyncio
@@ -141,37 +141,53 @@ class MarketDataService:
         log.error("ОТКАЗ: Не удалось получить Индекс Страха и Жадности.")
         return None
 
-    # <<< НАЧАЛО ИЗМЕНЕНИЙ: ДОБАВЛЕНЫ НОВЫЕ МЕТОДЫ >>>
+    # <<< НАЧАЛО ИЗМЕНЕНИЙ: ИСПРАВЛЕН МЕТОД >>>
     @alru_cache(ttl=3600) # Кэшируем на 1 час
     async def get_halving_info(self) -> str:
         """Получает информацию о следующем халвинге Bitcoin."""
-        log.info("Запрос информации о халвинге...")
-        data = await self._fetch("https://mempool.space/api/v1/halving")
-        if data and 'remainingBlocks' in data and 'estimatedTime' in data:
+        log.info("Запрос информации о халвинге через Blockchair...")
+        
+        # Новый надежный источник - Blockchair
+        data = await self._fetch("https://api.blockchair.com/bitcoin/stats")
+        
+        # Проверяем, что данные получены и содержат нужную информацию
+        if data and "data" in data and isinstance(data["data"], dict):
+            halving_data = data["data"]
             try:
-                remaining_blocks = data['remainingBlocks']
-                estimated_date_str = data['estimatedTime'].split('T')[0]
-                estimated_date = datetime.strptime(estimated_date_str, '%Y-%m-%d')
-                current_reward = CURRENT_BLOCK_SUBSIDY_BTC
-                next_reward = current_reward / 2
+                # Извлекаем данные
+                remaining_blocks = halving_data.get('next_halving_blocks')
+                estimated_date_str = halving_data.get('next_halving_estimated_date')
+                next_reward = halving_data.get('next_halving_reward')
+                
+                # Проверяем, что все ключевые поля существуют
+                if remaining_blocks is None or estimated_date_str is None or next_reward is None:
+                    raise KeyError("Отсутствуют ключевые поля в ответе от Blockchair")
+                
+                # Форматируем дату
+                estimated_date = datetime.strptime(estimated_date_str, '%Y-%m-%d %H:%M:%S')
+                
+                # Текущая награда
+                current_reward = float(next_reward) * 2
+
                 text = (
                     f"⏳ <b>Обратный отсчет до халвинга Bitcoin</b>\n\n"
                     f"◽️ Осталось блоков: <code>{remaining_blocks:,}</code>\n"
                     f"◽️ Следующий халвинг: примерно <b>{estimated_date.strftime('%d %B %Y г.')}</b>\n\n"
                     f"Награда за блок уменьшится с <code>{current_reward} BTC</code> до <code>{next_reward} BTC</code>."
                 )
-                log.info("УСПЕХ: Информация о халвинге получена.")
+                log.info("УСПЕХ: Информация о халвинге получена через Blockchair.")
                 return text
             except (ValueError, KeyError) as e:
-                log.error(f"Ошибка парсинга данных о халвинге: {e}")
+                log.error(f"Ошибка парсинга данных о халвинге от Blockchair: {e}")
+        
         log.error("ОТКАЗ: Не удалось получить информацию о халвинге.")
         return "❌ Не удалось получить информацию о халвинге. Попробуйте позже."
+    # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
     @alru_cache(ttl=60) # Кэшируем на 1 минуту
     async def get_btc_network_status(self) -> str:
         """Получает общую статистику сети Bitcoin."""
         log.info("Запрос статуса сети Bitcoin...")
-        # Используем два независимых запроса для большей надежности
         stats_data_task = self._fetch("https://api.blockchair.com/bitcoin/stats")
         fees_data_task = self._fetch("https://mempool.space/api/v1/fees/recommended")
         stats_data, fees_data = await asyncio.gather(stats_data_task, fees_data_task)
@@ -182,7 +198,6 @@ class MarketDataService:
                 difficulty = stats.get('difficulty', 0)
                 mempool_txs = stats.get('mempool_transactions', 0)
                 suggested_fee = fees_data.get('fastestFee', 'N/A') if fees_data else 'N/A'
-
                 text = (
                     f"📡 <b>Текущий статус сети Bitcoin</b>\n\n"
                     f"◽️ Сложность: <code>{difficulty:,.0f}</code>\n"
@@ -196,4 +211,3 @@ class MarketDataService:
         
         log.error("ОТКАЗ: Не удалось получить статус сети Bitcoin.")
         return "❌ Не удалось получить статус сети Bitcoin. Попробуйте позже."
-    # <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
