@@ -1,9 +1,7 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (Версия с веб-скрапингом v2)
-# Описание: Сервис для получения данных с 3-уровневой системой отказоустойчивости:
-# Уровень 1: Основное API
-# Уровень 2: Резервное API
-# Уровень 3: Веб-скрапинг как последний рубеж (цель: blockchain.com)
+# Файл: bot/services/market_data_service.py (Финальная версия v3)
+# Описание: Сервис для получения данных с 3-уровневой системой отказоустойчивости.
+# Решена проблема с Brotli-сжатием.
 # ===============================================================
 
 # --- НОВЫЕ ЗАВИСИМОСТИ ---
@@ -18,7 +16,7 @@ from typing import Optional, Dict
 
 import aiohttp
 from async_lru import alru_cache
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 
 # Настройка логирования
 log = logging.getLogger(__name__)
@@ -32,7 +30,10 @@ FALLBACK_USD_RUB_RATE = 95.0
 SCRAPING_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
+    # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ ---
+    # Мы больше не сообщаем серверу, что поддерживаем сжатие 'br' (Brotli).
+    # Теперь сервер будет использовать стандартный 'gzip', который точно поддерживается.
+    'Accept-Encoding': 'gzip, deflate',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Connection': 'keep-alive',
 }
@@ -79,14 +80,12 @@ class MarketDataService:
             return None
 
         try:
-            # Ищем карточку со статистикой, в которой есть текст "Hash Rate"
             hash_rate_card = soup.find(lambda tag: tag.name == 'div' and 'Hash Rate' in tag.text and 'EH/s' in tag.text)
             
             if not hash_rate_card:
                 log.error("Не удалось найти карточку 'Hash Rate' на blockchain.com")
                 return None
 
-            # Внутри карточки ищем текст, содержащий число и "EH/s"
             hashrate_text = hash_rate_card.get_text(separator=' ', strip=True)
             match = re.search(r'([\d,\.]+)\s*EH/s', hashrate_text)
             
@@ -97,7 +96,6 @@ class MarketDataService:
             value_str = match.group(1).replace(',', '')
             value_ehs = float(value_str)
             
-            # Конвертируем EH/s в TH/s (1 EH/s = 1,000,000 TH/s)
             return value_ehs * 1_000_000
         except Exception as e:
             log.error(f"Исключение при парсинге хешрейта с blockchain.com: {e}")
@@ -108,14 +106,12 @@ class MarketDataService:
     @alru_cache(ttl=600)
     async def get_btc_price_usd(self) -> Optional[float]:
         log.info("Запрос цены BTC/USD...")
-        # Уровень 1: CryptoCompare API
         data = await self._fetch_json("https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD")
         if data and isinstance(data.get("USD"), (int, float)) and data["USD"] > 0:
             price = float(data["USD"])
             log.info(f"Уровень 1 (API): Цена BTC/USD (CryptoCompare): ${price:,.2f}")
             return price
         
-        # Уровень 2: CoinGecko API
         data = await self._fetch_json("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd")
         if data and data.get("bitcoin", {}).get("usd"):
             price = float(data["bitcoin"]["usd"])
@@ -128,7 +124,6 @@ class MarketDataService:
     @alru_cache(ttl=600)
     async def get_network_hashrate_ths(self) -> Optional[float]:
         log.info("Запрос хешрейта сети...")
-        # Уровень 1 & 2: mempool.space API
         data = await self._fetch_json("https://mempool.space/api/v1/difficulty-adjustment")
         if data and isinstance(data.get("difficulty"), (int, float)) and data["difficulty"] > 0:
             difficulty = float(data["difficulty"])
@@ -138,7 +133,6 @@ class MarketDataService:
                 return hashrate_ths
 
         log.warning("API mempool.space недоступен или вернул неверные данные.")
-        # Уровень 3: Веб-скрапинг
         log.info("Переключение на Уровень 3: Веб-скрапинг для хешрейта.")
         scraped_hashrate = await self._scrape_hashrate_from_blockchain_com()
         if scraped_hashrate and MIN_NETWORK_HASHRATE_THS <= scraped_hashrate <= MAX_NETWORK_HASHRATE_THS:
