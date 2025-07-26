@@ -1,8 +1,9 @@
 # ===============================================================
-# Файл: bot/services/asic_service.py (АЛЬФА-ВЕРСИЯ)
-# Описание: Автономное обновление ASIC с приоритетом онлайн-источников и резервными данными как запасом.
-# Эта версия фокусируется на получении данных из WhatToMine и AsicMinerValue, обеспечивая самодостаточность при сбоях.
-# Обновлено: Добавлена диагностика API-ответов для устранения ошибки "неверные данные".
+# Файл: bot/services/asic_service.py (Гениальная альфа-версия)
+# Описание: Реализовано автоматическое обогащение данных.
+# Сервис сначала получает данные о доходности, а затем, если
+# не хватает спецификаций (мощность, алгоритм), он
+# автоматически находит их в резервной базе данных MinerStat.
 # ===============================================================
 
 import asyncio
@@ -27,25 +28,89 @@ class AsicService:
         self.redis = redis_client
         self.session = http_session
         self.LAST_UPDATE_KEY = "asics_last_update_utc"
+        # Кэш для справочника спецификаций, чтобы не запрашивать его постоянно
+        self._specs_cache: Optional[Dict[str, Dict[str, Any]]] = None
+        self._specs_cache_time: Optional[datetime] = None
 
     def _normalize_name_aggressively(self, name: str) -> str:
-        """
-        Агрессивно очищает имя ASIC для надежного сравнения.
-        """
+        """Агрессивно очищает имя ASIC для надежного сравнения."""
         name = re.sub(r'\b(bitmain|antminer|whatsminer|canaan|avalon|jasminer|goldshell|бу)\b', '', name, flags=re.IGNORECASE)
         name = re.sub(r'\s*(th/s|ths|gh/s|mh/s|ksol|t|g|m)\b', '', name, flags=re.IGNORECASE)
         return re.sub(r'[^a-z0-9]', '', name.lower())
 
+    async def _get_hardware_specs_from_minerstat(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        """
+        Получает и кэширует полный справочник спецификаций оборудования с MinerStat.
+        Это наша "авторитетная база данных" для обогащения.
+        """
+        now = datetime.now(timezone.utc)
+        # Если кэш свежий (меньше 6 часов), используем его
+        if self._specs_cache and self._specs_cache_time and (now - self._specs_cache_time).total_seconds() < 3600 * 6:
+            logger.info("Using cached MinerStat hardware specs.")
+            return self._specs_cache
+
+        logger.info("Fetching fresh hardware specs from MinerStat API...")
+        try:
+            hardware_data = await make_request(self.session, "https://api.minerstat.com/v2/hardware")
+            if not hardware_data or not isinstance(hardware_data, list):
+                logger.error("Failed to fetch or invalid format from MinerStat hardware API.")
+                return None
+            
+            # Создаем словарь с нормализованными именами для быстрого поиска
+            specs_dict = {
+                self._normalize_name_aggressively(hw['name']): {
+                    "power": hw.get('power_consumption'),
+                    "algorithm": hw.get('algorithm')
+                }
+                for hw in hardware_data if 'name' in hw
+            }
+            
+            self._specs_cache = specs_dict
+            self._specs_cache_time = now
+            logger.info(f"Successfully fetched and cached {len(specs_dict)} hardware specs from MinerStat.")
+            return specs_dict
+        except Exception as e:
+            logger.error(f"Error fetching hardware specs from MinerStat: {e}", exc_info=True)
+            return None
+
+    async def _enrich_asics_with_specs(self, asics: List[AsicMiner]) -> List[AsicMiner]:
+        """
+        Гениальная альфа-функция: Обогащает список ASIC недостающими данными.
+        """
+        logger.info(f"Starting data enrichment for {len(asics)} ASICs...")
+        specs_db = await self._get_hardware_specs_from_minerstat()
+        if not specs_db:
+            logger.warning("No specs database available for enrichment. Returning original data.")
+            return asics
+            
+        enriched_count = 0
+        specs_keys = list(specs_db.keys())
+
+        for asic in asics:
+            # Обогащаем только если не хватает данных
+            if not asic.power or not asic.algorithm or asic.algorithm == "Unknown":
+                normalized_name = self._normalize_name_aggressively(asic.name)
+                best_match = process.extractOne(normalized_name, specs_keys, scorer=fuzz.WRatio, score_cutoff=92)
+                
+                if best_match:
+                    match_key = best_match[0]
+                    specs = specs_db[match_key]
+                    
+                    if not asic.power and specs.get('power'):
+                        asic.power = int(specs['power'])
+                    
+                    if (not asic.algorithm or asic.algorithm == "Unknown") and specs.get('algorithm'):
+                        asic.algorithm = specs['algorithm']
+                    
+                    enriched_count += 1
+                    logger.debug(f"Enriched '{asic.name}' with specs from '{match_key}'.")
+
+        logger.info(f"Enrichment complete. {enriched_count} ASICs were updated with missing specs.")
+        return asics
+
     async def update_asics_db(self) -> List[AsicMiner]:
-        """
-        Автономное обновление ASIC с приоритетом онлайн-источников и резервными данными как запасом.
-        Выполняется по расписанию с интервалом из settings.asic_cache_update_hours.
-        """
-        logger.info("="*20)
-        logger.info("STARTING SCHEDULED ASIC DB UPDATE (AUTONOMOUS MODE)")
-        logger.info("="*20)
+        logger.info("="*20 + " STARTING SCHEDULED ASIC DB UPDATE " + "="*20)
         
-        # Попытка загрузки данных из онлайн-источников
         results = await asyncio.gather(
             self._fetch_from_whattomine_api(self.session),
             self._fetch_from_asicminervalue(self.session),
@@ -55,72 +120,52 @@ class AsicService:
         whattomine_asics = results[0] if isinstance(results[0], list) else []
         asicvalue_asics = results[1] if isinstance(results[1], list) else []
 
-        logger.info(f"Whattomine ASICs fetched: {len(whattomine_asics)} - Sample: {whattomine_asics[:1] if whattomine_asics else 'None'}")
-        logger.info(f"AsicMinerValue ASICs fetched: {len(asicvalue_asics)} - Sample: {asicvalue_asics[:1] if asicvalue_asics else 'None'}")
-
         if not whattomine_asics and not asicvalue_asics:
-            logger.warning("Both WhatToMine and AsicMinerValue failed. Attempting to use fallback data.")
-            fallback_asics = [AsicMiner(**data) for data in settings.fallback_asics]
-            if not fallback_asics:
-                logger.error("No fallback ASIC data available. Update failed.")
-                return []
-            master_asics = {self._normalize_name_aggressively(asic.name): asic for asic in fallback_asics}
+            logger.warning("All online sources failed. Using fallback data.")
+            final_asics = [AsicMiner(**data) for data in settings.fallback_asics]
         else:
-            logger.info(f"Fetched {len(whattomine_asics)} from WhatToMine, {len(asicvalue_asics)} from AsicMinerValue.")
-            master_asics = self._intelligent_merge(
-                sources=[whattomine_asics, asicvalue_asics]
-            )
-            if not master_asics and settings.fallback_asics:
-                logger.warning("No valid data from online sources. Using fallback as a last resort.")
-                master_asics = {self._normalize_name_aggressively(asic.name): asic for asic in [AsicMiner(**data) for data in settings.fallback_asics]}
+            merged_asics_dict = self._intelligent_merge([whattomine_asics, asicvalue_asics])
+            merged_asics_list = list(merged_asics_dict.values())
+            
+            # --- ГЕНИАЛЬНЫЙ ШАГ: ОБОГАЩАЕМ ДАННЫЕ ---
+            enriched_asics = await self._enrich_asics_with_specs(merged_asics_list)
+            # ----------------------------------------
 
-        if not master_asics:
+            final_asics = enriched_asics
+
+        if not final_asics:
             logger.error("No valid ASIC data from any source. Update failed.")
             return []
 
-        final_asics = list(master_asics.values())
-        valid_asics = [asic for asic in final_asics if asic.name and asic.profitability is not None and asic.hashrate and re.search(r'[\d.]+', asic.hashrate)]
-        logger.info(f"Valid ASICs after filter: {len(valid_asics)} - Sample: {valid_asics[:1] if valid_asics else 'None'}")
-        
-        if not valid_asics:
-            logger.error(f"No valid ASICs with hashrate found. Final ASICs: {[asic.__dict__ for asic in final_asics]}")
-            return []
-
+        # Финальная сортировка и кэширование
+        valid_asics = sorted(final_asics, key=lambda x: x.profitability or 0.0, reverse=True)
         logger.info(f"Update complete. Total valid ASICs: {len(valid_asics)}. Caching to Redis.")
         await self._cache_asics_to_redis(valid_asics)
         await self.redis.set(self.LAST_UPDATE_KEY, datetime.now(timezone.utc).isoformat())
-        return sorted(valid_asics, key=lambda x: x.profitability, reverse=True)
+        return valid_asics
 
     def _intelligent_merge(self, sources: List[List[AsicMiner]]) -> Dict[str, AsicMiner]:
-        """
-        Объединяет данные из нескольких источников, отдавая приоритет валидным hashrate.
-        """
         master_asics: Dict[str, AsicMiner] = {}
-        
         for source_list in sources:
-            if not source_list:
-                continue
+            if not source_list: continue
             
             master_keys = list(master_asics.keys())
-            
             for asic_to_merge in source_list:
                 normalized_to_merge = self._normalize_name_aggressively(asic_to_merge.name)
-                if not normalized_to_merge:
-                    continue
+                if not normalized_to_merge: continue
 
                 best_match = process.extractOne(normalized_to_merge, master_keys, scorer=fuzz.WRatio, score_cutoff=90) if master_keys else None
 
                 if best_match:
                     match_key = best_match[0]
                     existing_asic = master_asics[match_key]
+                    # Обновляем данные, если новые "лучше" (т.е. не пустые)
                     if (not existing_asic.power or existing_asic.power == 0) and asic_to_merge.power:
                         existing_asic.power = asic_to_merge.power
                     if (not existing_asic.hashrate or not re.search(r'[\d.]+', existing_asic.hashrate)) and asic_to_merge.hashrate and re.search(r'[\d.]+', asic_to_merge.hashrate):
                         existing_asic.hashrate = asic_to_merge.hashrate
                     if (not existing_asic.algorithm or existing_asic.algorithm.lower() == 'unknown') and asic_to_merge.algorithm:
                         existing_asic.algorithm = asic_to_merge.algorithm
-                    if (not existing_asic.efficiency or existing_asic.efficiency.lower() == 'n/a') and asic_to_merge.efficiency:
-                        existing_asic.efficiency = asic_to_merge.efficiency
                     if asic_to_merge.profitability is not None:
                         existing_asic.profitability = asic_to_merge.profitability
                 else:
@@ -134,13 +179,12 @@ class AsicService:
         async with self.redis.pipeline() as pipe:
             old_keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
             if old_keys:
-                logger.info(f"Deleting {len(old_keys)} old ASIC keys from Redis.")
                 await pipe.delete(*old_keys)
 
-            cached_count = 0
             for asic in asics:
                 model_key = self._normalize_name_aggressively(asic.name)
                 redis_key = f"asic_passport:{model_key}"
+                # Сохраняем только валидные данные
                 asic_dict = {
                     "name": asic.name,
                     "profitability": str(asic.profitability or 0.0),
@@ -150,89 +194,82 @@ class AsicService:
                     "efficiency": asic.efficiency or "N/A"
                 }
                 pipe.hset(redis_key, mapping=asic_dict)
-                cached_count += 1
             
             await pipe.execute()
-        logger.info(f"Successfully cached {cached_count} ASICs.")
+        logger.info(f"Successfully cached ASICs.")
 
     async def _fetch_from_whattomine_api(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
+        logger.info("Fetching data from WhatToMine API...")
         try:
             data = await make_request(session, settings.whattomine_asics_url)
-            logger.info(f"Raw WhatToMine data: {data}")
             if not data or "coins" not in data:
-                logger.warning("No ASIC data from WhatToMine. Skipping.")
+                logger.warning("No valid ASIC data from WhatToMine.")
                 return []
+            
             asics = []
-            for coin in data["coins"]:
+            for name, details in data["coins"].items():
                 try:
-                    if "revenue" not in coin or not coin.get("hashrate"):
-                        logger.debug(f"Skipping coin {coin.get('tag')} due to missing revenue or hashrate.")
-                        continue
-                    profitability_str = coin.get("revenue", "0").replace("$", "").strip()
-                    if not profitability_str or float(profitability_str) == 0:
-                        logger.debug(f"Skipping coin {coin.get('tag')} due to zero profitability.")
-                        continue
-                    asics.append(AsicMiner(
-                        name=coin.get("tag", "Unknown ASIC"),
-                        profitability=float(profitability_str),
-                        algorithm=coin.get("algorithm"),
-                        power=parse_power(str(coin.get("power", 0))),
-                        hashrate=coin.get("hashrate", "N/A"),
-                        efficiency=None
-                    ))
+                    # WhatToMine API изменился, теперь это словарь, а не список
+                    if details.get("tag") and details.get("profitability") is not None:
+                        asics.append(AsicMiner(
+                            name=details["tag"],
+                            profitability=float(details["profitability"]),
+                            algorithm=details.get("algorithm"),
+                            power=parse_power(str(details.get("power_consumption", 0))),
+                            hashrate=str(details.get("hashrate", "N/A")),
+                            efficiency=None,
+                            source="WhatToMine"
+                        ))
                 except (ValueError, TypeError, KeyError) as e:
-                    logger.warning(f"Error parsing WhatToMine coin: {e}. Skipping.")
+                    logger.warning(f"Error parsing WhatToMine item '{name}': {e}. Skipping.")
                     continue
-            logger.info(f"Fetched {len(asics)} ASICs from WhatToMine.")
+            logger.info(f"Successfully fetched {len(asics)} ASICs from WhatToMine.")
             return asics
         except Exception as e:
-            logger.error(f"Error fetching from WhatToMine: {e}")
+            logger.error(f"Critical error fetching from WhatToMine: {e}", exc_info=True)
             return []
 
     async def _fetch_from_asicminervalue(self, session: aiohttp.ClientSession) -> List[AsicMiner]:
+        logger.info("Fetching data from AsicMinerValue...")
         try:
             html_content = await make_request(session, settings.asicminervalue_url, response_type='text')
-            logger.info(f"Raw AsicMinerValue data: {html_content[:500]}...")  # Логируем первые 500 символов
             if not html_content:
                 logger.warning("No HTML from AsicMinerValue. Skipping.")
                 return []
+            
             soup = BeautifulSoup(html_content, 'lxml')
             table = soup.find('table', {'id': 'miners'})
             if not table or not table.find('tbody'):
                 logger.warning("No valid table in AsicMinerValue HTML.")
                 return []
+                
             asics = []
             for row in table.tbody.find_all('tr'):
                 try:
                     cols = row.find_all('td')
-                    if len(cols) < 6:
-                        logger.debug("Skipping row with insufficient columns.")
-                        continue
+                    if len(cols) < 6: continue
+                    
                     name = cols[1].find('a').text.strip()
                     profitability_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
                     power_text = cols[4].text.strip().replace('W', '').strip()
                     hashrate_text = cols[2].text.strip()
-                    if not name or not profitability_text or not power_text or not hashrate_text:
-                        logger.debug(f"Skipping row with missing data: {name}")
-                        continue
-                    if float(profitability_text) == 0 or not re.search(r'[\d.]+', hashrate_text):
-                        logger.debug(f"Skipping {name} due to zero profitability or invalid hashrate.")
-                        continue
+                    
                     asics.append(AsicMiner(
                         name=name,
                         profitability=float(profitability_text),
                         power=int(power_text),
                         hashrate=hashrate_text,
                         efficiency=cols[5].text.strip(),
-                        algorithm="Unknown"
+                        algorithm="Unknown", # AsicMinerValue не предоставляет алгоритм на главной
+                        source="AsicMinerValue"
                     ))
                 except (AttributeError, ValueError, IndexError, TypeError) as e:
                     logger.warning(f"Error parsing AsicMinerValue row: {e}. Skipping.")
                     continue
-            logger.info(f"Fetched {len(asics)} ASICs from AsicMinerValue.")
+            logger.info(f"Successfully fetched {len(asics)} ASICs from AsicMinerValue.")
             return asics
         except Exception as e:
-            logger.error(f"Error fetching from AsicMinerValue: {e}")
+            logger.error(f"Critical error fetching from AsicMinerValue: {e}", exc_info=True)
             return []
     
     async def get_last_update_time(self) -> Optional[datetime]:
@@ -252,12 +289,12 @@ class AsicService:
     async def get_top_asics(self, count: int = 10, electricity_cost: float = 0.0) -> Tuple[List[AsicMiner], Optional[datetime]]:
         keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
         if not keys:
-            logger.warning("No ASIC data in Redis. Triggering autonomous update.")
+            logger.warning("No ASIC data in Redis. Triggering initial update.")
             await self.update_asics_db()
             keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
             if not keys:
-                logger.error("Redis cache still empty after update. Using fallback data.")
-                return [AsicMiner(**data) for data in settings.fallback_asics if re.search(r'[\d.]+', data.get('hashrate', 'N/A'))][:count], None
+                logger.error("Redis cache still empty after update. Using hardcoded fallback.")
+                return [AsicMiner(**data) for data in settings.fallback_asics][:count], None
 
         pipe = self.redis.pipeline()
         for key in keys:
@@ -266,35 +303,26 @@ class AsicService:
         
         asics = []
         for data_bytes in results:
-            if not data_bytes:
-                continue
             try:
+                if not data_bytes: continue
                 data = {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
-                if 'name' not in data or 'hashrate' not in data:
-                    continue
-                name_str = data['name'].strip()
-                if not name_str or name_str.lower() == 'unknown':
-                    continue
+                
                 profitability = float(data.get('profitability', '0.0'))
                 power = int(data.get('power', '0'))
-                hashrate = data.get('hashrate', 'N/A')
-                if not hashrate or not re.search(r'[\d.]+', hashrate):
-                    continue
+                
                 net_profit = self.calculate_net_profit(profitability, power, electricity_cost)
+                
                 asics.append(AsicMiner(
-                    name=name_str,
+                    name=data.get('name', 'Unknown'),
                     profitability=net_profit,
                     power=power,
                     algorithm=data.get('algorithm', 'Unknown'),
-                    hashrate=hashrate,
+                    hashrate=data.get('hashrate', 'N/A'),
                     efficiency=data.get('efficiency', 'N/A')
                 ))
-            except (ValueError, TypeError, KeyError):
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(f"Error parsing ASIC from Redis cache: {e}. Data: {data_bytes}")
                 continue
-        
-        if not asics:
-            logger.warning("No valid ASICs in cache. Falling back to reserve data.")
-            asics = [AsicMiner(**data) for data in settings.fallback_asics if re.search(r'[\d.]+', data.get('hashrate', 'N/A'))]
         
         sorted_asics = sorted(asics, key=lambda x: x.profitability, reverse=True)
         last_update_time = await self.get_last_update_time()
@@ -304,35 +332,20 @@ class AsicService:
         logger.info(f"Processing ASIC query: '{model_query}'")
         normalized_query = self._normalize_name_aggressively(model_query)
         if not normalized_query:
-            logger.warning(f"Normalized query for '{model_query}' is empty.")
             return None
         
         all_keys_bytes = [key async for key in self.redis.scan_iter("asic_passport:*")]
         if not all_keys_bytes:
-            logger.warning("No ASIC data in Redis for query. Using fallback.")
-            return next((data for data in settings.fallback_asics if self._normalize_name_aggressively(data['name']) == normalized_query), None)
+            logger.warning("No ASIC data in Redis for query.")
+            return None
         
         all_keys_str = [key.decode('utf-8').replace('asic_passport:', '') for key in all_keys_bytes]
-        logger.debug(f"Normalized query: {normalized_query}, available keys: {all_keys_str}")
         
-        best_match = process.extractOne(normalized_query, all_keys_str, scorer=fuzz.WRatio, score_cutoff=80)
+        best_match = process.extractOne(normalized_query, all_keys_str, scorer=fuzz.WRatio, score_cutoff=85)
         if not best_match:
-            logger.warning(f"No match found for query '{model_query}'. Falling back to fallback data.")
-            return next((data for data in settings.fallback_asics if self._normalize_name_aggressively(data['name']) == normalized_query), None)
+            logger.warning(f"No match found for query '{model_query}'.")
+            return None
         
         match_key_str = f"asic_passport:{best_match[0]}"
         data_bytes = await self.redis.hgetall(match_key_str)
         return {k.decode('utf-8'): v.decode('utf-8') for k, v in data_bytes.items()}
-
-    async def debug_redis_contents(self):
-        keys = [key async for key in self.redis.scan_iter("asic_passport:*")]
-        logger.info(f"Found {len(keys)} ASIC keys in Redis: {keys}")
-        for key in keys:
-            data = await self.redis.hgetall(key)
-            logger.info(f"Key {key.decode('utf-8')}: {data}")
-
-# Обновления для альфа-решения:
-# - Приоритет отдан онлайн-источникам (WhatToMine и AsicMinerValue).
-# - Резервные данные используются только при полной недоступности онлайн-источников.
-# - Уведомления и логи помогают диагностировать проблемы с доступом к данным.
-# - Добавлена диагностика сырых данных API для устранения ошибки "неверные данные".
