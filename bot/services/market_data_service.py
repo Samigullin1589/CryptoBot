@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/services/market_data_service.py (Гениальная альфа-версия)
+# Файл: bot/services/market_data_service.py (Финальная версия)
 # Описание: Сервис с максимальной отказоустойчивостью.
-# Использует 4 уровня резервирования для ключевых данных,
-# включая сверхнадежный API от Blockchain.com.
+# Использует многоуровневое резервирование для ВСЕХ внешних данных.
 # Актуально на 26 июля 2025 года.
 # ===============================================================
 
@@ -127,11 +126,24 @@ class MarketDataService:
     @alru_cache(ttl=3600)
     async def get_usd_rub_rate(self) -> float:
         log.info("Запрос курса USD/RUB...")
+
+        # Уровень 1: CoinGecko
+        log.info("Уровень 1: Попытка получить курс через CoinGecko...")
         data = await self._fetch("https://api.coingecko.com/api/v3/simple/price?ids=usd&vs_currencies=rub")
         if data and isinstance(data.get("usd", {}).get("rub"), (int, float)):
             rate = float(data["usd"]["rub"])
-            log.info(f"УСПЕХ: Курс USD/RUB (CoinGecko): {rate:.2f}")
+            log.info(f"УСПЕХ (Уровень 1): Курс USD/RUB (CoinGecko): {rate:.2f}")
             return rate
+        log.warning("ОТКАЗ (Уровень 1): API CoinGecko недоступен.")
+
+        # Уровень 2: CryptoCompare
+        log.info("Уровень 2: Попытка получить курс через CryptoCompare...")
+        data = await self._fetch("https://min-api.cryptocompare.com/data/price?fsym=USD&tsyms=RUB")
+        if data and isinstance(data.get("RUB"), (int, float)):
+            rate = float(data["RUB"])
+            log.info(f"УСПЕХ (Уровень 2): Курс USD/RUB (CryptoCompare): {rate:.2f}")
+            return rate
+        log.warning("ОТКАЗ (Уровень 2): API CryptoCompare недоступен.")
         
-        log.error(f"ОТКАЗ: Источник курса USD/RUB недоступен. Возвращаю резервный курс: {FALLBACK_USD_RUB_RATE}")
+        log.error(f"КРИТИЧЕСКИЙ СБОЙ: Все источники курса USD/RUB недоступны. Возвращаю резервный курс: {FALLBACK_USD_RUB_RATE}")
         return FALLBACK_USD_RUB_RATE
