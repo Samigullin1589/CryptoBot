@@ -1,6 +1,8 @@
 # ===============================================================
-# Файл: bot/services/mining_service.py
+# Файл: bot/services/mining_service.py (Альфа-версия)
 # Описание: Сервис для выполнения расчетов доходности майнинга.
+# Реализована корректная математика для чисел с плавающей
+# запятой и улучшенное форматирование вывода.
 # ===============================================================
 
 import logging
@@ -11,6 +13,15 @@ from bot.services.market_data_service import MarketDataService
 
 # Настройка логирования
 log = logging.getLogger(__name__)
+
+# --- Константы для расчетов ---
+SECONDS_IN_DAY = 86400.0
+# Среднее время блока Bitcoin в секундах
+BTC_BLOCK_TIME_SECONDS = 600.0 
+# Среднее количество дней в месяце и году
+DAYS_IN_MONTH = 30.44
+DAYS_IN_YEAR = 365.25
+
 
 class MiningService:
     """
@@ -47,13 +58,12 @@ class MiningService:
         )
 
         # Шаг 1: Асинхронно получаем все необходимые данные от market_data_service
-        # Это гораздо эффективнее, чем делать запросы последовательно.
         results = await asyncio.gather(
             self.market_data.get_btc_price_usd(),
             self.market_data.get_network_hashrate_ths(),
             self.market_data.get_block_reward_btc(),
             self.market_data.get_usd_rub_rate(),
-            return_exceptions=True  # Возвращаем исключения вместо падения
+            return_exceptions=True
         )
 
         # Распаковываем результаты
@@ -78,34 +88,28 @@ class MiningService:
 
         # Шаг 3: Выполняем расчеты
         # 3.1 Расчет "грязного" дохода
-        seconds_in_day = 86400.0
-        # Доля майнера в общем хешрейте сети
-        user_share_of_network = hashrate_ths / network_hashrate_ths
-        # Приблизительное количество блоков, находимых в день
-        blocks_found_per_day = seconds_in_day / 600  # Целевое время блока ~10 минут
-        # Доход в BTC и USD
-        gross_revenue_btc_daily = user_share_of_network * blocks_found_per_day * block_reward_btc
-        gross_revenue_usd_daily = gross_revenue_btc_daily * btc_price_usd
+        user_share_of_network = float(hashrate_ths) / float(network_hashrate_ths)
+        blocks_found_per_day = SECONDS_IN_DAY / BTC_BLOCK_TIME_SECONDS
+        gross_revenue_btc_daily = user_share_of_network * blocks_found_per_day * float(block_reward_btc)
+        gross_revenue_usd_daily = gross_revenue_btc_daily * float(btc_price_usd)
 
         # 3.2 Расчет расходов
-        # Расходы на электроэнергию
-        power_kwh_daily = (power_consumption_watts / 1000.0) * 24
-        electricity_cost_usd_daily = power_kwh_daily * electricity_cost
-        # Расходы на комиссию пула
-        pool_fee_decimal = pool_commission / 100.0
+        power_kwh_daily = (float(power_consumption_watts) / 1000.0) * 24.0
+        electricity_cost_usd_daily = power_kwh_daily * float(electricity_cost)
+        pool_fee_decimal = float(pool_commission) / 100.0
         pool_fee_usd_daily = gross_revenue_usd_daily * pool_fee_decimal
+        total_expenses_usd_daily = electricity_cost_usd_daily + pool_fee_usd_daily
 
         # 3.3 Расчет чистой прибыли
-        net_profit_usd_daily = gross_revenue_usd_daily - electricity_cost_usd_daily - pool_fee_usd_daily
+        net_profit_usd_daily = gross_revenue_usd_daily - total_expenses_usd_daily
 
         # Шаг 4: Форматируем итоговый текст
-        # Используем dedent для удаления лишних отступов в многострочной f-строке
         result_text = dedent(f"""
             📊 <b>Результаты расчета доходности</b>
 
             <b>Исходные данные:</b>
             - Цена BTC: <code>${btc_price_usd:,.2f}</code>
-            - Курс USD/RUB: <code>{usd_rub_rate:,.2f} ₽</code> (если доступен)
+            - Курс USD/RUB: <code>{usd_rub_rate:,.2f} ₽</code>
             - Хешрейт сети: <code>{network_hashrate_ths / 1_000_000:,.2f} EH/s</code>
             - Награда за блок: <code>{block_reward_btc:.4f} BTC</code>
 
@@ -113,19 +117,19 @@ class MiningService:
 
             <b>💰 Доходы (грязными):</b>
             - В день: <code>${gross_revenue_usd_daily:.2f}</code> / <code>{gross_revenue_usd_daily * usd_rub_rate:.2f} ₽</code>
-            - В месяц: <code>${gross_revenue_usd_daily * 30.44:.2f}</code> / <code>{gross_revenue_usd_daily * 30.44 * usd_rub_rate:.2f} ₽</code>
+            - В месяц: <code>${gross_revenue_usd_daily * DAYS_IN_MONTH:.2f}</code> / <code>{gross_revenue_usd_daily * DAYS_IN_MONTH * usd_rub_rate:.2f} ₽</code>
 
             <b>🔌 Расходы:</b>
             - Электричество/день: <code>${electricity_cost_usd_daily:.2f}</code>
             - Комиссия пула ({pool_commission}%)/день: <code>${pool_fee_usd_daily:.2f}</code>
-            - <b>Всего расходов/день:</b> <code>${electricity_cost_usd_daily + pool_fee_usd_daily:.2f}</code>
+            - <b>Всего расходов/день:</b> <code>${total_expenses_usd_daily:.2f}</code>
 
             ---
 
             ✅ <b>Чистая прибыль:</b>
             - <b>В день:</b> <code>${net_profit_usd_daily:.2f}</code> / <code>{net_profit_usd_daily * usd_rub_rate:.2f} ₽</code>
-            - <b>В месяц:</b> <code>${net_profit_usd_daily * 30.44:.2f}</code> / <code>{net_profit_usd_daily * 30.44 * usd_rub_rate:.2f} ₽</code>
-            - <b>В год:</b> <code>${net_profit_usd_daily * 365.25:.2f}</code> / <code>{net_profit_usd_daily * 365.25 * usd_rub_rate:.2f} ₽</code>
+            - <b>В месяц:</b> <code>${net_profit_usd_daily * DAYS_IN_MONTH:.2f}</code> / <code>{net_profit_usd_daily * DAYS_IN_MONTH * usd_rub_rate:.2f} ₽</code>
+            - <b>В год:</b> <code>${net_profit_usd_daily * DAYS_IN_YEAR:.2f}</code> / <code>{net_profit_usd_daily * DAYS_IN_YEAR * usd_rub_rate:.2f} ₽</code>
         """)
 
         if net_profit_usd_daily < 0:
