@@ -1,8 +1,5 @@
 # ===============================================================
-# Файл: bot/handlers/mining_handlers.py (Финальная исправленная версия)
-# Описание: Исправлен конфликт состояний (FSM).
-# Теперь запуск калькулятора принудительно сбрасывает
-# любое предыдущее незавершенное состояние.
+# Файл: bot/handlers/mining_handlers.py (Полная и исправленная версия)
 # ===============================================================
 import time
 import logging
@@ -30,13 +27,13 @@ from bot.keyboards.keyboards import (
     get_mining_menu_keyboard, get_asic_shop_keyboard,
     get_my_farm_keyboard, get_withdraw_keyboard, get_electricity_menu_keyboard
 )
-from bot.utils.helpers import get_message_and_chat_id, sanitize_html
+from bot.utils.helpers import sanitize_html
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 # ===============================================================
-# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА (БЕЗ ИЗМЕНЕНИЙ) ---
+# --- БЛОК 1: ВИРТУАЛЬНАЯ ФЕРМА ---
 # ===============================================================
 
 @router.callback_query(F.data == "menu_mining")
@@ -343,12 +340,10 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> Inline
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="prof_calc_cancel"))
     return builder
 
-# <<< НАЧАЛО ИЗМЕНЕНИЙ: ГЕНИАЛЬНЫЙ FIX ДЛЯ FSM >>>
 @router.callback_query(F.data == "menu_calculator")
 @router.message(F.text == "⛏️ Калькулятор")
 async def start_profit_calculator(update: Union[Message, CallbackQuery], state: FSMContext, admin_service: AdminService):
     await admin_service.track_command_usage("⛏️ Калькулятор")
-    # Альфа-решение: принудительно сбрасываем ЛЮБОЕ предыдущее состояние
     await state.clear()
     
     text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
@@ -359,11 +354,9 @@ async def start_profit_calculator(update: Union[Message, CallbackQuery], state: 
         try:
             await update.message.edit_text(text, reply_markup=keyboard)
         except TelegramBadRequest:
-            # Если сообщение нельзя отредактировать (например, это фото), отправляем новое
             await update.message.answer(text, reply_markup=keyboard)
         await update.answer()
     await state.set_state(ProfitCalculator.waiting_for_currency)
-# <<< КОНЕЦ ИЗМЕНЕНИЙ >>>
 
 @router.callback_query(ProfitCalculator.waiting_for_currency, F.data.startswith("calc_currency_"))
 async def process_currency_selection(call: CallbackQuery, state: FSMContext):
@@ -374,7 +367,8 @@ async def process_currency_selection(call: CallbackQuery, state: FSMContext):
         prompt_text = "💡 Введите стоимость электроэнергии в <b>USD</b> за кВт/ч (например, <code>0.05</code>):"
     elif currency == "rub":
         prompt_text = "💡 Введите стоимость электроэнергии в <b>рублях</b> за кВт/ч (например, <code>4.5</code>):"
-    await call.message.edit_text(prompt_text)
+    
+    await call.message.edit_text(prompt_text, reply_markup=InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="prof_calc_cancel").as_markup())
     await state.set_state(ProfitCalculator.waiting_for_electricity_cost)
     await call.answer()
 
@@ -387,23 +381,30 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
         user_data = await state.get_data()
         currency = user_data.get("currency")
         cost_usd = cost
+        
+        msg = await message.answer("⏳ Обрабатываю...")
+
         if currency == "rub":
-            await message.answer("⏳ Получаю актуальный курс USD/RUB...")
+            await msg.edit_text("⏳ Получаю актуальный курс USD/RUB...")
             rate_usd_rub = await market_data_service.get_usd_rub_rate()
+            if not rate_usd_rub:
+                await msg.edit_text("❌ Не удалось получить курс валют. Попробуйте позже.")
+                await state.clear()
+                return
             cost_usd = cost / rate_usd_rub
         
-        await state.update_data(electricity_cost_usd=cost_usd)
-        await message.answer("⏳ Загружаю список оборудования...")
+        await msg.edit_text("⏳ Загружаю список оборудования...")
         all_asics, _ = await asic_service.get_top_asics(count=1000, electricity_cost=0.0)
         
         if not all_asics:
-             await message.answer("❌ Ошибка: не удалось загрузить список ASIC. Обратитесь к администратору.")
-             await state.clear()
-             return
+            await msg.edit_text("❌ Ошибка: не удалось загрузить список ASIC. Обратитесь к администратору.")
+            await state.clear()
+            return
 
+        await state.update_data(electricity_cost_usd=cost_usd)
         await state.update_data(asic_list=[asic.model_dump() for asic in all_asics])
         keyboard = get_asic_selection_keyboard(all_asics, page=0)
-        await message.answer(
+        await msg.edit_text(
             "Отлично! Теперь выберите ваш ASIC-майнер из списка:",
             reply_markup=keyboard.as_markup()
         )
@@ -418,31 +419,38 @@ async def process_nodata_asic_selection(call: CallbackQuery):
 
 @router.callback_query(ProfitCalculator.waiting_for_asic_selection, F.data.startswith("prof_calc_"))
 async def process_asic_selection(call: CallbackQuery, state: FSMContext):
-    action = call.data.split("_")[2]
+    action_parts = call.data.split("_")
+    action = action_parts[2]
     user_data = await state.get_data()
     asic_list = [AsicMiner(**data) for data in user_data.get("asic_list", [])]
-    if action == "cancel":
-        await call.message.edit_text("Действие отменено.")
-        await state.clear()
-        return
+
     if action == "page":
-        page = int(call.data.split("_")[3])
+        page = int(action_parts[3])
         keyboard = get_asic_selection_keyboard(asic_list, page=page)
         try:
             await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard.as_markup())
         except TelegramBadRequest:
             await call.answer()
         return
+
     if action == "select":
-        asic_index = int(call.data.split("_")[3])
+        asic_index = int(action_parts[3])
         if asic_index >= len(asic_list):
             await call.answer("❌ Ошибка выбора. Попробуйте снова.", show_alert=True)
             return
+            
         selected_asic = asic_list[asic_index]
         await state.update_data(selected_asic=selected_asic.model_dump())
-        await call.message.edit_text("📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):")
+        await call.message.edit_text("📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):", reply_markup=InlineKeyboardBuilder().button(text="❌ Отмена", callback_data="prof_calc_cancel").as_markup())
         await state.set_state(ProfitCalculator.waiting_for_pool_commission)
-        await call.answer()
+    
+    await call.answer()
+
+@router.callback_query(ProfitCalculator, F.data == "prof_calc_cancel")
+async def cancel_calculator(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await call.message.edit_text("✅ Расчет отменен.")
+    await call.answer()
 
 @router.message(ProfitCalculator.waiting_for_pool_commission)
 async def process_pool_commission(message: Message, state: FSMContext, mining_service: MiningService):
@@ -451,24 +459,23 @@ async def process_pool_commission(message: Message, state: FSMContext, mining_se
         if not (0 <= commission_percent < 100):
             raise ValueError("Комиссия должна быть от 0 до 99.9")
 
-        await message.answer("⏳ Считаю...")
+        msg = await message.answer("⏳ Считаю...")
         user_data = await state.get_data()
         
         selected_asic_data = user_data.get("selected_asic")
         electricity_cost_usd = user_data.get("electricity_cost_usd")
 
         if not selected_asic_data or electricity_cost_usd is None:
-            await message.answer("❌ Произошла внутренняя ошибка. Начните расчет заново.")
+            await msg.edit_text("❌ Произошла внутренняя ошибка. Начните расчет заново.")
             await state.clear()
             return
-            
+
         selected_asic = AsicMiner(**selected_asic_data)
 
-        # Финальная проверка наличия всех данных перед вызовом сервиса
         if not all([selected_asic.hashrate, selected_asic.power, selected_asic.algorithm]):
-             await message.answer("❌ Для этого ASIC нет полных данных (хешрейт, мощность или алгоритм). Выберите другой.")
-             await state.clear()
-             return
+            await msg.edit_text("❌ Для этого ASIC нет полных данных (хешрейт, мощность или алгоритм). Выберите другой.")
+            await state.clear()
+            return
 
         result_text = await mining_service.calculate(
             hashrate_str=selected_asic.hashrate,
@@ -478,7 +485,7 @@ async def process_pool_commission(message: Message, state: FSMContext, mining_se
             algorithm=selected_asic.algorithm
         )
         
-        await message.answer(result_text, disable_web_page_preview=True)
+        await msg.edit_text(result_text, disable_web_page_preview=True)
         
     except (ValueError, TypeError):
         await message.answer("❌ Неверный формат комиссии. Введите число (например, <code>1.5</code>).")

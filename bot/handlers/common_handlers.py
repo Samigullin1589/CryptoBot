@@ -1,12 +1,11 @@
+# ===============================================================
+# Файл: bot/handlers/common_handlers.py (Полная и исправленная версия)
+# ===============================================================
 import asyncio
 import logging
-from typing import List
 from datetime import datetime
 
-# --- ИСПРАВЛЕНИЕ: Добавлен недостающий импорт ---
 import redis.asyncio as redis
-# ---------------------------------------------
-
 from aiogram import F, Router, Bot
 from aiogram.filters import CommandStart, CommandObject, Command
 from aiogram.fsm.context import FSMContext
@@ -16,19 +15,16 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.config.settings import settings
-from bot.keyboards.keyboards import get_main_menu_keyboard
+from bot.keyboards.keyboards import get_main_menu_keyboard, get_onboarding_start_keyboard, get_onboarding_step_keyboard
 from bot.utils.helpers import sanitize_html
-
-# Используем правильные сервисы из нашей архитектуры
 from bot.services.user_service import UserService
 from bot.services.ai_consultant_service import AIConsultantService
 from bot.services.price_service import PriceService
 from bot.services.admin_service import AdminService
+from bot.utils.states import PriceInquiry
 
 router = Router()
 logger = logging.getLogger(__name__)
-
-# --- Код онбординга и справки ---
 
 def get_onboarding_start_keyboard():
     builder = InlineKeyboardBuilder()
@@ -80,7 +76,6 @@ HELP_TEXT = """
 Свяжитесь с администратором: <a href="https://t.me/mining_sale_admin">@mining_sale_admin</a>
 """
 
-# --- ИСПРАВЛЕНИЕ: Восстановлена логика функции ---
 async def handle_referral(message: Message, command: CommandObject, redis_client: redis.Redis, bot: Bot):
     """Обрабатывает запуск по реферальной ссылке."""
     referrer_id_str = command.args
@@ -116,7 +111,6 @@ async def handle_referral(message: Message, command: CommandObject, redis_client
     except Exception as e:
         logger.error(f"Failed to send referral notification to user {referrer_id}: {e}")
 
-# --- ИСПРАВЛЕНИЕ: Восстановлена логика функции ---
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, redis_client: redis.Redis, bot: Bot, admin_service: AdminService):
     """
@@ -151,7 +145,6 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     if command.args:
         await handle_referral(message, command, redis_client, bot)
 
-# --- Обработчики онбординга без изменений ---
 @router.callback_query(F.data == "onboarding_start" or F.data == "onboarding_step_1")
 async def onboarding_step_1(call: CallbackQuery):
     text = (
@@ -161,7 +154,6 @@ async def onboarding_step_1(call: CallbackQuery):
     )
     await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(1))
     await call.answer()
-
 
 @router.callback_query(F.data == "onboarding_step_2")
 async def onboarding_step_2(call: CallbackQuery):
@@ -173,7 +165,6 @@ async def onboarding_step_2(call: CallbackQuery):
     await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(2))
     await call.answer()
 
-
 @router.callback_query(F.data == "onboarding_step_3")
 async def onboarding_step_3(call: CallbackQuery):
     text = (
@@ -183,7 +174,6 @@ async def onboarding_step_3(call: CallbackQuery):
     )
     await call.message.edit_text(text, reply_markup=get_onboarding_step_keyboard(3))
     await call.answer()
-
 
 @router.callback_query(F.data == "onboarding_skip" or F.data == "onboarding_finish")
 async def onboarding_finish(call: CallbackQuery):
@@ -202,12 +192,10 @@ async def handle_help(message: Message, admin_service: AdminService):
     await admin_service.track_command_usage("/help")
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
-
 @router.callback_query(F.data == "back_to_main_menu")
 async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_service: AdminService):
     """
     Обработчик кнопки 'Назад в главное меню'.
-    Умеет обрабатывать колбэки из текстовых сообщений, медиа и опросов.
     """
     await admin_service.track_command_usage("⬅️ Назад в меню")
     await state.clear()
@@ -224,7 +212,6 @@ async def handle_back_to_main(call: CallbackQuery, state: FSMContext, admin_serv
     finally:
         await call.answer()
 
-# --- ПОЛНОСТЬЮ ПЕРЕРАБОТАННЫЙ ОБРАБОТЧИК ДЛЯ AI-КОНСУЛЬТАНТА ---
 @router.message(
     F.content_type == ContentType.TEXT,
     lambda message: not message.text.startswith('/')
@@ -233,7 +220,6 @@ async def handle_arbitrary_text(
     message: Message, 
     state: FSMContext, 
     bot: Bot,
-    # --- ИСПОЛЬЗУЕМ ПРАВИЛЬНЫЕ СЕРВИСЫ ---
     user_service: UserService,
     ai_consultant_service: AIConsultantService, 
     price_service: PriceService, 
@@ -241,11 +227,13 @@ async def handle_arbitrary_text(
 ):
     """
     Обрабатывает произвольный текстовый ввод.
-    Сначала пытается распознать тикер монеты.
-    Если не получилось, и это личный чат или обращение к боту, отвечает с помощью AI.
+    СНАЧАЛА проверяет, не в FSM ли пользователь.
+    Потом пытается распознать тикер монеты.
+    Если не получилось, и это личный чат, отвечает с помощью AI.
     """
     current_state = await state.get_state()
     if current_state is not None:
+        logger.debug(f"Ignoring message from {message.from_user.id} due to active state: {current_state}")
         return
 
     user_id = message.from_user.id
@@ -278,8 +266,6 @@ async def handle_arbitrary_text(
         await admin_service.track_command_usage("AI-Консультант (вопрос)")
         
         temp_msg = await message.reply("🤖 Думаю...")
-        await asyncio.sleep(1.5)
-        await temp_msg.edit_text("🧠 Анализирую информацию...")
         
         history = await user_service.get_conversation_history(user_id, chat_id)
         ai_answer = await ai_consultant_service.get_ai_answer(user_text, history)

@@ -1,6 +1,5 @@
 # ===============================================================
-# Файл: main.py (ОКОНЧАТЕЛЬНЫЙ FIX)
-# Описание: Исправлена инициализация PriceService для соответствия фоновым задачам.
+# Файл: main.py (Полная и исправленная версия)
 # ===============================================================
 import asyncio
 import logging
@@ -46,7 +45,7 @@ logger = logging.getLogger(__name__)
 async def delete_spam_message(message: Message):
     try:
         await message.delete()
-        logger.warning(f"Удалено спам-сообщение от пользователя {message.from_user.id} в чате {message.chat.id}")
+        logger.warning(f"Удалено спам-сообщение от {message.from_user.id} в чате {message.chat.id}")
     except Exception as e:
         logger.error(f"Не удалось удалить спам-сообщение {message.message_id}: {e}")
 
@@ -57,12 +56,7 @@ async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
         logger.info("Scheduler has been started.")
     logger.info("Bot startup complete.")
 
-async def on_shutdown(
-    bot: Bot, 
-    scheduler: AsyncIOScheduler, 
-    redis_client: redis.Redis, 
-    http_session: aiohttp.ClientSession
-):
+async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler, redis_client: redis.Redis, http_session: aiohttp.ClientSession):
     logger.info("Bot is shutting down...")
     if scheduler.running:
         scheduler.shutdown()
@@ -78,7 +72,7 @@ async def on_shutdown(
 async def main():
     """Основная асинхронная функция для настройки и запуска бота."""
     if not all([settings.bot_token, settings.redis_url, settings.gemini_api_key]):
-        logger.critical("One or more critical environment variables are missing (BOT_TOKEN, REDIS_URL, GEMINI_API_KEY).")
+        logger.critical("Отсутствуют критически важные переменные окружения (BOT_TOKEN, REDIS_URL, GEMINI_API_KEY).")
         return
 
     http_session = aiohttp.ClientSession()
@@ -88,38 +82,31 @@ async def main():
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
     dp = Dispatcher(storage=storage)
 
+    # Инициализация сервисов
     user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
     ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
     ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
     asic_service = AsicService(redis_client=redis_client, http_session=http_session)
-    # --- ИСПРАВЛЕНО: Передаем http_session в CoinListService ---
     coin_list_service = CoinListService(http_session=http_session)
-    # --------------------------------------------------------
-    # --- ИСПРАВЛЕНО: Передаем http_session в PriceService ---
     price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
-    # --------------------------------------------------------
     news_service = NewsService()
     market_data_service = MarketDataService(session=http_session)
     crypto_center_service = CryptoCenterService(redis_client=redis_client)
     admin_service = AdminService(redis_client=redis_client)
-    
     mining_service = MiningService(market_data_service=market_data_service)
     
-    openai_client = None
-    if settings.openai_api_key:
-        openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-        logger.info("OpenAI client initialized.")
-    else:
-        logger.warning("OPENAI_API_KEY not found. Quiz generation will fallback to Gemini.")
-
+    openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
     quiz_service = QuizService(ai_service=ai_service, openai_client=openai_client)
 
+    # Middlewares
     dp.update.middleware(ActivityMiddleware(user_service=user_service))
     dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
 
+    # Spam Filter
     alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
     dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
 
+    # Регистрация роутеров. Порядок важен!
     dp.include_router(admin_menu.admin_router)
     dp.include_router(stats_handlers.stats_router)
     dp.include_router(data_management_handlers.router)
@@ -144,10 +131,9 @@ async def main():
         "http_session": http_session,
         "mining_service": mining_service,
         "quiz_service": quiz_service,
-        "coin_list_service": coin_list_service
+        "coin_list_service": coin_list_service,
+        "scheduler": setup_scheduler()
     }
-    
-    scheduler = setup_scheduler()
     
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
@@ -155,7 +141,7 @@ async def main():
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Starting bot in polling mode...")
-        await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
+        await dp.start_polling(bot, **workflow_data)
     except Exception as e:
         logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
     finally:
