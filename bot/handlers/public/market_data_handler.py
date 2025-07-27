@@ -1,73 +1,80 @@
 # ===============================================================
-# Файл: bot/handlers/public/market_data_handler.py (НОВЫЙ ФАЙЛ)
-# Описание: Обработчики для запросов рыночных данных.
-# Использует единый динамический обработчик для масштабируемости.
+# Файл: bot/handlers/public/market_data_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Обрабатывает запросы на получение рыночных данных,
+# таких как Индекс страха и жадности, статус сети Bitcoin и
+# информация о халвинге.
 # ===============================================================
 import logging
+import asyncio
 from typing import Union
 
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
-from aiogram.exceptions import TelegramBadRequest
 
-from bot.keyboards.keyboards import get_main_menu_keyboard
+from bot.keyboards.info_keyboards import get_main_menu_keyboard
 from bot.services.market_data_service import MarketDataService
-from bot.services.admin_service import AdminService
-from bot.utils.helpers import get_message_and_chat_id
 from bot.utils.plotting import generate_fng_image
+from bot.utils.formatters import format_halving_info, format_network_status
+# --- ИСПРАВЛЕНИЕ: Импортируем из правильного модуля ---
+from bot.utils.ui_helpers import show_main_menu_from_callback
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
-router = Router()
+
+# Инициализация роутера
+router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-@router.callback_query(F.data.startswith("menu_market_"))
-@router.message(F.text.in_({"😱 Индекс Страха", "⏳ Халвинг", "📡 Статус BTC"}))
-async def handle_market_data_request(update: Union[CallbackQuery, Message], market_data_service: MarketDataService, admin_service: AdminService):
-    """
-    Единый обработчик для всех запросов рыночных данных.
-    """
-    message, _ = await get_message_and_chat_id(update)
-    
-    if isinstance(update, CallbackQuery):
-        action = update.data.removeprefix("menu_market_")
-        await update.answer()
-    else:
-        # Преобразуем текст кнопки в action
-        action_map = {
-            "😱 Индекс Страха": "fear_greed",
-            "⏳ Халвинг": "halving",
-            "📡 Статус BTC": "btc_status"
-        }
-        action = action_map.get(update.text)
+# --- ОБРАБОТЧИКИ ДЛЯ РАЗНЫХ ТИПОВ РЫНОЧНЫХ ДАННЫХ ---
 
-    await admin_service.track_command_usage(f"Рыночные данные: {action}")
-    
-    # --- Индекс Страха и Жадности ---
-    if action == "fear_greed":
-        temp_message = await message.answer("⏳ Получаю индекс и рисую график...")
-        index = await market_data_service.get_fear_and_greed_index()
-        if not index:
-            await temp_message.edit_text("Не удалось получить индекс.", reply_markup=get_main_menu_keyboard())
-            return
-        
-        value = int(index.get('value', 50))
-        classification = index.get('value_classification', 'Neutral')
-        image_bytes = await message.loop.run_in_executor(None, generate_fng_image, value, classification)
-        
-        await temp_message.delete()
-        await message.answer_photo(
-            BufferedInputFile(image_bytes, "fng.png"),
-            caption=f"😱 <b>Индекс страха и жадности: {value} - {classification}</b>",
-            reply_markup=get_main_menu_keyboard()
-        )
+@router.callback_query(F.data == "nav:fear_greed")
+async def handle_fear_greed_menu(call: CallbackQuery, market_data_service: MarketDataService):
+    """
+    Обрабатывает запрос на получение Индекса страха и жадности.
+    Генерирует и отправляет изображение.
+    """
+    await call.message.delete()
+    temp_message = await call.message.answer("⏳ Получаю индекс и рисую график...")
 
-    # --- Халвинг и Статус BTC (текстовые ответы) ---
-    else:
-        temp_message = await message.answer("⏳ Получаю данные...")
-        if action == "halving":
-            text = await market_data_service.get_halving_info()
-        elif action == "btc_status":
-            text = await market_data_service.get_btc_network_status()
-        else:
-            text = "Неизвестное действие."
-            
-        await temp_message.edit_text(text, reply_markup=get_main_menu_keyboard())
+    index = await market_data_service.get_fear_and_greed_index()
+    if not index:
+        await temp_message.edit_text("❌ Не удалось получить Индекс страха и жадности.", reply_markup=get_main_menu_keyboard())
+        return
+
+    # Генерируем изображение в фоновом потоке, чтобы не блокировать бота
+    loop = asyncio.get_running_loop()
+    image_bytes = await loop.run_in_executor(
+        None, generate_fng_image, index.value, index.value_classification
+    )
+    
+    caption = f"😱 <b>Индекс страха и жадности: {index.value} - {index.value_classification}</b>"
+
+    await temp_message.delete()
+    await call.message.answer_photo(
+        BufferedInputFile(image_bytes, "fng.png"), 
+        caption=caption, 
+        reply_markup=get_main_menu_keyboard()
+    )
+
+@router.callback_query(F.data.startswith("nav:"))
+async def handle_market_data_navigation(call: CallbackQuery, market_data_service: MarketDataService):
+    """
+    Универсальный обработчик для кнопок "Халвинг" и "Статус BTC".
+    """
+    action = call.data.split(':')[1]
+    
+    text = "⏳ Загружаю данные..."
+    await call.message.edit_text(text)
+    
+    response_text = "❌ Произошла ошибка при загрузке данных."
+
+    if action == "halving":
+        halving_info = await market_data_service.get_halving_info()
+        if halving_info:
+            response_text = format_halving_info(halving_info)
+    
+    elif action == "btc_status":
+        network_status = await market_data_service.get_btc_network_status()
+        if network_status:
+            response_text = format_network_status(network_status)
+
+    await call.message.edit_text(response_text, reply_markup=get_main_menu_keyboard())
