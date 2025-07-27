@@ -1,83 +1,91 @@
 # ===============================================================
-# Файл: bot/services/news_service.py (НОВЫЙ ФАЙЛ)
-# Описание: Специализированный сервис для сбора новостей
-# из различных источников (API, RSS). Выделен из
-# CryptoCenterService для соответствия принципу единой
-# ответственности.
+# Файл: bot/services/news_service.py (ПРОДАКШН-ВЕРСЯ 2025)
+# Описание: Сервис, отвечающий за сбор "сырых" новостных данных
+# из различных источников (API, RSS). Является поставщиком
+# контента для других сервисов, например, AIContentService.
 # ===============================================================
-
 import asyncio
 import logging
-from typing import List, Dict, Any
+from typing import List
 
 import aiohttp
 import feedparser
 
 from bot.config.settings import settings
+# --- ИСПРАВЛЕНИЕ: Импортируем утилиту из нового, правильного места ---
+from bot.utils.http_client import make_request
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.utils.models import NewsArticle
-from bot.utils.helpers import make_request
 
 logger = logging.getLogger(__name__)
 
 class NewsService:
     """
-    Отвечает за сбор и первичную обработку новостей из различных источников.
+    Сервис для сбора новостей из различных API и RSS-лент.
     """
     def __init__(self, http_session: aiohttp.ClientSession):
         self.session = http_session
+        self.config = settings.news_service
 
-    async def get_latest_articles(self, limit: int = 5) -> List[NewsArticle]:
-        """
-        Получает список последних новостных статей из основного API.
-        """
-        logger.info(f"Fetching latest {limit} articles from primary API...")
+    async def _fetch_from_cryptocompare(self) -> List[NewsArticle]:
+        """Получает новости из API CryptoCompare."""
+        headers = {'Authorization': f'Apikey {self.config.cryptocompare_api_key}'} if self.config.cryptocompare_api_key else {}
+        data = await make_request(
+            self.session, 
+            self.config.cryptocompare_url,
+            headers=headers
+        )
+        if not data or "Data" not in data or not isinstance(data["Data"], list):
+            logger.warning("Не удалось получить новости от CryptoCompare или структура ответа некорректна.")
+            return []
+            
+        articles = [
+            NewsArticle(
+                title=article.get('title', 'Без заголовка'),
+                body=article.get('body', ''),
+                url=article.get('url', ''),
+                source='CryptoCompare'
+            ) for article in data["Data"][:self.config.news_limit_per_source]
+        ]
+        logger.info(f"Успешно получено {len(articles)} новостей от CryptoCompare.")
+        return articles
+
+    async def _fetch_from_rss(self, feed_url: str) -> List[NewsArticle]:
+        """Получает новости из одной RSS-ленты."""
         try:
-            api_url = settings.api_endpoints.crypto_center_news_api_url
-            headers = {'Authorization': f'Apikey {settings.api_keys.cryptocompare_api_key}'} if settings.api_keys.cryptocompare_api_key else {}
-            
-            data = await make_request(self.session, api_url, headers=headers)
-            
-            if not data or "Data" not in data or not isinstance(data["Data"], list):
-                logger.error("Crypto News API response has an unexpected structure.")
-                return []
-            
-            articles_data = data["Data"][:limit]
+            # feedparser - синхронная библиотека, запускаем в отдельном потоке
+            feed = await asyncio.to_thread(feedparser.parse, feed_url)
             articles = [
                 NewsArticle(
-                    title=article.get('title', 'Без заголовка'),
-                    body=article.get('body', ''),
-                    url=article.get('url', '')
-                ) for article in articles_data
+                    title=entry.title,
+                    body=entry.summary,
+                    url=entry.link,
+                    source=feed.feed.title
+                ) for entry in feed.entries[:self.config.news_limit_per_source]
             ]
-            logger.info(f"Successfully fetched {len(articles)} articles.")
+            logger.info(f"Успешно получено {len(articles)} новостей из RSS-ленты: {feed.feed.title}.")
             return articles
         except Exception as e:
-            logger.error(f"An error occurred while fetching crypto news feed: {e}", exc_info=True)
+            logger.error(f"Не удалось обработать RSS-ленту {feed_url}: {e}")
             return []
 
-    async def get_aggregated_news_text(self) -> str:
+    async def get_latest_news(self) -> List[NewsArticle]:
         """
-        Собирает текстовый контент из нескольких источников (API и RSS)
-        в единый большой текст для контекстного анализа AI.
+        Собирает новости из всех настроенных источников параллельно.
         """
-        logger.info("Aggregating news text from all sources for AI context...")
-        all_text_content = ""
-
-        # 1. Данные из основного API
-        api_articles = await self.get_latest_articles(limit=10)
-        for article in api_articles:
-            all_text_content += f"Title: {article.title}\nBody: {article.body}\n\n"
-
-        # 2. Данные из RSS-лент
-        for feed_url in settings.news.alpha_rss_feeds:
-            try:
-                # feedparser блокирующая библиотека, выполняем в отдельном потоке
-                feed = await asyncio.to_thread(feedparser.parse, feed_url)
-                for entry in feed.entries[:3]:  # Берем 3 свежих из каждой ленты
-                    all_text_content += f"Title: {entry.title}\nSummary: {getattr(entry, 'summary', '')}\n\n"
-            except Exception as e:
-                logger.error(f"Failed to parse RSS feed {feed_url}: {e}")
+        logger.info("Запуск сбора последних новостей...")
         
-        logger.info(f"Aggregated {len(all_text_content)} characters of text for analysis.")
-        return all_text_content
+        tasks = [self._fetch_from_cryptocompare()]
+        tasks.extend([self._fetch_from_rss(url) for url in self.config.rss_feeds])
 
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        all_articles = []
+        for result in results:
+            if isinstance(result, list):
+                all_articles.extend(result)
+            elif isinstance(result, Exception):
+                logger.error(f"Ошибка при сборе новостей: {result}")
+        
+        logger.info(f"Сбор новостей завершен. Всего получено: {len(all_articles)}.")
+        return all_articles
