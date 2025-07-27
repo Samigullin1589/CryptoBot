@@ -116,6 +116,16 @@ class MiningSessionResult(BaseModel):
     electricity_cost: float
     net_earned: float
 
+# --- ИСПРАВЛЕНИЕ: Добавлена недостающая модель ---
+class CalculationInput(BaseModel):
+    """Входные данные для расчета доходности майнинга."""
+    hashrate_str: str
+    power_consumption_watts: int
+    electricity_cost_usd: float
+    pool_commission: float
+    algorithm: str
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 class CalculationResult(BaseModel):
     """Результаты расчета доходности из калькулятора."""
     btc_price_usd: float
