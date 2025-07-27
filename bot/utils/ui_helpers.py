@@ -1,52 +1,43 @@
 # ===============================================================
-# Файл: bot/utils/ui_helpers.py (НОВЫЙ ФАЙЛ)
-# Описание: Хелперы, специфичные для взаимодействия с UI Telegram.
+# Файл: bot/utils/ui_helpers.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Утилиты для управления пользовательским интерфейсом,
+# такие как отображение главного меню.
 # ===============================================================
-
 import logging
-from typing import Union, Tuple
-
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
+
+from bot.keyboards.keyboards import get_main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 
-async def get_message_and_chat_id(update: Union[CallbackQuery, Message]) -> Tuple[Message, int]:
+async def show_main_menu(message: Message):
     """
-    Извлекает объект сообщения и ID чата из CallbackQuery или Message.
-    Автоматически отвечает на CallbackQuery, чтобы убрать "часики".
-    
-    :param update: Входящее событие.
-    :return: Кортеж (объект Message, ID чата).
+    Отображает главное меню, отправляя новое сообщение.
+    Используется после команд, введенных текстом.
     """
-    if isinstance(update, CallbackQuery):
-        # Отвечаем на колбэк, чтобы пользователь видел реакцию
-        await update.answer()
-        return update.message, update.message.chat.id
-    return update, update.chat.id
+    text = "Главное меню:"
+    markup = get_main_menu_keyboard()
+    await message.answer(text, reply_markup=markup)
 
-async def safe_send_message(
-    message: Message, 
-    text: str, 
-    reply_markup: InlineKeyboardMarkup
-) -> Message:
+async def show_main_menu_from_callback(call: CallbackQuery):
     """
-    Отображает сообщение, пытаясь сначала отредактировать существующее,
-    а в случае неудачи — отправляет новое.
-    Это полезно для предотвращения "прыгания" чата.
-    
-    :param message: Объект сообщения, которое нужно отредактировать или на которое ответить.
-    :param text: Текст для отправки.
-    :param reply_markup: Клавиатура.
-    :return: Отправленное или отредактированное сообщение.
+    Отображает главное меню из колбэка, пытаясь отредактировать сообщение.
+    Если не получается (например, это фото), удаляет старое и отправляет новое.
     """
+    text = "Главное меню:"
+    markup = get_main_menu_keyboard()
     try:
-        # Пытаемся отредактировать, если это возможно
-        return await message.edit_text(text, reply_markup=reply_markup)
-    except (TelegramBadRequest, AttributeError) as e:
-        # TelegramBadRequest: если сообщение не изменилось или его нельзя редактировать
-        # AttributeError: если message - это не Message, а, например, User
-        logger.debug(f"Could not edit message: {e}. Sending a new one.")
-        # Если не получилось, отправляем новое сообщение
-        return await message.answer(text, reply_markup=reply_markup)
-
+        # Пытаемся отредактировать текстовое сообщение
+        await call.message.edit_text(text, reply_markup=markup)
+    except TelegramBadRequest:
+        # Если не получилось (например, сообщение не текстовое или не изменилось),
+        # удаляем старое и отправляем новое.
+        try:
+            await call.message.delete()
+        except TelegramBadRequest as e:
+            logger.warning(f"Could not delete message on main menu transition: {e}")
+        await call.message.answer(text, reply_markup=markup)
+    finally:
+        # Отвечаем на колбэк, чтобы убрать "часики" с кнопки
+        await call.answer()
