@@ -1,7 +1,8 @@
 # ===============================================================
-# Файл: bot/handlers/public/price_handler.py (НОВЫЙ ФАЙЛ)
-# Описание: Обработчики для всего, что связано с курсами валют.
-# Использует FSM и делегирует логику в сервисы.
+# Файл: bot/handlers/public/price_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Обрабатывает все взаимодействия, связанные с получением
+# цен на криптовалюты. Управляет сценарием FSM для запроса
+# тикера у пользователя.
 # ===============================================================
 import logging
 from typing import Union
@@ -11,73 +12,77 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.keyboards.info_keyboards import get_price_keyboard
-from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.services.price_service import PriceService
-from bot.services.admin_service import AdminService
-from bot.states.info_states import PriceInquiryStates
+# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса (в единственном числе) ---
+from bot.states.info_states import PriceInquiryState
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.utils.formatters import format_price_info
-from bot.utils.helpers import get_message_and_chat_id
+from bot.utils.ui_helpers import show_main_menu_from_callback
 
-router = Router()
+# Инициализация роутера
+router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-@router.callback_query(F.data == "menu_price")
-@router.message(F.text == "💹 Курс")
-async def handle_price_menu(update: Union[CallbackQuery, Message], state: FSMContext, admin_service: AdminService):
-    """
-    Обрабатывает вход в меню курсов, сбрасывает предыдущее состояние
-    и предлагает выбрать монету.
-    """
-    await admin_service.track_command_usage("💹 Курс")
-    await state.clear() # Гарантируем, что мы в чистом состоянии
+# --- ОБРАБОТЧИКИ СЦЕНАРИЯ ЗАПРОСА ЦЕНЫ ---
 
-    message, _ = await get_message_and_chat_id(update)
-    await message.answer("Курс какой монеты вас интересует?", reply_markup=get_price_keyboard())
-    await state.set_state(PriceInquiryStates.waiting_for_ticker)
-    
-    if isinstance(update, CallbackQuery):
-        await update.answer()
+@router.callback_query(F.data == "nav:price")
+async def handle_price_menu(call: CallbackQuery, state: FSMContext):
+    """
+    Отображает меню выбора популярных криптовалют или ввода своей.
+    Запускает сценарий FSM.
+    """
+    await state.clear()
+    text = "Курс какой монеты вас интересует?"
+    await call.message.edit_text(text, reply_markup=get_price_keyboard())
+    # --- ИСПРАВЛЕНИЕ: Используем правильное имя класса ---
+    await state.set_state(PriceInquiryState.waiting_for_ticker)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 @router.callback_query(F.data.startswith("price:"))
-async def handle_price_ticker_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService, admin_service: AdminService):
+async def handle_price_button_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService):
     """
-    Обрабатывает нажатие на кнопку с конкретным тикером или 'Другая монета'.
+    Обрабатывает нажатие на кнопку с конкретной монетой (BTC, ETH и т.д.).
     """
-    await call.answer()
-    ticker = call.data.split(":")[1]
-
-    if ticker == "other":
-        await call.message.edit_text("Введите тикер монеты (напр. Aleo):")
-        # Состояние уже установлено, просто ждем ввода
-        return
-
-    await state.clear()
-    await admin_service.track_command_usage(f"Курс (кнопка): {ticker.upper()}")
-    await call.message.edit_text(f"⏳ Получаю курс для {ticker.upper()}...")
+    await state.clear() # Сценарий завершен, так как тикер получен
+    query = call.data.split(':')[1]
     
-    coin = await price_service.get_crypto_price(ticker)
-    if not coin:
-        response_text = f"❌ Не удалось найти информацию по тикеру '{ticker}'."
+    await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
+    
+    price_info = await price_service.get_crypto_price(query)
+    if price_info:
+        response_text = format_price_info(price_info)
+        await call.message.edit_text(response_text, reply_markup=get_main_menu_keyboard())
     else:
-        response_text = format_price_info(coin)
-    
-    await call.message.edit_text(response_text, reply_markup=get_main_menu_keyboard())
+        await call.message.edit_text(
+            f"❌ К сожалению, не удалось найти информацию по тикеру '{query}'.",
+            reply_markup=get_main_menu_keyboard()
+        )
 
-@router.message(PriceInquiryStates.waiting_for_ticker)
-async def process_ticker_text_input(message: Message, state: FSMContext, price_service: PriceService, admin_service: AdminService):
+# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса ---
+@router.message(PriceInquiryState.waiting_for_ticker)
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+async def process_ticker_input_from_user(message: Message, state: FSMContext, price_service: PriceService):
     """
-    Обрабатывает текстовый ввод тикера от пользователя, находящегося в состоянии ожидания.
+    Обрабатывает текстовый ввод тикера от пользователя,
+    находясь в состоянии waiting_for_ticker.
+    """
+    await state.clear() # Сценарий завершен
+    temp_msg = await message.answer("⏳ Получаю курс...")
+    
+    price_info = await price_service.get_crypto_price(message.text)
+    if price_info:
+        response_text = format_price_info(price_info)
+        await temp_msg.edit_text(response_text, reply_markup=get_main_menu_keyboard())
+    else:
+        await temp_msg.edit_text(
+            f"❌ К сожалению, не удалось найти информацию по тикеру '{message.text}'.",
+            reply_markup=get_main_menu_keyboard()
+        )
+
+@router.callback_query(PriceInquiryState.waiting_for_ticker, F.data == "nav:back_to_main")
+async def cancel_price_inquiry(call: CallbackQuery, state: FSMContext):
+    """
+    Обрабатывает отмену сценария запроса цены и возвращает в главное меню.
     """
     await state.clear()
-    ticker = message.text.strip()
-    await admin_service.track_command_usage(f"Курс (текст): {ticker}")
-    
-    temp_msg = await message.answer(f"⏳ Получаю курс для '{ticker}'...")
-    
-    coin = await price_service.get_crypto_price(ticker)
-    if not coin:
-        response_text = f"❌ Не удалось найти информацию по тикеру '{ticker}'."
-    else:
-        response_text = format_price_info(coin)
-        
-    await temp_msg.edit_text(response_text, reply_markup=get_main_menu_keyboard())
+    await show_main_menu_from_callback(call)
