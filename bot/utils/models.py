@@ -1,17 +1,14 @@
 # ===============================================================
 # Файл: bot/utils/models.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Центральный файл для всех Pydantic-моделей данных,
-# используемых в приложении. Обеспечивает строгую типизацию
-# и валидацию данных между сервисами.
+# Описание: Содержит все Pydantic-модели для статической
+# типизации данных во всем приложении.
 # ===============================================================
-import time
-from datetime import datetime
+from pydantic import BaseModel, Field, conint, field_validator
+from typing import List, Optional, Any
 from enum import Enum
-from typing import Optional, List, Any
+from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator, conint
-
-# --- Модели для пользователей и ролей ---
+# --- Модели для ролей и профиля пользователя ---
 
 class UserRole(Enum):
     """Определяет иерархию ролей пользователей."""
@@ -22,122 +19,120 @@ class UserRole(Enum):
     SUPER_ADMIN = 40
 
 class UserProfile(BaseModel):
-    """Модель для хранения полного профиля пользователя в чате."""
+    """Профиль пользователя в определенном чате."""
     user_id: int
     chat_id: int
+    join_timestamp: float
     role: UserRole = UserRole.USER
-    join_timestamp: float = Field(default_factory=time.time)
     trust_score: int = 100
+    is_banned: bool = False
+    mute_until_timestamp: float = 0
     violations_count: int = 0
-    last_activity_timestamp: float = Field(default_factory=time.time)
+    last_activity_timestamp: float = 0.0
     message_count: int = 0
     conversation_history_json: str = "[]"
+    
+# --- Модели для данных о криптовалютах и ASIC-майнерах ---
 
-# --- Модели для ASIC и майнинга ---
+class CoinInfo(BaseModel):
+    """Информация о криптовалюте."""
+    id: str
+    symbol: str
+    name: str
+    algorithm: Optional[str] = "Unknown"
+
+class PriceInfo(BaseModel):
+    """Информация о рыночной цене криптовалюты."""
+    name: str
+    symbol: str
+    price: float
+    price_change_24h: Optional[float] = None
+    algorithm: Optional[str] = "Unknown"
 
 class AsicMiner(BaseModel):
-    """Модель данных для одного ASIC-майнера."""
+    """Модель данных для ASIC-майнера."""
     name: str
-    profitability: Optional[float] = None
-    algorithm: Optional[str] = 'Unknown'
+    profitability: float
     power: Optional[int] = None
-    hashrate: Optional[str] = 'N/A'
-    efficiency: Optional[str] = 'N/A'
-    source: Optional[str] = 'Unknown'
-    
-    @field_validator('power', mode='before')
-    @classmethod
-    def clean_power(cls, v: Any) -> Optional[int]:
-        if isinstance(v, str) and v.isdigit():
-            return int(v)
-        if isinstance(v, int):
-            return v
-        return None
-
-class CalculationInput(BaseModel):
-    """Модель для входных данных калькулятора доходности."""
-    hashrate_str: str
-    power_consumption_watts: int
-    electricity_cost: float
-    pool_commission: float
-    algorithm: str
-
-class CalculationResult(BaseModel):
-    """Модель для результатов расчета доходности."""
-    btc_price_usd: float
-    usd_rub_rate: float
-    network_hashrate_ths: float
-    block_reward_btc: float
-    gross_revenue_usd_daily: float
-    electricity_cost_usd_daily: float
-    pool_fee_usd_daily: float
-    total_expenses_usd_daily: float
-    net_profit_usd_daily: float
-
-class MiningSessionResult(BaseModel):
-    """Модель для результатов завершенной майнинг-сессии."""
-    asic_name: str
-    user_tariff_name: str
-    gross_earned: float
-    total_electricity_cost: float
-    net_earned: float
+    algorithm: Optional[str] = "Unknown"
+    hashrate: Optional[str] = "N/A"
+    efficiency: Optional[str] = "N/A"
+    source: Optional[str] = "Unknown"
 
 # --- Модели для рыночных данных ---
 
-# --- НОВАЯ МОДЕЛЬ, КОТОРОЙ НЕ ХВАТАЛО ---
-class FearAndGreedIndex(BaseModel):
-    """Модель для данных Индекса Страха и Жадности."""
-    value: int
-    value_classification: str
-# --- КОНЕЦ НОВОЙ МОДЕЛИ ---
-
 class HalvingInfo(BaseModel):
-    """Модель для данных о халвинге Bitcoin."""
+    """Информация о следующем халвинге Bitcoin."""
     remaining_blocks: int
     estimated_date: datetime
     current_reward: float
     next_reward: float
 
 class NetworkStatus(BaseModel):
-    """Модель для данных о состоянии сети Bitcoin."""
+    """Информация о текущем статусе сети Bitcoin."""
     difficulty: float
-    mempool_txs: int
-    fastest_fee: int
+    mempool_transactions: int
+    suggested_fee: str
+
+class FearAndGreedIndex(BaseModel):
+    """Модель для Индекса страха и жадности."""
+    value: int
+    value_classification: str
+
+# --- Модели для Крипто-Центра и Новостей ---
 
 class NewsArticle(BaseModel):
-    """Модель для одной новостной статьи."""
+    """Модель для новостной статьи."""
     title: str
-    body: str
     url: str
-    source: str
+    ai_summary: Optional[str] = None
 
-class CoinInfo(BaseModel):
-    """Модель для базовой информации о криптовалюте."""
-    coin: str  # Тикер, например, "BTC"
-    name: str  # Полное имя, например, "Bitcoin"
-    algorithm: str
-
-class PriceInfo(BaseModel):
-    """Модель для полной информации о цене криптовалюты."""
-    id: str  # ID монеты в CoinGecko, например, "bitcoin"
+class AirdropProject(BaseModel):
+    """Модель для проекта с потенциальным Airdrop."""
+    id: str
     name: str
-    symbol: str
-    price: float
-    price_change_24h: Optional[float] = Field(alias='price_change_percentage_24h', default=0.0)
+    description: str
+    status: str
+    tasks: List[str]
+    guide_url: Optional[str] = None
+
+class MiningSignal(BaseModel):
+    """Модель для майнинг-сигнала."""
+    id: str
+    name: str
+    description: str
     algorithm: str
+    hardware: str
+    status: str
+    guide_url: Optional[str] = None
 
-# --- Модели для викторины ---
+# --- Модели для игры и калькулятора ---
 
-class QuizQuestion(BaseModel):
-    """Модель для одного вопроса викторины."""
-    question: str = Field(..., max_length=300)
-    options: List[str] = Field(..., min_length=4, max_length=4)
-    correct_option_index: conint(ge=0, lt=4)
+class MiningSessionResult(BaseModel):
+    """Результаты завершенной майнинг-сессии."""
+    asic_name: str
+    tariff_name: str
+    gross_earned: float
+    electricity_cost: float
+    net_earned: float
 
-    @field_validator('options')
-    @classmethod
-    def check_options_length(cls, options: List[str]) -> List[str]:
-        for option in options:
-            if len(option) > 100:
-                raise ValueError("Длина варианта ответа не должна превышать 100 символов")
-        return options
+class CalculationResult(BaseModel):
+    """Результаты расчета доходности из калькулятора."""
+    btc_price_usd: float
+    usd_rub_rate: float
+    network_hashrate_ths: float
+    block_reward_btc: float
+    pool_commission: float
+    gross_revenue_usd_daily: float
+    gross_revenue_usd_monthly: float
+    gross_revenue_rub_daily: float
+    gross_revenue_rub_monthly: float
+    electricity_cost_usd_daily: float
+    pool_fee_usd_daily: float
+    total_expenses_usd_daily: float
+    net_profit_usd_daily: float
+    net_profit_usd_monthly: float
+    net_profit_usd_yearly: float
+    net_profit_rub_daily: float
+    net_profit_rub_monthly: float
+    net_profit_rub_yearly: float
