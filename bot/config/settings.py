@@ -100,7 +100,9 @@ class SchedulerSettings(BaseSettings):
     asic_update_hours: int = 1
     news_interval_hours: int = 3
     morning_summary_hour: int = 9
-    leaderboard_day_of_week: str = 'fri'
+    # --- ИСПРАВЛЕНИЕ: Переименовываем поле для соответствия ---
+    leaderboard_day: str = Field(default='fri', alias='leaderboard_day_of_week')
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     leaderboard_hour: int = 18
     health_check_minutes: int = 5
 
@@ -145,11 +147,7 @@ class AIContentServiceSettings(BaseSettings):
 class AppSettings(BaseSettings):
     """Главный класс, объединяющий все конфигурации."""
     app: AppConfig = AppConfig()
-    # --- ИСПРАВЛЕНИЕ: Создаем экземпляр по умолчанию ---
-    # Это говорит Pydantic, что ApiKeysConfig должен сам
-    # читать переменные из .env без префикса.
     api_keys: ApiKeysConfig = ApiKeysConfig()
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     api_endpoints: ApiEndpointsConfig = ApiEndpointsConfig()
     news: NewsConfig = NewsConfig()
     game: MiningGameConfig = MiningGameConfig()
