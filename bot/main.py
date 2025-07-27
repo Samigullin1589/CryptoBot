@@ -1,135 +1,118 @@
 # ===============================================================
 # Файл: bot/main.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Главный файл для запуска Telegram-бота.
-# Собирает все компоненты (хэндлеры, мидлвари, сервисы)
-# и запускает процесс поллинга.
+# Описание: Главный файл для запуска бота. Настраивает
+# логирование, инициализирует зависимости, регистрирует
+# роутеры и middlewares, запускает бота и планировщик.
 # ===============================================================
-
 import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
 
-# --- 1. Настройка и инициализация ---
-
-# Настраиваем логирование
+# --- Импорты для настройки ---
+from bot.config.settings import settings
+from bot.utils import dependencies  # Импортируем модуль, он сам инициализируется
 from bot.utils.logging_setup import setup_logging
-setup_logging()
+from bot.utils.scheduler import setup_scheduler
 
-logger = logging.getLogger(__name__)
-
-# Инициализируем зависимости (Bot, Redis, HTTP-сессия и все сервисы)
-from bot.utils import dependencies
-dependencies.initialize()
-
-# --- 2. Импорт и регистрация роутеров ---
-
-# Импортируем все наши роутеры из папки handlers
+# --- Импорты роутеров ---
 from bot.handlers.public import (
     common_handler,
     asic_handler,
-    crypto_center_handler,
+    price_handler,
     market_data_handler,
     news_handler,
-    price_handler,
-    quiz_handler
+    quiz_handler,
+    crypto_center_handler,
 )
 from bot.handlers.admin import (
     admin_menu,
+    stats_handler,
     moderation_handler,
-    stats_handler
 )
-from bot.handlers.game import (
-    mining_game_handler
-)
-from bot.handlers.tools import (
-    calculator_handler
-)
-from bot.handlers.threats import (
-    threat_handler
-)
+from bot.handlers.game import mining_game_handler
+from bot.handlers.tools import calculator_handler
+from bot.handlers.threats import threat_handler
 
-# --- 3. Основная функция запуска ---
+# --- Импорты middlewares ---
+from bot.middlewares.activity_middleware import ActivityMiddleware
+from bot.middlewares.throttling_middleware import ThrottlingMiddleware
+from bot.middlewares.action_tracking_middleware import ActionTrackingMiddleware
+
+# Настраиваем логирование в самом начале
+setup_logging(level=settings.app.log_level, format=settings.app.log_format)
+logger = logging.getLogger(__name__)
 
 async def main():
-    """
-    Основная асинхронная функция, которая настраивает и запускает бота.
-    """
-    # Получаем уже созданные экземпляры зависимостей
-    bot = dependencies.bot
-    dp = dependencies.dp
+    """Главная асинхронная функция для запуска бота."""
+    logger.info("Starting bot...")
+
+    # --- ИСПРАВЛЕНИЕ: Удаляем ненужный вызов ---
+    # Модуль dependencies инициализирует все синглтоны при первом импорте.
+    # Ручной вызов не требуется и приводит к ошибке.
+    # await dependencies.initialize() # <-- ЭТА СТРОКА УДАЛЕНА
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+    # Получаем уже готовые экземпляры из центра зависимостей
+    bot: Bot = dependencies.bot
+    dp: Dispatcher = dependencies.dp
     scheduler = dependencies.scheduler
 
-    # --- Регистрация Middleware ---
-    # Порядок регистрации важен!
-    from bot.middlewares.activity_middleware import ActivityMiddleware
-    from bot.middlewares.throttling_middleware import ThrottlingMiddleware
-    from bot.middlewares.action_tracking_middleware import ActionTrackingMiddleware
-
-    # ActionTrackingMiddleware должен идти первым, чтобы отслеживать все действия
-    dp.update.outer_middleware(ActionTrackingMiddleware(
-        admin_service=dependencies.admin_service
+    # --- Регистрация middlewares ---
+    # Порядок важен: сначала троттлинг, потом остальные.
+    dp.message.middleware(ThrottlingMiddleware(
+        user_service=dependencies.user_service,
+        settings=settings.throttling
     ))
-    # ThrottlingMiddleware для защиты от флуда сообщениями
-    dp.message.outer_middleware(ThrottlingMiddleware(
-        user_service=dependencies.user_service
+    # ActionTrackingMiddleware должен идти до ActivityMiddleware
+    dp.update.middleware(ActionTrackingMiddleware(admin_service=dependencies.admin_service))
+    dp.update.middleware(ActivityMiddleware(
+        user_service=dependencies.user_service,
+        settings=settings.activity
     ))
-    # ActivityMiddleware для отслеживания активности пользователей
-    dp.update.outer_middleware(ActivityMiddleware(
-        user_service=dependencies.user_service
-    ))
+    logger.info("Middlewares registered.")
 
     # --- Регистрация роутеров ---
-    # Регистрируем роутеры в определенном порядке.
-    # Сначала специфические (админские), затем более общие.
-    dp.include_routers(
-        # Админские команды
-        admin_menu.router,
-        stats_handler.router,
-        moderation_handler.router,
-        
-        # Обработка спама и угроз
-        threat_handler.router,
-
-        # Инструменты
-        calculator_handler.router,
-
-        # Игра
-        mining_game_handler.router,
-
-        # Публичные команды
+    # Сначала регистрируем обработчики для админов,
+    # затем публичные, чтобы избежать неверного порядка срабатывания.
+    admin_routers = [
+        admin_menu.admin_router,
+        stats_handler.stats_router,
+        moderation_handler.moderation_router,
+    ]
+    public_routers = [
         common_handler.router,
         price_handler.router,
         asic_handler.router,
-        crypto_center_handler.router,
         market_data_handler.router,
         news_handler.router,
-        quiz_handler.router
-    )
+        quiz_handler.router,
+        crypto_center_handler.router,
+        mining_game_handler.router,
+        calculator_handler.router,
+        threat_handler.router,  # Этот роутер должен быть одним из последних
+    ]
+    dp.include_routers(*admin_routers, *public_routers)
+    logger.info("All routers included.")
 
+    # --- Запуск компонентов ---
     try:
-        # Запускаем фоновые задачи
         scheduler.start()
-        logger.info("Scheduler has been started.")
-        
-        # Перед запуском бота удаляем вебхук, если он был установлен
+        logger.info("Scheduler started.")
+        # Пропускаем накопленные апдейты
         await bot.delete_webhook(drop_pending_updates=True)
-        
         # Запускаем поллинг
-        logger.info("Bot is starting polling...")
         await dp.start_polling(bot)
-
     finally:
-        # Корректно завершаем работу при остановке
-        logger.info("Stopping bot...")
+        # Корректно завершаем работу
         scheduler.shutdown()
         await dependencies.close_dependencies()
-        logger.info("Bot has been stopped.")
+        logger.info("Bot stopped and resources closed.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped by user.")
+        logger.info("Bot execution stopped manually.")
