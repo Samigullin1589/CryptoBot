@@ -14,14 +14,14 @@ from aiogram.enums import ChatType
 
 from bot.config.settings import settings
 from bot.keyboards.keyboards import get_main_menu_keyboard
-# --- ИСПРАВЛЕНИЕ: Импортируем из правильного, нового файла ---
 from bot.utils.text_utils import sanitize_html
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.keyboards.onboarding_keyboards import get_onboarding_start_keyboard, get_onboarding_step_keyboard
 from bot.services.user_service import UserService
 from bot.services.ai_content_service import AIContentService
 from bot.services.price_service import PriceService
-from bot.utils.states import CommonStates
+# --- ИСПРАВЛЕНИЕ: Импортируем из правильного, нового файла ---
+from bot.states.common_states import CommonStates
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.utils.formatters import format_price_info
 
 # Инициализация роутера
