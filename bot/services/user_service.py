@@ -1,149 +1,169 @@
 # ===============================================================
-# Файл: bot/services/user_service.py (БЕЗ ИЗМЕНЕНИЙ)
-# Описание: Этот файл уже написан правильно.
+# Файл: bot/services/user_service.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Централизованный сервис для управления профилями,
+# ролями, репутацией и историей диалогов пользователей.
 # ===============================================================
+
 import time
 import json
 import logging
-from dataclasses import dataclass, asdict, fields
-from typing import Optional, List, Dict
+from typing import List, Dict, Optional
 
 import redis.asyncio as redis
 from aiogram import Bot
-from aiogram.enums import ChatMemberStatus
+from aiogram.types import Message
+
+from bot.config.settings import AppSettings
+from bot.utils.models import UserProfile, UserRole
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class UserProfile:
-    user_id: int
-    chat_id: int
-    join_timestamp: float
-    trust_score: int = 100
-    is_banned: bool = False
-    mute_until_timestamp: float = 0
-    violations_count: int = 0
-    electricity_cost: Optional[float] = None
-    last_activity_timestamp: float = 0.0
-    message_count: int = 0
-    conversation_history_json: str = "[]"
-    is_admin: bool = False
-    has_immunity: bool = False
-
 class UserService:
-    ACTIVITY_REWARD_THRESHOLD: int = 50
-    ACTIVITY_REWARD_POINTS: int = 5
+    """Сервис для управления всеми данными, связанными с пользователем."""
 
-    def __init__(self, redis_client: redis.Redis, bot: Bot, admin_user_ids: list[int]):
+    def __init__(self, redis_client: redis.Redis, settings: AppSettings):
         self.redis = redis_client
-        self.bot = bot
-        self.global_admins = set(admin_user_ids)
+        self.settings = settings
+        # Создаем множества ID для быстрого поиска ролей
+        self.super_admins = set(self.settings.admin.super_admin_ids)
+        self.admins = set(self.settings.admin.admin_ids)
+        self.moderators = set(self.settings.admin.moderator_ids)
 
-    def _get_user_profile_key(self, user_id: int, chat_id: int) -> str:
-        return f"user_profile:{chat_id}:{user_id}"
+    def _get_user_profile_key(self, user_id: int) -> str:
+        """Генерирует ключ для хранения профиля пользователя в Redis."""
+        return f"user_profile:{user_id}"
 
-    async def get_or_create_user(self, user_id: int, chat_id: int) -> UserProfile:
-        profile_key = self._get_user_profile_key(user_id, chat_id)
-        saved_profile_data = await self.redis.hgetall(profile_key)
-
-        profile_dict = {
-            "user_id": user_id,
-            "chat_id": chat_id,
-            "join_timestamp": time.time()
-        }
+    async def get_or_create_user(self, user_id: int, full_name: str = "", username: str = "") -> UserProfile:
+        """
+        Получает профиль пользователя из Redis. Если его нет, создает новый.
+        
+        :param user_id: Уникальный ID пользователя Telegram.
+        :param full_name: Полное имя пользователя.
+        :param username: Юзернейм пользователя.
+        :return: Экземпляр UserProfile.
+        """
+        profile_key = self._get_user_profile_key(user_id)
+        saved_profile_data = await self.redis.get(profile_key)
 
         if saved_profile_data:
-            decoded_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in saved_profile_data.items()}
-            
-            for field in fields(UserProfile):
-                if field.name in decoded_data:
-                    raw_value = decoded_data[field.name]
-                    try:
-                        if field.type is bool:
-                            profile_dict[field.name] = raw_value.lower() == 'true'
-                        elif raw_value != 'None':
-                            profile_dict[field.name] = field.type(raw_value)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Could not convert field '{field.name}' with value '{raw_value}' to type {field.type}")
+            try:
+                profile = UserProfile.model_validate_json(saved_profile_data)
+                # Динамически обновляем роль при каждом получении профиля
+                profile.role = self._get_user_role(user_id)
+                return profile
+            except Exception as e:
+                logger.error(f"Ошибка валидации профиля пользователя {user_id}: {e}. Создается новый профиль.")
         
-        user_profile = UserProfile(**profile_dict)
-        
-        if not saved_profile_data:
-            await self._save_user_profile(user_profile)
+        # Создание нового профиля, если он не найден или поврежден
+        new_profile = UserProfile(
+            user_id=user_id,
+            full_name=full_name,
+            username=username,
+            join_timestamp=time.time(),
+            role=self._get_user_role(user_id)
+        )
+        await self._save_user_profile(new_profile)
+        logger.info(f"Создан новый профиль для пользователя {user_id}.")
+        return new_profile
 
-        try:
-            chat_member = await self.bot.get_chat_member(chat_id, user_id)
-            if chat_member.status in [ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR]:
-                user_profile.is_admin = True
-        except Exception:
-            user_profile.is_admin = False
-
-        if user_id in self.global_admins:
-            user_profile.has_immunity = True
-            user_profile.is_admin = True
-
-        return user_profile
+    def _get_user_role(self, user_id: int) -> UserRole:
+        """Определяет роль пользователя на основе его ID."""
+        if user_id in self.super_admins:
+            return UserRole.SUPER_ADMIN
+        if user_id in self.admins:
+            return UserRole.ADMIN
+        if user_id in self.moderators:
+            return UserRole.MODERATOR
+        return UserRole.USER
 
     async def _save_user_profile(self, profile: UserProfile):
-        profile_key = self._get_user_profile_key(profile.user_id, profile.chat_id)
-        profile_dict = {k: str(v) for k, v in asdict(profile).items() if k not in ['is_admin', 'has_immunity']}
-        await self.redis.hset(profile_key, mapping=profile_dict)
+        """Сохраняет профиль пользователя в Redis."""
+        profile_key = self._get_user_profile_key(profile.user_id)
+        # Сохраняем как JSON-строку
+        await self.redis.set(profile_key, profile.model_dump_json())
 
-    async def log_violation(self, user_id: int, chat_id: int, reason: str, penalty: int = 10, details: Optional[dict] = None):
-        user_profile = await self.get_or_create_user(user_id, chat_id)
-        user_profile.trust_score = max(0, user_profile.trust_score - penalty)
-        user_profile.violations_count += 1
-        await self._save_user_profile(user_profile)
-        logger.warning(f"VIOLATION: User {user_id} in chat {chat_id}. Reason: {reason}. New score: {user_profile.trust_score}. Details: {details}")
+    async def register_new_user(self, user_id: int):
+        """Регистрирует нового уникального пользователя в системе."""
+        is_new = await self.redis.sadd("system:known_users", user_id)
+        if is_new:
+            # Используем атомарный счетчик для общего числа пользователей
+            await self.redis.incr("stats:total_users")
+            # Добавляем в sorted set для отслеживания по дате регистрации
+            await self.redis.zadd("stats:user_join_dates", {str(user_id): int(time.time())})
 
-    async def update_user_status(self, user_id: int, chat_id: int, is_banned: bool):
-        user_profile = await self.get_or_create_user(user_id, chat_id)
-        user_profile.is_banned = is_banned
-        if is_banned:
-            user_profile.trust_score = 0
-        await self._save_user_profile(user_profile)
+    async def process_referral(self, message: Message, referrer_id: int, bot: Bot):
+        """Обрабатывает реферальную логику."""
+        new_user_id = message.from_user.id
+        
+        # Проверяем, не был ли пользователь уже рефералом
+        is_already_referred = await self.redis.sismember("system:referred_users", new_user_id)
+        if is_already_referred:
+            logger.info(f"Пользователь {new_user_id} уже является рефералом.")
+            return
 
-    async def update_user_mute(self, user_id: int, chat_id: int, mute_until: float):
-        user_profile = await self.get_or_create_user(user_id, chat_id)
-        user_profile.mute_until_timestamp = mute_until
-        await self._save_user_profile(user_profile)
+        bonus = self.settings.game.referral_bonus
+        
+        # Атомарно обновляем данные
+        async with self.redis.pipeline() as pipe:
+            pipe.incrbyfloat(f"user_profile:{referrer_id}:balance", bonus)
+            pipe.incr(f"user_profile:{referrer_id}:referrals_count")
+            pipe.sadd("system:referred_users", new_user_id)
+            results = await pipe.execute()
+        
+        logger.info(f"Пользователь {new_user_id} присоединился по реферальной ссылке от {referrer_id}. Реферер получил {bonus} монет.")
 
-    async def update_user_activity(self, user_id: int, chat_id: int):
-        profile = await self.get_or_create_user(user_id, chat_id)
+        try:
+            await bot.send_message(
+                referrer_id,
+                f"🤝 Поздравляем! Ваш друг @{message.from_user.username} присоединился по вашей ссылке.\n"
+                f"💰 Ваш баланс пополнен на <b>{bonus} монет</b>!"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление о реферале пользователю {referrer_id}: {e}")
+
+    async def log_violation(self, user_id: int, reason: str, penalty: int, details: Optional[dict] = None):
+        """Логирует нарушение, понижает рейтинг доверия."""
+        profile = await self.get_or_create_user(user_id)
+        profile.trust_score = max(0, profile.trust_score - penalty)
+        profile.violations_count += 1
+        await self._save_user_profile(profile)
+        logger.warning(f"НАРУШЕНИЕ: Пользователь {user_id}. Причина: {reason}. Новый рейтинг: {profile.trust_score}. Детали: {details}")
+
+    async def update_user_activity(self, user_id: int):
+        """Обновляет время последней активности и начисляет очки за нее."""
+        profile = await self.get_or_create_user(user_id)
         profile.last_activity_timestamp = time.time()
         profile.message_count += 1
-        if profile.message_count >= self.ACTIVITY_REWARD_THRESHOLD:
-            profile.trust_score += self.ACTIVITY_REWARD_POINTS
-            profile.message_count = 0
-            logger.info(f"Пользователь {user_id} награжден за активность в чате {chat_id}. Новый рейтинг: {profile.trust_score}")
-        await self._save_user_profile(profile)
 
-    async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict[str, str]]:
-        profile = await self.get_or_create_user(user_id, chat_id)
+        reward_threshold = self.settings.user.activity_reward_threshold
+        if profile.message_count >= reward_threshold:
+            profile.trust_score += self.settings.user.activity_reward_points
+            profile.message_count = 0  # Сбрасываем счетчик
+            logger.info(f"Пользователь {user_id} награжден за активность. Новый рейтинг: {profile.trust_score}")
+        
+        await self._save_user_profile(profile)
+        # Также обновляем в sorted set для быстрой выборки активных пользователей
+        await self.redis.zadd("stats:user_activity_dates", {str(user_id): int(time.time())})
+
+    async def get_conversation_history(self, user_id: int) -> List[Dict[str, any]]:
+        """Получает историю диалога пользователя с AI."""
+        profile = await self.get_or_create_user(user_id)
         try:
             return json.loads(profile.conversation_history_json)
         except json.JSONDecodeError:
-            logger.error(f"Не удалось декодировать историю диалога для пользователя {user_id}")
             return []
 
-    async def add_to_conversation_history(self, user_id: int, chat_id: int, user_text: str, model_text: str, max_history_len: int = 10):
-        history = await self.get_conversation_history(user_id, chat_id)
+    async def add_to_conversation_history(self, user_id: int, user_text: str, model_text: str):
+        """Добавляет новое сообщение в историю диалога."""
+        history = await self.get_conversation_history(user_id)
         
         history.append({"role": "user", "parts": [{"text": user_text}]})
         history.append({"role": "model", "parts": [{"text": model_text}]})
         
-        if len(history) > max_history_len * 2:
-            history = history[-max_history_len * 2:]
+        max_len = self.settings.ai_consultant.max_history_length * 2
+        if len(history) > max_len:
+            history = history[-max_len:]
             
-        profile = await self.get_or_create_user(user_id, chat_id)
+        profile = await self.get_or_create_user(user_id)
         profile.conversation_history_json = json.dumps(history, ensure_ascii=False)
         await self._save_user_profile(profile)
-
-    async def get_user_electricity_cost(self, user_id: int, chat_id: int, default_cost: float) -> float:
-        user_profile = await self.get_or_create_user(user_id, chat_id)
-        return user_profile.electricity_cost if user_profile.electricity_cost is not None else default_cost
-
-    async def set_user_electricity_cost(self, user_id: int, chat_id: int, cost: float):
-        user_profile = await self.get_or_create_user(user_id, chat_id)
-        user_profile.electricity_cost = cost
-        await self._save_user_profile(user_profile)
