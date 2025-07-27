@@ -95,7 +95,6 @@ class ModerationConfig(BaseSettings):
     """Настройки для модерации и анти-спама."""
     allowed_link_user_ids: List[int] = []
 
-# --- НОВЫЙ КЛАСС, КОТОРОГО НЕ ХВАТАЛО ---
 class SchedulerSettings(BaseSettings):
     """Настройки для планировщика задач."""
     asic_update_hours: int = 1
@@ -104,7 +103,6 @@ class SchedulerSettings(BaseSettings):
     leaderboard_day_of_week: str = 'fri'
     leaderboard_hour: int = 18
     health_check_minutes: int = 5
-# --- КОНЕЦ НОВОГО КЛАССА ---
 
 class ThrottlingSettings(BaseSettings):
     """Настройки для анти-флуд системы."""
@@ -147,7 +145,11 @@ class AIContentServiceSettings(BaseSettings):
 class AppSettings(BaseSettings):
     """Главный класс, объединяющий все конфигурации."""
     app: AppConfig = AppConfig()
-    api_keys: ApiKeysConfig
+    # --- ИСПРАВЛЕНИЕ: Создаем экземпляр по умолчанию ---
+    # Это говорит Pydantic, что ApiKeysConfig должен сам
+    # читать переменные из .env без префикса.
+    api_keys: ApiKeysConfig = ApiKeysConfig()
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     api_endpoints: ApiEndpointsConfig = ApiEndpointsConfig()
     news: NewsConfig = NewsConfig()
     game: MiningGameConfig = MiningGameConfig()
