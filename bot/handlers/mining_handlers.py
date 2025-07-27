@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/mining_handlers.py (v11 - Полная финальная версия)
-# Описание: Исправлено отображение названий в калькуляторе.
-# Восстановлен полный код "Виртуального майнинга".
+# Файл: bot/handlers/mining_handlers.py (v12 - Альфа-решение)
+# Описание: Полностью переработана логика отображения и валидации
+# ASIC-майнеров в калькуляторе для решения всех проблем.
 # ===============================================================
 import time
 import logging
@@ -304,7 +304,7 @@ async def handle_tip_command(message: Message, command: CommandObject, redis_cli
     logger.info(f"User {sender.id} tipped {amount:.2f} to {recipient.id}")
 
 # ===============================================================
-# --- БЛОК 2: ПРОФЕССИОНАЛЬНЫЙ КАЛЬКУЛЯТОР (ЛОГИКА ИСПРАВЛЕНА) ---
+# --- БЛОК 2: ПРОФЕССИОНАЛЬНЫЙ КАЛЬКУЛЯТОР (АЛЬФА-РЕШЕНИЕ) ---
 # ===============================================================
 
 def get_cancel_keyboard():
@@ -323,21 +323,23 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int = 0) -> Inline
     start = page * items_per_page
     end = start + items_per_page
     for i, asic in enumerate(asics[start:end]):
-        hash_rate_str = asic.hashrate
-        is_valid = all([
-            hash_rate_str, 
-            hash_rate_str.lower() != 'n/a', 
-            re.search(r'[\d.]+', hash_rate_str),
-            asic.power and asic.power > 0,
-            asic.algorithm and asic.algorithm != "Unknown"
-        ])
-        
         display_name = getattr(asic, 'model', asic.name)
 
-        if is_valid:
+        missing_data = []
+        if not asic.power or asic.power <= 0:
+            missing_data.append("нет мощности")
+        if not asic.algorithm or asic.algorithm == "Unknown":
+            missing_data.append("нет алгоритма")
+        
+        hash_rate_str = asic.hashrate
+        if not hash_rate_str or hash_rate_str.lower() == 'n/a' or not re.search(r'[\d.]+', hash_rate_str):
+            missing_data.append("нет хешрейта")
+
+        if not missing_data:
             builder.button(text=f"✅ {display_name}", callback_data=f"prof_calc_select_{i + start}")
         else:
-            builder.button(text=f"🚫 {display_name} (нет данных)", callback_data="prof_calc_nodata")
+            reason_str = ", ".join(missing_data)
+            builder.button(text=f"🚫 {display_name} ({reason_str})", callback_data="prof_calc_nodata")
 
     builder.adjust(2)
     nav_buttons = []
