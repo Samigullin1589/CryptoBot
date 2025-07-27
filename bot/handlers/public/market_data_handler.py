@@ -11,13 +11,13 @@ from typing import Union
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery, BufferedInputFile
 
-from bot.keyboards.info_keyboards import get_main_menu_keyboard
+# --- ИСПРАВЛЕНИЕ: Импортируем из правильного, основного файла клавиатур ---
+from bot.keyboards.keyboards import get_main_menu_keyboard
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.services.market_data_service import MarketDataService
 from bot.utils.plotting import generate_fng_image
 from bot.utils.formatters import format_halving_info, format_network_status
-# --- ИСПРАВЛЕНИЕ: Импортируем из правильного модуля ---
 from bot.utils.ui_helpers import show_main_menu_from_callback
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 
 # Инициализация роутера
@@ -62,6 +62,11 @@ async def handle_market_data_navigation(call: CallbackQuery, market_data_service
     """
     action = call.data.split(':')[1]
     
+    # Пропускаем уже обработанные действия
+    if action == "fear_greed":
+        await call.answer()
+        return
+
     text = "⏳ Загружаю данные..."
     await call.message.edit_text(text)
     
