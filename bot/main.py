@@ -1,156 +1,135 @@
 # ===============================================================
-# Файл: main.py (Финальная версия)
-# Описание: Подключены все актуальные роутеры, старые удалены.
+# Файл: bot/main.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Главный файл для запуска Telegram-бота.
+# Собирает все компоненты (хэндлеры, мидлвари, сервисы)
+# и запускает процесс поллинга.
 # ===============================================================
+
 import asyncio
 import logging
-import os
 
-import aiohttp
-import redis.asyncio as redis
-from aiogram import Bot, Dispatcher, F
-from aiogram.client.default import DefaultBotProperties
+from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import Message
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from openai import AsyncOpenAI
 
-from bot.config.settings import settings
-from bot.filters.admin_filter import IsAdminFilter
-from bot.filters.spam_filter_alpha import AlphaSpamFilter
-from bot.middlewares.activity import ActivityMiddleware
-from bot.middlewares.throttling import ThrottlingMiddleware
-from bot.handlers.admin import admin_menu, stats_handlers, data_management_handlers, spam_handler
-from bot.handlers import (
-    common_handlers, info_handlers, mining_handlers, 
-    asic_info_handlers, crypto_center_handlers
-)
-from bot.services.user_service import UserService
-from bot.services.ai_service import AIService
-from bot.services.ai_consultant_service import AIConsultantService
-from bot.services.asic_service import AsicService
-from bot.services.coin_list_service import CoinListService
-from bot.services.market_data_service import MarketDataService
-from bot.services.news_service import NewsService
-from bot.services.price_service import PriceService
-from bot.services.crypto_center_service import CryptoCenterService
-from bot.services.admin_service import AdminService
-from bot.services.mining_service import MiningService
-from bot.services.quiz_service import QuizService
-from bot.services.scheduler import setup_scheduler
-from bot.utils.helpers import setup_logging
+# --- 1. Настройка и инициализация ---
 
+# Настраиваем логирование
+from bot.utils.logging_setup import setup_logging
 setup_logging()
+
 logger = logging.getLogger(__name__)
 
-async def delete_spam_message(message: Message):
-    try:
-        await message.delete()
-        logger.warning(f"Удалено спам-сообщение от {message.from_user.id} в чате {message.chat.id}")
-    except Exception as e:
-        logger.error(f"Не удалось удалить спам-сообщение {message.message_id}: {e}")
+# Инициализируем зависимости (Bot, Redis, HTTP-сессия и все сервисы)
+from bot.utils import dependencies
+dependencies.initialize()
 
-async def on_startup(bot: Bot, scheduler: AsyncIOScheduler):
-    logger.info("Bot is starting up...")
-    if not scheduler.running:
-        scheduler.start()
-        logger.info("Scheduler has been started.")
-    logger.info("Bot startup complete.")
+# --- 2. Импорт и регистрация роутеров ---
 
-async def on_shutdown(bot: Bot, scheduler: AsyncIOScheduler, redis_client: redis.Redis, http_session: aiohttp.ClientSession):
-    logger.info("Bot is shutting down...")
-    if scheduler.running:
-        scheduler.shutdown()
-        logger.info("Scheduler has been shut down.")
-    await redis_client.close()
-    logger.info("Redis connection has been closed.")
-    await http_session.close()
-    logger.info("Aiohttp session has been closed.")
-    await bot.session.close()
-    logger.info("Bot session has been closed.")
-    logger.info("Graceful shutdown complete.")
+# Импортируем все наши роутеры из папки handlers
+from bot.handlers.public import (
+    common_handler,
+    asic_handler,
+    crypto_center_handler,
+    market_data_handler,
+    news_handler,
+    price_handler,
+    quiz_handler
+)
+from bot.handlers.admin import (
+    admin_menu,
+    moderation_handler,
+    stats_handler
+)
+from bot.handlers.game import (
+    mining_game_handler
+)
+from bot.handlers.tools import (
+    calculator_handler
+)
+from bot.handlers.threats import (
+    threat_handler
+)
+
+# --- 3. Основная функция запуска ---
 
 async def main():
-    """Основная асинхронная функция для настройки и запуска бота."""
-    if not all([settings.bot_token, settings.redis_url, settings.gemini_api_key]):
-        logger.critical("Отсутствуют критически важные переменные окружения (BOT_TOKEN, REDIS_URL, GEMINI_API_KEY).")
-        return
+    """
+    Основная асинхронная функция, которая настраивает и запускает бота.
+    """
+    # Получаем уже созданные экземпляры зависимостей
+    bot = dependencies.bot
+    dp = dependencies.dp
+    scheduler = dependencies.scheduler
 
-    http_session = aiohttp.ClientSession()
-    redis_client = redis.from_url(settings.redis_url, decode_responses=False)
-    
-    storage = RedisStorage(redis=redis_client)
-    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
-    dp = Dispatcher(storage=storage)
+    # --- Регистрация Middleware ---
+    # Порядок регистрации важен!
+    from bot.middlewares.activity_middleware import ActivityMiddleware
+    from bot.middlewares.throttling_middleware import ThrottlingMiddleware
+    from bot.middlewares.action_tracking_middleware import ActionTrackingMiddleware
 
-    # Инициализация сервисов
-    user_service = UserService(redis_client=redis_client, bot=bot, admin_user_ids=settings.ADMIN_USER_IDS)
-    ai_service = AIService(redis_client=redis_client, gemini_api_key=settings.gemini_api_key)
-    ai_consultant_service = AIConsultantService(gemini_api_key=settings.gemini_api_key, http_session=http_session)
-    asic_service = AsicService(redis_client=redis_client, http_session=http_session)
-    coin_list_service = CoinListService(http_session=http_session)
-    price_service = PriceService(coin_list_service=coin_list_service, redis_client=redis_client, http_session=http_session)
-    news_service = NewsService()
-    market_data_service = MarketDataService(session=http_session)
-    crypto_center_service = CryptoCenterService(redis_client=redis_client)
-    admin_service = AdminService(redis_client=redis_client)
-    mining_service = MiningService(market_data_service=market_data_service)
-    
-    openai_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-    quiz_service = QuizService(ai_service=ai_service, openai_client=openai_client)
+    # ActionTrackingMiddleware должен идти первым, чтобы отслеживать все действия
+    dp.update.outer_middleware(ActionTrackingMiddleware(
+        admin_service=dependencies.admin_service
+    ))
+    # ThrottlingMiddleware для защиты от флуда сообщениями
+    dp.message.outer_middleware(ThrottlingMiddleware(
+        user_service=dependencies.user_service
+    ))
+    # ActivityMiddleware для отслеживания активности пользователей
+    dp.update.outer_middleware(ActivityMiddleware(
+        user_service=dependencies.user_service
+    ))
 
-    # Middlewares
-    dp.update.middleware(ActivityMiddleware(user_service=user_service))
-    dp.message.middleware(ThrottlingMiddleware(redis_client=redis_client, user_service=user_service))
+    # --- Регистрация роутеров ---
+    # Регистрируем роутеры в определенном порядке.
+    # Сначала специфические (админские), затем более общие.
+    dp.include_routers(
+        # Админские команды
+        admin_menu.router,
+        stats_handler.router,
+        moderation_handler.router,
+        
+        # Обработка спама и угроз
+        threat_handler.router,
 
-    # Spam Filter
-    alpha_spam_filter = AlphaSpamFilter(user_service=user_service, ai_service=ai_service)
-    dp.message.register(delete_spam_message, F.chat.type.in_({'group', 'supergroup'}), alpha_spam_filter)
+        # Инструменты
+        calculator_handler.router,
 
-    # Регистрация роутеров. Порядок важен!
-    dp.include_router(admin_menu.admin_router)
-    dp.include_router(stats_handlers.stats_router)
-    dp.include_router(data_management_handlers.router)
-    dp.include_router(spam_handler.admin_spam_router) # <<< ЕДИНЫЙ РОУТЕР ДЛЯ МОДЕРАЦИИ
-    dp.include_router(crypto_center_handlers.router)
-    dp.include_router(asic_info_handlers.router) 
-    dp.include_router(info_handlers.router)
-    dp.include_router(mining_handlers.router)
-    dp.include_router(common_handlers.router)
+        # Игра
+        mining_game_handler.router,
 
-    workflow_data = {
-        "user_service": user_service,
-        "ai_service": ai_service,
-        "ai_consultant_service": ai_consultant_service,
-        "asic_service": asic_service,
-        "news_service": news_service,
-        "price_service": price_service,
-        "market_data_service": market_data_service,
-        "crypto_center_service": crypto_center_service,
-        "admin_service": admin_service,
-        "redis_client": redis_client,
-        "http_session": http_session,
-        "mining_service": mining_service,
-        "quiz_service": quiz_service,
-        "coin_list_service": coin_list_service,
-    }
-    
-    scheduler = setup_scheduler()
-    
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
+        # Публичные команды
+        common_handler.router,
+        price_handler.router,
+        asic_handler.router,
+        crypto_center_handler.router,
+        market_data_handler.router,
+        news_handler.router,
+        quiz_handler.router
+    )
 
     try:
+        # Запускаем фоновые задачи
+        scheduler.start()
+        logger.info("Scheduler has been started.")
+        
+        # Перед запуском бота удаляем вебхук, если он был установлен
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Starting bot in polling mode...")
-        await dp.start_polling(bot, scheduler=scheduler, **workflow_data)
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during polling: {e}", exc_info=True)
+        
+        # Запускаем поллинг
+        logger.info("Bot is starting polling...")
+        await dp.start_polling(bot)
+
     finally:
-        logger.info("Polling finished.")
+        # Корректно завершаем работу при остановке
+        logger.info("Stopping bot...")
+        scheduler.shutdown()
+        await dependencies.close_dependencies()
+        logger.info("Bot has been stopped.")
+
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot execution stopped by user or system signal.")
+        logger.info("Bot stopped by user.")
