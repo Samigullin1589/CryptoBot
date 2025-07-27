@@ -15,7 +15,9 @@ import aiohttp
 import redis.asyncio as redis
 
 from bot.config.settings import settings
-from bot.utils.helpers import make_request
+# --- ИСПРАВЛЕНИЕ: Импортируем утилиту из нового, правильного места ---
+from bot.utils.http_client import make_request
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.utils.models import FearAndGreedIndex, HalvingInfo, NetworkStatus
 
 logger = logging.getLogger(__name__)
@@ -40,10 +42,10 @@ class MarketDataService:
 
     async def _set_to_cache(self, key: str, data: Dict, ttl: int):
         """Сохраняет данные в кэш Redis."""
-        await self.redis.set(key, json.dumps(data), ex=ttl)
+        await self.redis.set(key, json.dumps(data, default=str), ex=ttl)
 
     @staticmethod
-    def _is_valid_price(price: Any) -> bool:
+    def _is_valid_price(price: any) -> bool:
         return isinstance(price, (int, float)) and price > 0
 
     async def get_btc_price_usd(self) -> Optional[float]:
@@ -113,11 +115,7 @@ class MarketDataService:
                     next_reward=float(next_reward)
                 )
                 
-                # Для JSON-сериализации конвертируем datetime в строку
-                cache_payload = model.model_dump()
-                cache_payload['estimated_date'] = model.estimated_date.isoformat()
-
-                await self._set_to_cache(cache_key, cache_payload, ttl=3600)
+                await self._set_to_cache(cache_key, model.model_dump(), ttl=3600)
                 logger.info("Fetched Halving info from Blockchair.")
                 return model
             except (ValueError, KeyError, TypeError) as e:
