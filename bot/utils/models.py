@@ -84,6 +84,13 @@ class MiningSessionResult(BaseModel):
 
 # --- Модели для рыночных данных ---
 
+# --- НОВАЯ МОДЕЛЬ, КОТОРОЙ НЕ ХВАТАЛО ---
+class FearAndGreedIndex(BaseModel):
+    """Модель для данных Индекса Страха и Жадности."""
+    value: int
+    value_classification: str
+# --- КОНЕЦ НОВОЙ МОДЕЛИ ---
+
 class HalvingInfo(BaseModel):
     """Модель для данных о халвинге Bitcoin."""
     remaining_blocks: int
@@ -91,20 +98,18 @@ class HalvingInfo(BaseModel):
     current_reward: float
     next_reward: float
 
-class BtcNetworkStatus(BaseModel):
+class NetworkStatus(BaseModel):
     """Модель для данных о состоянии сети Bitcoin."""
     difficulty: float
-    mempool_transactions: int
+    mempool_txs: int
     fastest_fee: int
 
-# --- НОВАЯ МОДЕЛЬ, КОТОРОЙ НЕ ХВАТАЛО ---
 class NewsArticle(BaseModel):
     """Модель для одной новостной статьи."""
     title: str
     body: str
     url: str
     source: str
-# --- КОНЕЦ НОВОЙ МОДЕЛИ ---
 
 class CoinInfo(BaseModel):
     """Модель для базовой информации о криптовалюте."""
