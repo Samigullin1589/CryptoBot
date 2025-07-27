@@ -1,43 +1,46 @@
 # ===============================================================
-# Файл: bot/services/parser_service.py (НОВЫЙ ФАЙЛ)
-# Описание: Специализированный сервис, отвечающий за парсинг
-# данных об ASIC-майнерах с различных внешних источников.
-# Выделен из AsicService для соответствия принципу единой
-# ответственности.
+# Файл: bot/services/parser_service.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Сервис, отвечающий исключительно за парсинг "сырых"
+# данных об ASIC-майнерах с внешних веб-сайтов и API.
 # ===============================================================
-
 import logging
 from typing import List
 
 import aiohttp
 from bs4 import BeautifulSoup
 
-from bot.config.settings import settings
-from bot.utils.helpers import make_request, parse_power
+# --- ИСПРАВЛЕНИЕ: Импортируем утилиты из новых, правильных мест ---
+from bot.utils.http_client import make_request
+from bot.utils.text_utils import parse_power
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
 from bot.utils.models import AsicMiner
+from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class ParserService:
     """
-    Отвечает за извлечение данных об ASIC из внешних веб-источников и API.
+    Специализированный сервис для парсинга данных об ASIC с внешних источников.
     """
     def __init__(self, http_session: aiohttp.ClientSession):
         self.session = http_session
+        self.config = settings.parser
 
-    async def fetch_whattomine_data(self) -> List[AsicMiner]:
-        """Получает и парсит данные из API WhatToMine."""
-        logger.info("Fetching data from WhatToMine API...")
+    async def fetch_from_whattomine(self) -> List[AsicMiner]:
+        """
+        Получает и парсит данные об ASIC-майнерах с API WhatToMine.
+        """
+        logger.info("Парсер: Запрашиваю данные с WhatToMine API...")
         try:
-            data = await make_request(self.session, settings.api_endpoints.whattomine_asics_url)
+            data = await make_request(self.session, self.config.whattomine_url)
             if not data or "coins" not in data:
-                logger.warning("No valid ASIC data from WhatToMine.")
+                logger.warning("Парсер: Не получены валидные данные от WhatToMine.")
                 return []
-            
+
             asics = []
-            for name, details in data["coins"].items():
+            for details in data["coins"].values():
                 try:
-                    # WhatToMine API изменился, теперь это словарь, а не список
                     if details.get("tag") and details.get("profitability") is not None:
                         asics.append(AsicMiner(
                             name=details["tag"],
@@ -45,59 +48,61 @@ class ParserService:
                             algorithm=details.get("algorithm"),
                             power=parse_power(str(details.get("power_consumption", 0))),
                             hashrate=str(details.get("hashrate", "N/A")),
-                            efficiency=None,
                             source="WhatToMine"
                         ))
                 except (ValueError, TypeError, KeyError) as e:
-                    logger.warning(f"Error parsing WhatToMine item '{name}': {e}. Skipping.")
+                    logger.warning(f"Парсер: Ошибка обработки записи WhatToMine '{details.get('tag')}': {e}. Пропускаю.")
                     continue
-            logger.info(f"Successfully fetched {len(asics)} ASICs from WhatToMine.")
+            logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с WhatToMine.")
             return asics
         except Exception as e:
-            logger.error(f"Critical error fetching from WhatToMine: {e}", exc_info=True)
+            logger.error(f"Парсер: Критическая ошибка при работе с WhatToMine: {e}", exc_info=True)
             return []
 
-    async def fetch_asicminervalue_data(self) -> List[AsicMiner]:
-        """Получает и парсит данные, скрейпя сайт AsicMinerValue."""
-        logger.info("Fetching data from AsicMinerValue...")
+    async def fetch_from_asicminervalue(self) -> List[AsicMiner]:
+        """
+        Получает и парсит данные об ASIC-майнерах со страницы AsicMinerValue.
+        """
+        logger.info("Парсер: Запрашиваю данные с AsicMinerValue...")
         try:
-            html_content = await make_request(self.session, settings.api_endpoints.asicminervalue_url, response_type='text')
+            html_content = await make_request(self.session, self.config.asicminervalue_url, response_type='text')
             if not html_content:
-                logger.warning("No HTML from AsicMinerValue. Skipping.")
+                logger.warning("Парсер: Не получен HTML от AsicMinerValue. Пропускаю.")
                 return []
-            
+
             soup = BeautifulSoup(html_content, 'lxml')
             table = soup.find('table', {'id': 'miners'})
             if not table or not table.find('tbody'):
-                logger.warning("No valid table in AsicMinerValue HTML.")
+                logger.warning("Парсер: Не найдена таблица в HTML от AsicMinerValue.")
                 return []
-                
+
             asics = []
             for row in table.tbody.find_all('tr'):
                 try:
                     cols = row.find_all('td')
                     if len(cols) < 6: continue
+
+                    name_tag = cols[1].find('a')
+                    if not name_tag: continue
                     
-                    name = cols[1].find('a').text.strip()
-                    profitability_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
+                    name = name_tag.text.strip()
+                    profit_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
                     power_text = cols[4].text.strip().replace('W', '').strip()
-                    hashrate_text = cols[2].text.strip()
-                    
+
                     asics.append(AsicMiner(
                         name=name,
-                        profitability=float(profitability_text),
+                        profitability=float(profit_text),
                         power=int(power_text),
-                        hashrate=hashrate_text,
+                        hashrate=cols[2].text.strip(),
                         efficiency=cols[5].text.strip(),
-                        algorithm="Unknown", # AsicMinerValue не предоставляет алгоритм на главной
+                        algorithm="Unknown",
                         source="AsicMinerValue"
                     ))
                 except (AttributeError, ValueError, IndexError, TypeError) as e:
-                    logger.warning(f"Error parsing AsicMinerValue row: {e}. Skipping.")
+                    logger.warning(f"Парсер: Ошибка обработки строки AsicMinerValue: {e}. Пропускаю.")
                     continue
-            logger.info(f"Successfully fetched {len(asics)} ASICs from AsicMinerValue.")
+            logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с AsicMinerValue.")
             return asics
         except Exception as e:
-            logger.error(f"Critical error fetching from AsicMinerValue: {e}", exc_info=True)
+            logger.error(f"Парсер: Критическая ошибка при работе с AsicMinerValue: {e}", exc_info=True)
             return []
-
