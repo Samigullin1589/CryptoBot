@@ -1,48 +1,45 @@
 # ===============================================================
-# Файл: bot/handlers/public/quiz_handler.py (НОВЫЙ ФАЙЛ)
-# Описание: Обработчик для запуска крипто-викторины.
+# Файл: bot/handlers/public/quiz_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Обработчик для команды викторины.
 # ===============================================================
 import logging
 from typing import Union
 
-from aiogram import F, Router
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 
-from bot.keyboards.info_keyboards import get_quiz_keyboard
-from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.services.quiz_service import QuizService
-from bot.services.admin_service import AdminService
-from bot.utils.helpers import get_message_and_chat_id
+from bot.keyboards.info_keyboards import get_quiz_keyboard
+# --- ИСПРАВЛЕНИЕ: Импортируем из правильного места ---
+from bot.utils.ui_helpers import get_message_and_chat_id
 
-router = Router()
 logger = logging.getLogger(__name__)
+router = Router(name="quiz_handler")
 
-@router.callback_query(F.data == "menu_quiz")
+@router.callback_query(F.data == "nav:quiz")
 @router.message(F.text == "🧠 Викторина")
-async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: QuizService, admin_service: AdminService):
+async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: QuizService):
     """
-    Обрабатывает запуск викторины.
+    Обрабатывает запуск викторины. Генерирует вопрос и отправляет его в виде опроса.
     """
-    await admin_service.track_command_usage("🧠 Викторина")
     message, _ = await get_message_and_chat_id(update)
     
+    # Если пользователь нажал на кнопку, удаляем старое сообщение
     if isinstance(update, CallbackQuery):
         try:
             await update.message.delete()
         except TelegramBadRequest:
-            pass # Если не удалось удалить, ничего страшного
+            pass
 
-    temp_message = await message.answer("⏳ Генерирую вопрос...")
+    temp_message = await message.answer("⏳ Генерирую интересный вопрос...")
 
     question, options, correct_option_id = await quiz_service.get_random_question()
     
-    if not options:
-        await temp_message.edit_text(question, reply_markup=get_main_menu_keyboard())
-        return
-    
+    # Удаляем временное сообщение "Генерирую..."
     await temp_message.delete()
     
+    # Отправляем вопрос в виде опроса
     await message.answer_poll(
         question=question, 
         options=options, 
@@ -51,6 +48,3 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         is_anonymous=False,
         reply_markup=get_quiz_keyboard()
     )
-    
-    if isinstance(update, CallbackQuery):
-        await update.answer()
