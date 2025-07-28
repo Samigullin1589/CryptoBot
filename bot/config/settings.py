@@ -5,7 +5,6 @@
 # ===============================================================
 
 import json
-import logging
 from pathlib import Path
 from typing import List, Dict, Any, Set
 
@@ -16,6 +15,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BASE_DIR = Path(__file__).parent.parent.parent
 
 # --- Вложенные классы конфигурации для лучшей организации ---
+
+class AppConfig(BaseModel):
+    """Общие настройки приложения."""
+    log_level: str = "INFO"
+    log_format: str = "text"  # 'text' or 'json'
 
 class ApiKeysConfig(BaseSettings):
     """Секретные ключи для доступа к внешним API."""
@@ -110,9 +114,7 @@ class SchedulerSettings(BaseModel):
     news_interval_hours: int = 3
     asic_update_hours: int = 1
     morning_summary_hour: int = 9
-    # --- ИСПРАВЛЕНИЕ: Переименовываем поле для соответствия ---
     leaderboard_day: str = Field('fri', alias='LEADERBOARD_DAY_OF_WEEK')
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     leaderboard_hour: int = 18
     health_check_minutes: int = 15
 
@@ -141,6 +143,7 @@ class AppSettings(BaseSettings):
     """
     Основной класс конфигурации, объединяющий все настройки приложения.
     """
+    app: AppConfig = Field(default_factory=AppConfig)
     api_keys: ApiKeysConfig = Field(default_factory=ApiKeysConfig)
     admin: AdminConfig = Field(default_factory=AdminConfig)
     
