@@ -106,7 +106,7 @@ class MiningSignal(BaseModel):
     status: str
     guide_url: Optional[str] = None
 
-# --- Модели для игры и калькулятора ---
+# --- Модели для игры, калькулятора и викторины ---
 
 class MiningSessionResult(BaseModel):
     """Результаты завершенной майнинг-сессии."""
@@ -116,7 +116,6 @@ class MiningSessionResult(BaseModel):
     electricity_cost: float
     net_earned: float
 
-# --- ИСПРАВЛЕНИЕ: Добавлена недостающая модель ---
 class CalculationInput(BaseModel):
     """Входные данные для расчета доходности майнинга."""
     hashrate_str: str
@@ -124,7 +123,6 @@ class CalculationInput(BaseModel):
     electricity_cost_usd: float
     pool_commission: float
     algorithm: str
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 class CalculationResult(BaseModel):
     """Результаты расчета доходности из калькулятора."""
@@ -146,3 +144,17 @@ class CalculationResult(BaseModel):
     net_profit_rub_daily: float
     net_profit_rub_monthly: float
     net_profit_rub_yearly: float
+
+class QuizQuestion(BaseModel):
+    """Модель для вопроса викторины, полученного от AI."""
+    question: str = Field(..., max_length=300)
+    options: List[str] = Field(..., min_length=4, max_length=4)
+    correct_option_index: conint(ge=0, lt=4)
+
+    @field_validator('options')
+    def check_options_length(cls, options: List[str]) -> List[str]:
+        """Проверяет, что длина каждого варианта ответа не превышает 100 символов."""
+        for option in options:
+            if len(option) > 100:
+                raise ValueError("Длина варианта ответа не должна превышать 100 символов.")
+        return options
