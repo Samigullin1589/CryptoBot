@@ -1,9 +1,9 @@
 # ===============================================================
 # Файл: bot/utils/ui_helpers.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Утилиты для управления пользовательским интерфейсом,
-# такие как отображение главного меню.
+# Описание: Вспомогательные функции для работы с UI в aiogram.
 # ===============================================================
 import logging
+from typing import Union, Tuple
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 
@@ -12,32 +12,30 @@ from bot.keyboards.keyboards import get_main_menu_keyboard
 logger = logging.getLogger(__name__)
 
 async def show_main_menu(message: Message):
-    """
-    Отображает главное меню, отправляя новое сообщение.
-    Используется после команд, введенных текстом.
-    """
-    text = "Главное меню:"
-    markup = get_main_menu_keyboard()
-    await message.answer(text, reply_markup=markup)
+    """Отображает главное меню, пытаясь отредактировать сообщение или отправляя новое."""
+    try:
+        await message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
+    except (TelegramBadRequest, AttributeError):
+        await message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
 
 async def show_main_menu_from_callback(call: CallbackQuery):
-    """
-    Отображает главное меню из колбэка, пытаясь отредактировать сообщение.
-    Если не получается (например, это фото), удаляет старое и отправляет новое.
-    """
-    text = "Главное меню:"
-    markup = get_main_menu_keyboard()
+    """Корректно обрабатывает возврат в главное меню из callback query."""
     try:
-        # Пытаемся отредактировать текстовое сообщение
-        await call.message.edit_text(text, reply_markup=markup)
-    except TelegramBadRequest:
-        # Если не получилось (например, сообщение не текстовое или не изменилось),
-        # удаляем старое и отправляем новое.
-        try:
-            await call.message.delete()
-        except TelegramBadRequest as e:
-            logger.warning(f"Could not delete message on main menu transition: {e}")
-        await call.message.answer(text, reply_markup=markup)
+        await call.message.edit_text(
+            "Главное меню:",
+            reply_markup=get_main_menu_keyboard()
+        )
+    except TelegramBadRequest as e:
+        logger.warning(f"Не удалось отредактировать сообщение для показа главного меню: {e}.")
     finally:
-        # Отвечаем на колбэк, чтобы убрать "часики" с кнопки
         await call.answer()
+
+async def get_message_and_chat_id(update: Union[CallbackQuery, Message]) -> Tuple[Message, int]:
+    """
+    Извлекает объекты сообщения и ID чата из CallbackQuery или Message.
+    Автоматически отвечает на CallbackQuery, чтобы убрать "часики".
+    """
+    if isinstance(update, CallbackQuery):
+        await update.answer()
+        return update.message, update.message.chat.id
+    return update, update.chat.id
