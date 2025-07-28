@@ -4,7 +4,7 @@
 # Принимает команды, валидирует их и вызывает ModerationService.
 # ===============================================================
 import logging
-from aiogram import Router, F, Bot
+from aiogram import Router, F, Bot, types
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -35,9 +35,15 @@ async def handle_threat_action_callback(call: types.CallbackQuery, moderation_se
         original_message=call.message
     )
     
-    # Редактируем исходное сообщение, чтобы показать результат и убрать кнопки
-    await call.message.edit_text(call.message.text + f"\n\n---
-✅ <b>Действие выполнено:</b> {response_text}", reply_markup=None)
+    # --- ИСПРАВЛЕНО: Используем тройные кавычки для многострочного f-string ---
+    await call.message.edit_text(
+        f"""{call.message.text}
+
+---
+✅ <b>Действие выполнено:</b> {response_text}""",
+        reply_markup=None
+    )
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 
 # --- Команды модерации ---
