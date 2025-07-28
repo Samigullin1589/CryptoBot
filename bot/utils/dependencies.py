@@ -1,8 +1,8 @@
 # ===============================================================
-# Файл: bot/utils/dependencies.py (ПРОДАКШН-ВЕРСИЯ 2025 v2)
+# Файл: bot/utils/dependencies.py (ПРОДАКШН-ВЕРСИЯ 2025)
 # Описание: Централизованный модуль для управления зависимостями (DI).
 # Создает и хранит единственные экземпляры всех ключевых
-# компонентов бота (Bot, Dispatcher, сервисы и т.д.).
+# компонентов бота, которые будут инициализированы асинхронно.
 # ===============================================================
 
 import aiohttp
@@ -32,7 +32,7 @@ from bot.services.stop_word_service import StopWordService
 from bot.services.user_service import UserService
 from bot.services.ai_content_service import AIContentService
 
-# --- Объявляем переменные для зависимостей (будут созданы позже) ---
+# --- Объявляем "пустые" переменные для зависимостей ---
 
 bot: Optional[Bot] = None
 storage: Optional[RedisStorage] = None
@@ -43,7 +43,6 @@ openai_client: Optional[AsyncOpenAI] = None
 scheduler: Optional[AsyncIOScheduler] = None
 admin_service: Optional[AdminService] = None
 user_service: Optional[UserService] = None
-# ... и так далее для всех сервисов
 asic_service: Optional[AsicService] = None
 coin_list_service: Optional[CoinListService] = None
 crypto_center_service: Optional[CryptoCenterService] = None
@@ -62,7 +61,7 @@ workflow_data: dict = {}
 async def initialize_dependencies():
     """
     Асинхронно создает и инициализирует все зависимости.
-    Должна вызываться внутри запущенного event loop.
+    Должна вызываться внутри уже запущенного event loop.
     """
     global bot, storage, dp, redis_client, http_session, openai_client, scheduler
     global admin_service, user_service, asic_service, coin_list_service, crypto_center_service
@@ -86,7 +85,7 @@ async def initialize_dependencies():
 
     # Сервисы (создаются в правильном порядке зависимостей)
     stop_word_service = StopWordService(redis_client=redis_client)
-    security_service = SecurityService(http_session=http_session, config=settings)
+    security_service = SecurityService(http_session=http_session, config=settings.api_keys)
     admin_service = AdminService(redis_client=redis_client)
     user_service = UserService(redis_client=redis_client, admin_service=admin_service, settings=settings)
     parser_service = ParserService(http_session=http_session, config=settings.endpoints)

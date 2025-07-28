@@ -1,168 +1,100 @@
 # ===============================================================
-# Файл: bot/services/security_service.py (НОВЫЙ ФАЙЛ)
-# Описание: Основной сервис безопасности, отвечающий за анализ
-# сообщений на угрозы и самообучение. Заменяет часть AIService.
+# Файл: bot/services/security_service.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Сервис, отвечающий за анализ сообщений на угрозы
+# (спам, токсичность, скам) и самообучение системы.
 # ===============================================================
 
-import asyncio
 import json
 import logging
 from typing import Dict, Any
 
 import aiohttp
-import redis.asyncio as redis
-from aiogram.types import Message
-from bot.config.settings import settings
+from async_lru import alru_cache
+
+# Импортируем централизованные компоненты
+from bot.config.settings import AppSettings
+from bot.utils.http_client import make_request
+from bot.utils.models import AIVerdict
 
 logger = logging.getLogger(__name__)
 
-# ПРИМЕЧАНИЕ: В реальном проекте этот класс настроек должен быть
-# частью основного класса настроек в bot/config/settings.py
-class SecurityServiceSettings:
-    gemini_api_key: str = settings.api_keys.gemini_api_key
-    model_name: str = "gemini-1.5-flash-latest"
-    max_retries: int = 3
-    initial_retry_delay: float = 1.0
-    request_timeout: int = 15
-
 class SecurityService:
-    """
-    Сервис для анализа сообщений на угрозы и обучения на подтвержденных случаях спама.
-    """
-    def __init__(self, redis_client: redis.Redis, http_session: aiohttp.ClientSession):
+    """Сервис для анализа угроз и управления безопасностью."""
+
+    def __init__(self, http_session: aiohttp.ClientSession, config: AppSettings.ApiKeysConfig):
         """
         Инициализирует сервис.
         
-        :param redis_client: Асинхронный клиент Redis.
         :param http_session: Общий экземпляр aiohttp.ClientSession.
+        :param config: Конфигурация с API-ключами.
         """
-        self.redis = redis_client
         self.session = http_session
-        self.config = SecurityServiceSettings()
-        self.spam_learning_dataset_key = "antispam:learning_dataset"
+        self.config = config
+        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={self.config.gemini_api_key}"
 
-        if not self.config.gemini_api_key:
-            logger.warning("Gemini API key is not configured. Threat analysis will be disabled.")
-        
-        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.config.model_name}:generateContent"
-        self.headers = {'Content-Type': 'application/json'}
-        self.params = {'key': self.config.gemini_api_key}
-
-    def _create_prompt_and_schema(self, text: str) -> tuple[str, dict]:
-        """Создает промпт и схему для анализа угрозы в сообщении."""
-        prompt = (
-            "You are a security analysis bot for a Telegram chat about cryptocurrency and mining. "
-            "Your task is to analyze the following message and classify it according to the provided JSON schema. "
-            "Focus on identifying specific crypto-related threats like phishing links disguised as airdrops, fake giveaways, "
-            "impersonation of famous people to promote scams, or direct offers of 'guaranteed profit'. "
-            "Respond with ONLY a valid JSON object. Do not add any other text or markdown formatting.\n\n"
-            f"Message to analyze: '{text}'"
+    def _get_system_prompt(self) -> str:
+        """Создает системный промпт для AI-анализатора безопасности."""
+        return (
+            "You are a security analysis bot for a Telegram chat about cryptocurrency. "
+            "Analyze the following message. Respond with ONLY a valid JSON object. "
+            "Do not add any other text or markdown formatting."
         )
-        
-        schema = {
+
+    def _get_response_schema(self) -> Dict[str, Any]:
+        """Определяет JSON-схему для структурированного ответа от AI."""
+        return {
             "type": "OBJECT",
             "properties": {
-                "is_threat": {
-                    "type": "BOOLEAN",
-                    "description": "True if the message contains any kind of threat (spam, scam, insult, etc.)."
-                },
-                "threat_type": {
+                "intent": {
                     "type": "STRING",
-                    "enum": ["none", "spam", "scam", "phishing", "insult", "other"],
-                    "description": "The specific category of the threat."
+                    "enum": ["advertisement", "scam", "phishing", "insult", "question", "other"],
+                    "description": "Основное намерение сообщения."
                 },
-                "confidence_score": {
+                "toxicity_score": {
                     "type": "NUMBER",
-                    "description": "A score from 0.0 to 1.0 representing your confidence in the threat assessment."
+                    "description": "Оценка токсичности от 0.0 до 1.0."
                 },
-                "analysis": {
-                    "type": "STRING",
-                    "description": "A brief, one-sentence explanation in Russian for your assessment."
+                "is_potential_scam": {
+                    "type": "BOOLEAN",
+                    "description": "True, если сообщение похоже на мошенничество (airdrop, private sale, 'pump-dump')."
+                },
+                "is_potential_phishing": {
+                    "type": "BOOLEAN",
+                    "description": "True, если сообщение содержит подозрительные ссылки, замаскированные под известные сервисы."
                 }
             },
-            "required": ["is_threat", "threat_type", "confidence_score", "analysis"]
+            "required": ["intent", "toxicity_score", "is_potential_scam", "is_potential_phishing"]
         }
-        return prompt, schema
 
-    async def _execute_analysis_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Выполняет запрос к API с логикой повторных попыток."""
-        retries = self.config.max_retries
-        delay = self.config.initial_retry_delay
-        default_verdict = {"is_threat": False, "threat_type": "none", "confidence_score": 0.0, "analysis": "Analysis disabled or failed."}
-
-        for attempt in range(retries):
-            try:
-                timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
-                async with self.session.post(self.api_url, headers=self.headers, params=self.params, json=payload, timeout=timeout) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        if not result.get('candidates'):
-                            logger.warning(f"Gemini API returned no candidates for security analysis. Response: {result}")
-                            return default_verdict
-                        
-                        verdict_text = result['candidates'][0]['content']['parts'][0]['text']
-                        return json.loads(verdict_text)
-
-                    elif response.status in [500, 502, 503, 504]:
-                        logger.warning(f"Security analysis API returned {response.status}. Retrying... (Attempt {attempt + 1})")
-                        await asyncio.sleep(delay)
-                        delay *= 2
-                    else:
-                        logger.error(f"Security analysis API returned HTTP {response.status}: {await response.text()}")
-                        return default_verdict
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.warning(f"Network error during security analysis: {e}. Retrying... (Attempt {attempt + 1})")
-                await asyncio.sleep(delay)
-                delay *= 2
-        
-        logger.error(f"Failed to analyze message after {retries} retries.")
-        return default_verdict
-
-    async def analyze_message(self, text: str) -> Dict[str, Any]:
+    @alru_cache(maxsize=1024, ttl=300)
+    async def analyze_message(self, text: str) -> AIVerdict:
         """
         Анализирует текст сообщения с помощью Gemini API для выявления угроз.
-        Возвращает структурированный словарь с оценками.
+        Возвращает Pydantic-модель AIVerdict.
         """
-        default_verdict = {"is_threat": False, "threat_type": "none", "confidence_score": 0.0, "analysis": "Analysis disabled or failed."}
-        
-        if not self.config.gemini_api_key or not text or not text.strip():
+        default_verdict = AIVerdict()
+        if not self.config.gemini_api_key or not text.strip():
             return default_verdict
 
-        prompt, schema = self._create_prompt_and_schema(text)
+        prompt = f"{self._get_system_prompt()}\n\nMessage to analyze: '{text}'"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {
                 "response_mime_type": "application/json",
-                "response_schema": schema,
-                "temperature": 0.2
+                "response_schema": self._get_response_schema()
             }
         }
-        
+
         try:
-            verdict = await self._execute_analysis_request(payload)
-            logger.info(f"AI Security Verdict for '{text[:50].strip()}...': {verdict}")
-            return verdict
+            response_data = await make_request(self.session, self.api_url, "POST", json_data=payload, timeout=10)
+            if not response_data or not response_data.get('candidates'):
+                logger.warning(f"AI Security analysis returned no candidates for text: '{text[:50]}...'")
+                return default_verdict
+
+            verdict_text = response_data['candidates'][0]['content']['parts'][0]['text']
+            verdict_dict = json.loads(verdict_text)
+            logger.info(f"AI Security Verdict for '{text[:30]}...': {verdict_dict}")
+            return AIVerdict(**verdict_dict)
         except Exception as e:
-            logger.error(f"Unexpected error in analyze_message: {e}", exc_info=True)
+            logger.error(f"An error occurred during AI message analysis: {e}")
             return default_verdict
-
-    async def learn_from_spam(self, message: Message, threat_verdict: Dict[str, Any]):
-        """
-        Сохраняет данные о спам-сообщении для последующего анализа и дообучения.
-        """
-        if not message:
-            return
-
-        learning_data = {
-            "timestamp_utc": message.date.isoformat(),
-            "user_id": message.from_user.id,
-            "chat_id": message.chat.id,
-            "text": message.text or message.caption,
-            "entities": [entity.model_dump() for entity in message.entities or []],
-            "confirmation_source": "admin_action", # Указываем, что это подтвержденный спам
-            "initial_verdict": threat_verdict # Сохраняем первоначальный вердикт AI
-        }
-        
-        await self.redis.rpush(self.spam_learning_dataset_key, json.dumps(learning_data, ensure_ascii=False))
-        logger.info(f"Learned from new spam message from user {message.from_user.id}")
-
