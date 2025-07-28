@@ -35,7 +35,6 @@ class ApiKeysConfig(BaseSettings):
         extra='ignore'
     )
 
-# --- ИСПРАВЛЕНИЕ: Превращаем AdminConfig в самодостаточную модель настроек ---
 class AdminConfig(BaseSettings):
     """Настройки, связанные с администрированием."""
     admin_chat_id: int = Field(alias='ADMIN_CHAT_ID')
@@ -48,7 +47,6 @@ class AdminConfig(BaseSettings):
         case_sensitive=False,
         extra='ignore'
     )
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     @property
     def admin_user_ids(self) -> List[int]:
@@ -112,7 +110,9 @@ class SchedulerSettings(BaseModel):
     news_interval_hours: int = 3
     asic_update_hours: int = 1
     morning_summary_hour: int = 9
-    leaderboard_day_of_week: str = 'fri'
+    # --- ИСПРАВЛЕНИЕ: Переименовываем поле для соответствия ---
+    leaderboard_day: str = Field('fri', alias='LEADERBOARD_DAY_OF_WEEK')
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     leaderboard_hour: int = 18
     health_check_minutes: int = 15
 
@@ -142,9 +142,7 @@ class AppSettings(BaseSettings):
     Основной класс конфигурации, объединяющий все настройки приложения.
     """
     api_keys: ApiKeysConfig = Field(default_factory=ApiKeysConfig)
-    # --- ИСПРАВЛЕНИЕ: Указываем, что `admin` должен создаваться автоматически ---
     admin: AdminConfig = Field(default_factory=AdminConfig)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     
     endpoints: ApiEndpoints = Field(default_factory=ApiEndpoints)
     news: NewsConfig = Field(default_factory=NewsConfig)
@@ -187,7 +185,6 @@ class AppSettings(BaseSettings):
 def load_json_fallback(filename: str) -> List[Dict[str, Any]]:
     file_path = BASE_DIR / "data" / filename
     if not file_path.exists():
-        # Используем logging, который может быть еще не настроен, поэтому print для надежности
         print(f"WARNING: Fallback file '{filename}' not found at '{file_path}'.")
         return []
     try:
