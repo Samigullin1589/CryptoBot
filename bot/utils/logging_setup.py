@@ -1,65 +1,67 @@
 # ===============================================================
-# Файл: bot/utils/logging_setup.py (НОВЫЙ ФАЙЛ)
-# Описание: Настраивает конфигурацию логирования для всего приложения.
-# Поддерживает как обычный, так и структурированный (JSON) формат.
+# Файл: bot/utils/logging_setup.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Настраивает умное логирование для всего приложения.
+# Поддерживает как текстовый, так и структурированный JSON-формат.
 # ===============================================================
 
 import logging
 import sys
-import os
+import json
+from typing import Literal
 
-try:
-    from pythonjsonlogger import jsonlogger
-except ImportError:
-    jsonlogger = None
+# --- JSON Formatter для структурированного логирования ---
 
-def setup_logging():
+class JsonFormatter(logging.Formatter):
     """
-    Настраивает конфигурацию логирования.
+    Кастомный форматер для вывода логов в виде одной JSON-строки.
+    Это стандарт для современных production-систем.
+    """
+    def format(self, record):
+        log_record = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            log_record['exc_info'] = self.formatException(record.exc_info)
+        return json.dumps(log_record, ensure_ascii=False)
+
+# --- Главная функция настройки ---
+
+def setup_logging(level: str = "INFO", format: Literal["text", "json"] = "text"):
+    """
+    Настраивает конфигурацию логирования для всего приложения.
+
+    :param level: Уровень логирования (например, "INFO", "DEBUG").
+    :param format: Формат вывода ('text' или 'json').
+    """
+    log_level = logging.getLevelName(level.upper())
     
-    По умолчанию используется стандартный текстовый формат.
-    Если установлена переменная окружения LOG_FORMAT=json,
-    используется структурированный JSON-формат, который удобен
-    для систем сбора логов (ELK, Datadog, и т.д.).
-    """
-    log_format = os.environ.get("LOG_FORMAT", "text")
-    log_level_str = os.environ.get("LOG_LEVEL", "INFO").upper()
-    log_level = getattr(logging, log_level_str, logging.INFO)
-
-    # Получаем корневой логгер
+    # Сбрасываем все предыдущие конфигурации
     root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
 
-    # Удаляем все существующие обработчики, чтобы избежать дублирования
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
-
-    # Создаем и настраиваем новый обработчик
-    handler = logging.StreamHandler(sys.stdout)
-
-    if log_format == "json" and jsonlogger:
-        # Форматтер для JSON-логов
-        formatter = jsonlogger.JsonFormatter(
-            "%(asctime)s %(name)s %(levelname)s %(message)s"
-        )
-        print("Logging configured in JSON format.")
+    # Выбираем форматер в зависимости от настроек
+    if format == "json":
+        formatter = JsonFormatter()
     else:
-        # Стандартный текстовый форматтер
         formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
         )
-        if log_format == "json":
-            print("Warning: LOG_FORMAT is 'json' but python-json-logger is not installed. Falling back to text format.")
-        
-    handler.setFormatter(formatter)
-    root_logger.addHandler(handler)
+
+    # Настраиваем обработчик для вывода в консоль
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
     
-    # Уменьшаем "шум" от сторонних библиотек
+    # Применяем настройки к корневому логгеру
+    root_logger.addHandler(stream_handler)
+    root_logger.setLevel(log_level)
+
+    # Приглушаем слишком "болтливые" библиотеки
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
-    logging.getLogger("redis").setLevel(logging.WARNING)
-    
-    # Завершаем настройку сообщением в лог
-    logging.info(f"Logging successfully configured with level {log_level_str} in {log_format} format.")
 
+    logging.info(f"Logging successfully configured with level {level.upper()} in {format} format.")
