@@ -1,22 +1,21 @@
 # ===============================================================
-# Файл: bot/utils/dependencies.py (НОВЫЙ ФАЙЛ, КЛЮЧЕВОЙ)
-# Описание: Централизованное управление зависимостями (DI).
-# Создает и хранит единственные экземпляры (singletons) всех
-# основных компонентов бота для всего приложения.
+# Файл: bot/utils/dependencies.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Описание: Централизованный модуль для управления зависимостями (DI).
+# Создает и хранит единственные экземпляры всех ключевых
+# компонентов бота (Bot, Dispatcher, сервисы и т.д.).
 # ===============================================================
 
-import logging
-from typing import Optional
 import aiohttp
 import redis.asyncio as redis
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.fsm.storage.redis import RedisStorage
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from openai import AsyncOpenAI
 
-# Импортируем все наши сервисы и настройки
-from bot.config.settings import AppSettings, settings
+# Импортируем все наши компоненты
+from bot.config.settings import settings
 from bot.services.admin_service import AdminService
-from bot.services.ai_content_service import AIContentService
 from bot.services.asic_service import AsicService
 from bot.services.coin_list_service import CoinListService
 from bot.services.crypto_center_service import CryptoCenterService
@@ -30,113 +29,111 @@ from bot.services.quiz_service import QuizService
 from bot.services.security_service import SecurityService
 from bot.services.stop_word_service import StopWordService
 from bot.services.user_service import UserService
+from bot.services.ai_content_service import AIContentService
 
-logger = logging.getLogger(__name__)
+# --- Создаем единственные экземпляры (singletons) ---
 
-# --- Контейнер для хранения глобальных экземпляров ---
+# Основные компоненты aiogram
+bot: Bot = Bot(
+    token=settings.api_keys.bot_token,
+    default=DefaultBotProperties(parse_mode='HTML')
+)
+storage: RedisStorage = RedisStorage.from_url(settings.api_keys.redis_url)
+dp: Dispatcher = Dispatcher(storage=storage)
 
-class DependencyContainer:
-    """Хранит синглтон-экземпляры всех зависимостей."""
-    def __init__(self):
-        self.settings: Optional[AppSettings] = None
-        self.bot: Optional[Bot] = None
-        self.dispatcher: Optional[Dispatcher] = None
-        self.http_session: Optional[aiohttp.ClientSession] = None
-        self.redis_client: Optional[redis.Redis] = None
-        self.openai_client: Optional[AsyncOpenAI] = None
-        
-        # Сервисы
-        self.admin_service: Optional[AdminService] = None
-        self.user_service: Optional[UserService] = None
-        self.parser_service: Optional[ParserService] = None
-        self.asic_service: Optional[AsicService] = None
-        self.market_data_service: Optional[MarketDataService] = None
-        self.mining_service: Optional[MiningService] = None
-        self.coin_list_service: Optional[CoinListService] = None
-        self.price_service: Optional[PriceService] = None
-        self.news_service: Optional[NewsService] = None
-        self.ai_content_service: Optional[AIContentService] = None
-        self.crypto_center_service: Optional[CryptoCenterService] = None
-        self.quiz_service: Optional[QuizService] = None
-        self.mining_game_service: Optional[MiningGameService] = None
-        self.stop_word_service: Optional[StopWordService] = None
-        self.security_service: Optional[SecurityService] = None
+# Вспомогательные клиенты
+redis_client: redis.Redis = redis.from_url(settings.api_keys.redis_url, decode_responses=True)
+http_session: aiohttp.ClientSession = aiohttp.ClientSession()
+openai_client: AsyncOpenAI = AsyncOpenAI(api_key=settings.api_keys.openai_api_key) if settings.api_keys.openai_api_key else None
+scheduler: AsyncIOScheduler = AsyncIOScheduler()
 
-    def build(self):
-        """Создает и настраивает все зависимости."""
-        self.settings = settings
-        
-        self.bot = Bot(token=self.settings.api_keys.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
-        self.redis_client = redis.from_url(self.settings.database.redis_url, decode_responses=True)
-        self.http_session = aiohttp.ClientSession()
-        
-        if self.settings.api_keys.openai_api_key:
-            self.openai_client = AsyncOpenAI(api_key=self.settings.api_keys.openai_api_key)
+# Сервисы (создаются в правильном порядке зависимостей)
+# Сначала базовые сервисы
+stop_word_service: StopWordService = StopWordService(redis_client=redis_client)
+security_service: SecurityService = SecurityService(
+    http_session=http_session,
+    config=settings
+)
+admin_service: AdminService = AdminService(redis_client=redis_client)
+user_service: UserService = UserService(
+    redis_client=redis_client,
+    admin_service=admin_service,
+    settings=settings
+)
+parser_service: ParserService = ParserService(
+    http_session=http_session,
+    config=settings.endpoints
+)
+asic_service: AsicService = AsicService(
+    redis_client=redis_client,
+    parser_service=parser_service,
+    config=settings
+)
+coin_list_service: CoinListService = CoinListService(
+    redis_client=redis_client,
+    http_session=http_session,
+    config=settings.endpoints
+)
+market_data_service: MarketDataService = MarketDataService(
+    redis_client=redis_client,
+    http_session=http_session,
+    config=settings.endpoints
+)
+price_service: PriceService = PriceService(
+    redis_client=redis_client,
+    http_session=http_session,
+    coin_list_service=coin_list_service,
+    config=settings.endpoints
+)
+news_service: NewsService = NewsService(
+    http_session=http_session,
+    config=settings.news
+)
+ai_content_service: AIContentService = AIContentService(
+    http_session=http_session,
+    openai_client=openai_client,
+    config=settings.api_keys
+)
+crypto_center_service: CryptoCenterService = CryptoCenterService(
+    redis_client=redis_client,
+    news_service=news_service,
+    ai_content_service=ai_content_service
+)
+mining_service: MiningService = MiningService(
+    market_data_service=market_data_service
+)
+mining_game_service: MiningGameService = MiningGameService(
+    redis_client=redis_client,
+    admin_service=admin_service,
+    settings=settings
+)
+quiz_service: QuizService = QuizService(
+    ai_content_service=ai_content_service,
+    fallback_questions=settings.fallback_quiz
+)
 
-        # --- Инициализация сервисов в правильном порядке ---
-        self.admin_service = AdminService(self.redis_client)
-        self.user_service = UserService(self.redis_client, self.settings)
-        self.parser_service = ParserService(self.http_session, self.settings.parser)
-        self.asic_service = AsicService(self.redis_client, self.parser_service)
-        self.market_data_service = MarketDataService(self.http_session, self.redis_client, self.settings.api_keys, self.settings.parser)
-        self.mining_service = MiningService(self.market_data_service)
-        self.coin_list_service = CoinListService(self.redis_client, self.http_session, self.settings.parser)
-        self.price_service = PriceService(self.coin_list_service, self.redis_client, self.http_session)
-        self.news_service = NewsService(self.http_session, self.settings.news)
-        
-        self.ai_content_service = AIContentService(
-            self.settings.api_keys, 
-            self.http_session, 
-            self.openai_client
-        )
-        self.crypto_center_service = CryptoCenterService(
-            self.redis_client, 
-            self.news_service, 
-            self.ai_content_service
-        )
-        self.quiz_service = QuizService(self.ai_content_service)
-        self.mining_game_service = MiningGameService(self.redis_client, self.settings, self.admin_service)
-        self.stop_word_service = StopWordService(self.redis_client)
-        self.security_service = SecurityService(self.ai_content_service, self.settings.security)
-
-        logger.info("Контейнер зависимостей успешно построен.")
-
-    async def close(self):
-        """Корректно закрывает все соединения."""
-        if self.http_session:
-            await self.http_session.close()
-        if self.redis_client:
-            await self.redis_client.close()
-        if self.bot:
-            await self.bot.session.close()
-        logger.info("Все соединения в контейнере зависимостей закрыты.")
-
-# --- Создаем глобальный экземпляр контейнера ---
-dependencies = DependencyContainer()
-
-# --- Геттеры для доступа к зависимостям из любой точки приложения ---
-# Это позволяет фоновым задачам получать актуальные экземпляры
-
-def get_bot() -> Bot:
-    return dependencies.bot
-
-def get_dispatcher() -> Dispatcher:
-    return dependencies.dispatcher
-
-def get_redis_client() -> redis.Redis:
-    return dependencies.redis_client
-
-def get_settings() -> AppSettings:
-    return dependencies.settings
-
-def get_admin_service() -> AdminService:
-    return dependencies.admin_service
-    
-def get_asic_service() -> AsicService:
-    return dependencies.asic_service
-
-def get_news_service() -> NewsService:
-    return dependencies.news_service
-
-def get_market_data_service() -> MarketDataService:
-    return dependencies.market_data_service
+# --- Словарь для передачи зависимостей в middleware и хэндлеры ---
+# Это позволяет не импортировать каждый сервис по отдельности в каждом файле
+workflow_data = {
+    "bot": bot,
+    "dp": dp,
+    "redis_client": redis_client,
+    "http_session": http_session,
+    "scheduler": scheduler,
+    "settings": settings,
+    "admin_service": admin_service,
+    "asic_service": asic_service,
+    "coin_list_service": coin_list_service,
+    "crypto_center_service": crypto_center_service,
+    "market_data_service": market_data_service,
+    "mining_game_service": mining_game_service,
+    "mining_service": mining_service,
+    "news_service": news_service,
+    "parser_service": parser_service,
+    "price_service": price_service,
+    "quiz_service": quiz_service,
+    "security_service": security_service,
+    "stop_word_service": stop_word_service,
+    "user_service": user_service,
+    "ai_content_service": ai_content_service,
+}
