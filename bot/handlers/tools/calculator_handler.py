@@ -14,7 +14,9 @@ from bot.services.asic_service import AsicService
 from bot.services.admin_service import AdminService
 from bot.services.mining_service import MiningService
 from bot.services.market_data_service import MarketDataService
-from bot.states.mining_states import CalculatorState
+# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса состояний ---
+from bot.states.mining_states import CalculatorStates
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.keyboards.mining_keyboards import (
     get_calculator_cancel_keyboard, get_currency_selection_keyboard,
     get_asic_selection_keyboard
@@ -40,9 +42,9 @@ async def start_profit_calculator(update: Union[Message, CallbackQuery], state: 
     message = update.message if isinstance(update, CallbackQuery) else update
     await message.answer(text, reply_markup=keyboard)
     
-    await state.set_state(CalculatorState.waiting_for_currency)
+    await state.set_state(CalculatorStates.waiting_for_currency)
 
-@calculator_router.callback_query(CalculatorState, F.data == "calc_action:cancel")
+@calculator_router.callback_query(CalculatorStates, F.data == "calc_action:cancel")
 async def cancel_calculator(call: CallbackQuery, state: FSMContext):
     """Отменяет сценарий калькулятора."""
     await state.clear()
@@ -51,7 +53,7 @@ async def cancel_calculator(call: CallbackQuery, state: FSMContext):
 
 # --- Шаги сценария FSM ---
 
-@calculator_router.callback_query(CalculatorState.waiting_for_currency, F.data.startswith("calc_currency:"))
+@calculator_router.callback_query(CalculatorStates.waiting_for_currency, F.data.startswith("calc_currency:"))
 async def process_currency_selection(call: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор валюты."""
     currency = call.data.split(":")[1]
@@ -64,9 +66,9 @@ async def process_currency_selection(call: CallbackQuery, state: FSMContext):
     )
     
     await call.message.edit_text(prompt_text, reply_markup=get_calculator_cancel_keyboard())
-    await state.set_state(CalculatorState.waiting_for_electricity_cost)
+    await state.set_state(CalculatorStates.waiting_for_electricity_cost)
 
-@calculator_router.message(CalculatorState.waiting_for_electricity_cost)
+@calculator_router.message(CalculatorStates.waiting_for_electricity_cost)
 async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService, market_data_service: MarketDataService):
     """Обрабатывает ввод стоимости электроэнергии."""
     try:
@@ -102,9 +104,9 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
     
     keyboard = get_asic_selection_keyboard(all_asics, page=0)
     await msg.edit_text("✅ Отлично! Теперь выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
-    await state.set_state(CalculatorState.waiting_for_asic_selection)
+    await state.set_state(CalculatorStates.waiting_for_asic_selection)
 
-@calculator_router.callback_query(CalculatorState.waiting_for_asic_selection, F.data.startswith("calc_page:"))
+@calculator_router.callback_query(CalculatorStates.waiting_for_asic_selection, F.data.startswith("calc_page:"))
 async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     """Обрабатывает пагинацию в списке ASIC."""
     page = int(call.data.split(":")[1])
@@ -114,7 +116,7 @@ async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     keyboard = get_asic_selection_keyboard(asic_list, page=page)
     await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
 
-@calculator_router.callback_query(CalculatorState.waiting_for_asic_selection, F.data.startswith("calc_select_asic:"))
+@calculator_router.callback_query(CalculatorStates.waiting_for_asic_selection, F.data.startswith("calc_select_asic:"))
 async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор ASIC из списка."""
     asic_index = int(call.data.split(":")[1])
@@ -131,9 +133,9 @@ async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
         "📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):",
         reply_markup=get_calculator_cancel_keyboard()
     )
-    await state.set_state(CalculatorState.waiting_for_pool_commission)
+    await state.set_state(CalculatorStates.waiting_for_pool_commission)
 
-@calculator_router.message(CalculatorState.waiting_for_pool_commission)
+@calculator_router.message(CalculatorStates.waiting_for_pool_commission)
 async def process_pool_commission(message: Message, state: FSMContext, mining_service: MiningService, market_data_service: MarketDataService):
     """Обрабатывает ввод комиссии пула и выполняет финальный расчет."""
     try:
