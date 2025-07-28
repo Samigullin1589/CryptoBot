@@ -5,6 +5,7 @@
 # ===============================================================
 
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Set
 
@@ -31,14 +32,23 @@ class ApiKeysConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        extra='ignore' # Игнорировать лишние переменные окружения
+        extra='ignore'
     )
 
-class AdminConfig(BaseModel):
+# --- ИСПРАВЛЕНИЕ: Превращаем AdminConfig в самодостаточную модель настроек ---
+class AdminConfig(BaseSettings):
     """Настройки, связанные с администрированием."""
-    admin_chat_id: int
-    news_chat_id: int
+    admin_chat_id: int = Field(alias='ADMIN_CHAT_ID')
+    news_chat_id: int = Field(alias='NEWS_CHAT_ID')
     admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra='ignore'
+    )
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     @property
     def admin_user_ids(self) -> List[int]:
@@ -57,7 +67,6 @@ class ApiEndpoints(BaseModel):
     minerstat_api_base: str = "https://api.minerstat.com/v2"
     blockchair_api_base: str = "https://api.blockchair.com"
     
-    # Основные и резервные эндпоинты
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
     cbr_daily_json_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
     btc_fees_url: str = "https://mempool.space/api/v1/fees/recommended"
@@ -67,25 +76,22 @@ class ApiEndpoints(BaseModel):
 
 class NewsConfig(BaseModel):
     """Настройки для новостных модулей."""
-    # Основные новостные ленты
     main_rss_feeds: List[str] = [
         "https://forklog.com/feed",
         "https://beincrypto.ru/feed/",
         "https://cointelegraph.com/rss/tag/russia"
     ]
-    # "Альфа" ленты для AI-анализа
     alpha_rss_feeds: List[str] = [
         "https://thedefiant.io/feed",
         "https://bankless.substack.com/feed",
         "https://www.theblock.co/rss.xml",
         "https://cointelegraph.com/rss/tag/layer-2"
     ]
-    # Категории для API CryptoCompare
     crypto_center_news_categories: str = "Airdrop,Mining,DeFi,L1,L2,Altcoin,RWA,GameFi"
 
 class MiningGameConfig(BaseModel):
     """Настройки для игры 'Виртуальный Майнинг'."""
-    duration_seconds: int = 8 * 3600  # 8 часов
+    duration_seconds: int = 8 * 3600
     referral_bonus_amount: float = 50.0
     electricity_tariffs: Dict[str, Dict[str, float]] = {
         "Домашний 💡": {"cost_per_hour": 0.05, "unlock_price": 0},
@@ -110,10 +116,9 @@ class SchedulerSettings(BaseModel):
     leaderboard_hour: int = 18
     health_check_minutes: int = 15
 
-# --- ИСПРАВЛЕНИЕ: Добавлен недостающий класс ---
 class ThreatFilterSettings(BaseModel):
     """Настройки для системы предотвращения угроз."""
-    sandbox_period_seconds: int = 24 * 3600  # 24 часа
+    sandbox_period_seconds: int = 24 * 3600
     critical_toxicity_threshold: float = 0.9
     threat_score_threshold: float = 100.0
     low_trust_threshold: int = 50
@@ -129,7 +134,6 @@ class ThreatFilterSettings(BaseModel):
 
     score_weights: ScoreWeights = Field(default_factory=ScoreWeights)
     multipliers: Multipliers = Field(default_factory=Multipliers)
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 # --- Главный класс настроек ---
 
@@ -138,42 +142,38 @@ class AppSettings(BaseSettings):
     Основной класс конфигурации, объединяющий все настройки приложения.
     """
     api_keys: ApiKeysConfig = Field(default_factory=ApiKeysConfig)
-    
-    admin: AdminConfig
+    # --- ИСПРАВЛЕНИЕ: Указываем, что `admin` должен создаваться автоматически ---
+    admin: AdminConfig = Field(default_factory=AdminConfig)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     
     endpoints: ApiEndpoints = Field(default_factory=ApiEndpoints)
     news: NewsConfig = Field(default_factory=NewsConfig)
     game: MiningGameConfig = Field(default_factory=MiningGameConfig)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
-    threat_filter: ThreatFilterSettings = Field(default_factory=ThreatFilterSettings) # Добавлено поле
+    threat_filter: ThreatFilterSettings = Field(default_factory=ThreatFilterSettings)
 
-    # Общие настройки
     ticker_aliases: Dict[str, str] = {
         'бтк': 'BTC', 'биткоин': 'BTC', 'биток': 'BTC',
         'eth': 'ETH', 'эфир': 'ETH', 'эфириум': 'ETH'
     }
     popular_tickers: List[str] = ['BTC', 'ETH', 'SOL', 'TON', 'KAS', 'ARB']
     
-    # Настройки модерации
     stop_words: Set[str] = {
         "казино", "ставки", "бонус", "фриспин", "депозит", "работа",
         "вакансия", "зарплата", "заработок"
     }
     allowed_link_user_ids: List[int] = []
 
-    # Резервные данные
     fallback_asics: List[Dict[str, Any]] = Field(default_factory=lambda: load_json_fallback("fallback_asics.json"))
     fallback_quiz: List[Dict[str, Any]] = Field(default_factory=lambda: load_json_fallback("fallback_quiz.json"))
 
     @model_validator(mode='after')
     def set_allowed_users(self) -> 'AppSettings':
-        """Добавляет ID админов в список разрешенных для постинга ссылок."""
         all_admin_ids = set(self.admin.admin_user_ids)
         if self.admin.admin_chat_id:
             all_admin_ids.add(self.admin.admin_chat_id)
         
-        # Используем множество для избежания дубликатов
         self.allowed_link_user_ids = sorted(list(set(self.allowed_link_user_ids) | all_admin_ids))
         return self
 
@@ -181,21 +181,20 @@ class AppSettings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
-        env_nested_delimiter='__' # Позволяет задавать вложенные переменные, например, API_KEYS__BOT_TOKEN
+        env_nested_delimiter='__'
     )
 
 def load_json_fallback(filename: str) -> List[Dict[str, Any]]:
-    """Вспомогательная функция для загрузки резервных данных из JSON."""
     file_path = BASE_DIR / "data" / filename
     if not file_path.exists():
-        logging.warning(f"Fallback file '{filename}' not found at '{file_path}'.")
+        # Используем logging, который может быть еще не настроен, поэтому print для надежности
+        print(f"WARNING: Fallback file '{filename}' not found at '{file_path}'.")
         return []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as e:
-        logging.error(f"Failed to load fallback file '{filename}': {e}")
+        print(f"ERROR: Failed to load fallback file '{filename}': {e}")
         return []
 
-# Создаем единственный экземпляр настроек для всего приложения
 settings = AppSettings()
