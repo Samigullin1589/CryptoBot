@@ -9,12 +9,12 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.config.settings import settings
-# --- ИСПРАВЛЕНИЕ: Импортируем сервис из правильного файла ---
 from bot.services.mining_game_service import MiningGameService
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.services.asic_service import AsicService
 from bot.services.admin_service import AdminService
-from bot.states.mining_states import MiningGameState
+# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса состояний ---
+from bot.states.mining_states import MiningGameStates
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.keyboards.mining_keyboards import (
     get_mining_menu_keyboard, get_shop_keyboard, get_my_farm_keyboard,
     get_withdraw_keyboard, get_electricity_menu_keyboard
