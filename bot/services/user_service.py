@@ -7,9 +7,7 @@
 import json
 import logging
 import time
-# --- ИСПРАВЛЕНИЕ: Добавляем импорт 'Any' ---
 from typing import List, Dict, Optional, Any
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 import redis.asyncio as redis
 from aiogram import Bot
@@ -31,9 +29,11 @@ class UserService:
         """
         self.redis = redis_client
         self.settings = settings
-        self.super_admins = set(self.settings.admin.super_admin_user_ids)
-        self.admins = set(self.settings.admin.admin_user_ids)
-        self.moderators = set(self.settings.admin.moderator_user_ids)
+        # --- ИСПРАВЛЕНИЕ: Используем правильные имена полей из настроек ---
+        self.super_admins = set(self.settings.admin.super_admin_ids)
+        self.admins = set(self.settings.admin.admin_ids)
+        self.moderators = set(self.settings.admin.moderator_ids)
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     def _get_user_profile_key(self, user_id: int, chat_id: int) -> str:
         """Возвращает ключ для хранения профиля пользователя в Redis."""
