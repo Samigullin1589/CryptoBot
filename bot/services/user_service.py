@@ -7,7 +7,9 @@
 import json
 import logging
 import time
-from typing import List, Dict, Optional
+# --- ИСПРАВЛЕНИЕ: Добавляем импорт 'Any' ---
+from typing import List, Dict, Optional, Any
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 import redis.asyncio as redis
 from aiogram import Bot
@@ -29,11 +31,9 @@ class UserService:
         """
         self.redis = redis_client
         self.settings = settings
-        # --- ИСПРАВЛЕНИЕ: Используем правильное имя поля из настроек ---
         self.super_admins = set(self.settings.admin.super_admin_user_ids)
         self.admins = set(self.settings.admin.admin_user_ids)
         self.moderators = set(self.settings.admin.moderator_user_ids)
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     def _get_user_profile_key(self, user_id: int, chat_id: int) -> str:
         """Возвращает ключ для хранения профиля пользователя в Redis."""
@@ -85,8 +85,6 @@ class UserService:
             # Сохраняем базовую информацию для админки
             user_info = {"full_name": full_name, "username": username or ""}
             await self.redis.set(f"user_info:{user_id}", json.dumps(user_info, ensure_ascii=False))
-            # Вызываем метод AdminService для инкремента счетчика
-            # await self.admin_service.track_new_user() # Эта логика перенесена в AdminService
         return bool(is_new)
 
     async def process_referral(self, new_user_id: int, referrer_id: int, new_user_username: Optional[str], bot: Bot):
@@ -100,9 +98,6 @@ class UserService:
             return
 
         bonus = self.settings.game.referral_bonus_amount
-        # Используем AdminService для инкремента счетчиков
-        # await self.admin_service.track_referral_registration()
-        # await self.admin_service.track_balance_change(bonus)
 
         async with self.redis.pipeline() as pipe:
             pipe.incrbyfloat(f"user_game_profile:{referrer_id}:balance", bonus)
