@@ -4,10 +4,11 @@
 # с использованием Pydantic для валидации и загрузки из .env.
 # ===============================================================
 import json
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Literal
 
-from pydantic import Field, model_validator, field_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- Конфигурационные классы для вложенных настроек ---
@@ -53,33 +54,29 @@ class EndpointsConfig(BaseSettings):
     asicminervalue_url: str = "https://www.asicminervalue.com/miners"
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
     
-    # Резервные эндпоинты для BTC
     btc_halving_url_primary: str = "https://api.blockchair.com/bitcoin/stats"
     btc_fees_url_primary: str = "https://mempool.space/api/v1/fees/recommended"
     btc_fees_url_fallback: str = "https://api.blockchair.com/bitcoin/stats"
     btc_network_status_url_primary: str = "https://api.blockchair.com/bitcoin/stats"
 
 class NewsConfig(BaseSettings):
-    # Основные новостные ленты
     main_rss_feeds: List[str] = [
         "https://forklog.com/feed", 
         "https://beincrypto.ru/feed/", 
         "https://cointelegraph.com/rss/tag/russia"
     ]
-    # Ленты для AI-анализа
     alpha_rss_feeds: List[str] = [
         "https://thedefiant.io/feed",
         "https://bankless.substack.com/feed",
         "https://www.theblock.co/rss.xml"
     ]
-    # API для Крипто-Центра
     crypto_center_news_api_url: str = (
         "https://min-api.cryptocompare.com/data/v2/news/"
         "?lang=EN&categories=Airdrop,Mining,DeFi,L1,L2,Altcoin,RWA,GameFi"
     )
 
 class GameConfig(BaseSettings):
-    mining_duration_seconds: int = 8 * 3600  # 8 часов
+    mining_duration_seconds: int = 8 * 3600
     referral_bonus_amount: float = 50.0
     electricity_tariffs: Dict[str, Dict[str, float]] = {
         "Домашний 💡": {"cost_per_hour": 0.05, "unlock_price": 0},
@@ -98,7 +95,7 @@ class ActivityRewards(BaseSettings):
     reward_points: int = 5
 
 class ThreatFilterSettings(BaseSettings):
-    sandbox_period_seconds: int = 86400  # 24 часа
+    sandbox_period_seconds: int = 86400
     critical_confidence_threshold: float = 0.9
     low_trust_threshold: int = 50
     threat_scores: Dict[str, int] = {
@@ -140,14 +137,15 @@ class AppSettings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     app: AppConfig = Field(default_factory=AppConfig)
 
+    # --- ИСПРАВЛЕНИЕ: Объявляем поля для резервных данных ---
+    fallback_asics: List[Dict[str, Any]] = []
+    fallback_quiz: List[Dict[str, Any]] = []
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
     ticker_aliases: Dict[str, str] = {
         'бтк': 'BTC', 'биткоин': 'BTC', 'биток': 'BTC', 
         'eth': 'ETH', 'эфир': 'ETH', 'эфириум': 'ETH'
     }
-
-    @field_validator('admin', mode='before')
-    def load_admin_config(cls, v):
-        return v if isinstance(v, dict) else {}
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -161,6 +159,7 @@ settings = AppSettings()
 
 # --- Загрузка резервных данных ---
 BASE_DIR = Path(__file__).parent.parent.parent
+logger = logging.getLogger(__name__) # Добавим логгер для этой функции
 
 def load_fallback_data(filename: str) -> List[Dict[str, Any]]:
     file_path = BASE_DIR / "data" / filename
@@ -174,5 +173,6 @@ def load_fallback_data(filename: str) -> List[Dict[str, Any]]:
         logger.error(f"Error loading fallback data from {file_path}: {e}")
         return []
 
+# Теперь эти присваивания будут работать, так как поля объявлены
 settings.fallback_asics = load_fallback_data("fallback_asics.json")
 settings.fallback_quiz = load_fallback_data("fallback_quiz.json")
