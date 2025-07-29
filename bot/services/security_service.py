@@ -12,7 +12,9 @@ import aiohttp
 from async_lru import alru_cache
 
 # Импортируем централизованные компоненты
-from bot.config.settings import AppSettings
+# --- ИСПРАВЛЕНИЕ: Импортируем оба класса напрямую ---
+from bot.config.settings import AppSettings, ApiKeysConfig
+# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.utils.http_client import make_request
 from bot.utils.models import AIVerdict
 
@@ -21,7 +23,9 @@ logger = logging.getLogger(__name__)
 class SecurityService:
     """Сервис для анализа угроз и управления безопасностью."""
 
-    def __init__(self, http_session: aiohttp.ClientSession, config: AppSettings.ApiKeysConfig):
+    # --- ИСПРАВЛЕНИЕ: Указываем правильный тип для конфига ---
+    def __init__(self, http_session: aiohttp.ClientSession, config: ApiKeysConfig):
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
         """
         Инициализирует сервис.
         
