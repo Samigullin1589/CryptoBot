@@ -113,7 +113,9 @@ class SchedulerSettings(BaseSettings):
     news_interval_hours: int = 3
     asic_update_hours: int = 1
     morning_summary_hour: int = 9
-    leaderboard_day_of_week: str = 'fri'
+    # --- ИСПРАВЛЕНИЕ: Переименовываем поле для соответствия ---
+    leaderboard_day: str = Field('fri', alias='LEADERBOARD_DAY_OF_WEEK')
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     leaderboard_hour: int = 18
     health_check_minutes: int = 5
 
@@ -137,10 +139,8 @@ class AppSettings(BaseSettings):
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     app: AppConfig = Field(default_factory=AppConfig)
 
-    # --- ИСПРАВЛЕНИЕ: Объявляем поля для резервных данных ---
     fallback_asics: List[Dict[str, Any]] = []
     fallback_quiz: List[Dict[str, Any]] = []
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     ticker_aliases: Dict[str, str] = {
         'бтк': 'BTC', 'биткоин': 'BTC', 'биток': 'BTC', 
@@ -159,7 +159,7 @@ settings = AppSettings()
 
 # --- Загрузка резервных данных ---
 BASE_DIR = Path(__file__).parent.parent.parent
-logger = logging.getLogger(__name__) # Добавим логгер для этой функции
+logger = logging.getLogger(__name__)
 
 def load_fallback_data(filename: str) -> List[Dict[str, Any]]:
     file_path = BASE_DIR / "data" / filename
@@ -173,6 +173,5 @@ def load_fallback_data(filename: str) -> List[Dict[str, Any]]:
         logger.error(f"Error loading fallback data from {file_path}: {e}")
         return []
 
-# Теперь эти присваивания будут работать, так как поля объявлены
 settings.fallback_asics = load_fallback_data("fallback_asics.json")
 settings.fallback_quiz = load_fallback_data("fallback_quiz.json")
