@@ -1,182 +1,153 @@
 # ===============================================================
 # Файл: bot/config/settings.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Центральный файл для управления всеми настройками
-# и секретами бота с использованием Pydantic.
+# Описание: Централизованная конфигурация всего приложения
+# с использованием Pydantic для валидации и загрузки из .env.
 # ===============================================================
-
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Literal
 
-from pydantic import Field, model_validator, BaseModel
+from pydantic import Field, model_validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Определяем базовую директорию проекта (корень)
-BASE_DIR = Path(__file__).parent.parent.parent
-
-# --- Вложенные классы конфигурации для лучшей организации ---
-
-class AppConfig(BaseModel):
-    """Общие настройки приложения."""
-    log_level: str = "INFO"
-    log_format: str = "text"  # 'text' or 'json'
+# --- Конфигурационные классы для вложенных настроек ---
 
 class ApiKeysConfig(BaseSettings):
-    """Секретные ключи для доступа к внешним API."""
-    bot_token: str = Field(alias='BOT_TOKEN')
-    redis_url: str = Field(alias='REDIS_URL')
-    openai_api_key: str = Field(alias='OPENAI_API_KEY', default="")
-    gemini_api_key: str = Field(alias='GEMINI_API_KEY')
-    cmc_api_key: str = Field(alias='CMC_API_KEY', default="")
-    cryptocompare_api_key: str = Field(alias='CRYPTOCOMPARE_API_KEY', default="")
-    blockchair_api_key: str = Field(alias='BLOCKCHAIR_API_KEY', default="")
-    glassnode_api_key: str = Field(alias='GLASSNODE_API_KEY', default="")
+    bot_token: str = Field(..., alias='BOT_TOKEN')
+    redis_url: str = Field(..., alias='REDIS_URL')
+    openai_api_key: str = Field("", alias='OPENAI_API_KEY')
+    gemini_api_key: str = Field(..., alias='GEMINI_API_KEY')
+    cmc_api_key: str = Field("", alias='CMC_API_KEY')
+    cryptocompare_api_key: str = Field("", alias='CRYPTOCOMPARE_API_KEY')
+    blockchair_api_key: str = Field("", alias='BLOCKCHAIR_API_KEY')
+    glassnode_api_key: str = Field("", alias='GLASSNODE_API_KEY')
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra='ignore'
-    )
+    model_config = SettingsConfigDict(extra='ignore')
 
 class AdminConfig(BaseSettings):
-    """Настройки, связанные с администрированием."""
-    admin_chat_id: int = Field(alias='ADMIN_CHAT_ID')
-    news_chat_id: int = Field(alias='NEWS_CHAT_ID')
-    admin_user_ids_str: str = Field(alias='ADMIN_USER_IDS', default='')
+    admin_chat_id: int = Field(..., alias='ADMIN_CHAT_ID')
+    news_chat_id: int = Field(..., alias='NEWS_CHAT_ID')
+    super_admin_ids_str: str = Field(alias='SUPER_ADMIN_IDS', default='')
+    admin_ids_str: str = Field(alias='ADMIN_IDS', default='')
+    moderator_ids_str: str = Field(alias='MODERATOR_IDS', default='')
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra='ignore'
-    )
+    super_admin_ids: List[int] = []
+    admin_ids: List[int] = []
+    moderator_ids: List[int] = []
+    
+    @model_validator(mode='after')
+    def parse_admin_ids(self) -> 'AdminConfig':
+        self.super_admin_ids = [int(i.strip()) for i in self.super_admin_ids_str.split(',') if i.strip()]
+        self.admin_ids = [int(i.strip()) for i in self.admin_ids_str.split(',') if i.strip()]
+        self.moderator_ids = [int(i.strip()) for i in self.moderator_ids_str.split(',') if i.strip()]
+        return self
 
-    @property
-    def admin_user_ids(self) -> List[int]:
-        if not self.admin_user_ids_str.strip():
-            return []
-        try:
-            return [int(item.strip()) for item in self.admin_user_ids_str.split(',') if item.strip()]
-        except (ValueError, TypeError):
-            return []
+    model_config = SettingsConfigDict(extra='ignore')
 
-class ApiEndpoints(BaseModel):
-    """URL-адреса для внешних API."""
+class EndpointsConfig(BaseSettings):
     coingecko_api_base: str = "https://api.coingecko.com/api/v3"
     coinpaprika_api_base: str = "https://api.coinpaprika.com/v1"
     cryptocompare_api_base: str = "https://min-api.cryptocompare.com"
     minerstat_api_base: str = "https://api.minerstat.com/v2"
-    blockchair_api_base: str = "https://api.blockchair.com"
-    
+    whattomine_asics_url: str = "https://whattomine.com/coins.json"
+    asicminervalue_url: str = "https://www.asicminervalue.com/miners"
     fear_and_greed_api_url: str = "https://api.alternative.me/fng/?limit=1"
-    cbr_daily_json_url: str = "https://www.cbr-xml-daily.ru/daily_json.js"
-    btc_fees_url: str = "https://mempool.space/api/v1/fees/recommended"
-    btc_fees_fallback_url: str = "https://blockstream.info/api/fee-estimates"
-    btc_mempool_url: str = "https://mempool.space/api/mempool"
-    btc_mempool_fallback_url: str = "https://blockstream.info/api/mempool"
+    
+    # Резервные эндпоинты для BTC
+    btc_halving_url_primary: str = "https://api.blockchair.com/bitcoin/stats"
+    btc_fees_url_primary: str = "https://mempool.space/api/v1/fees/recommended"
+    btc_fees_url_fallback: str = "https://api.blockchair.com/bitcoin/stats"
+    btc_network_status_url_primary: str = "https://api.blockchair.com/bitcoin/stats"
 
-class NewsConfig(BaseModel):
-    """Настройки для новостных модулей."""
+class NewsConfig(BaseSettings):
+    # Основные новостные ленты
     main_rss_feeds: List[str] = [
-        "https://forklog.com/feed",
-        "https://beincrypto.ru/feed/",
+        "https://forklog.com/feed", 
+        "https://beincrypto.ru/feed/", 
         "https://cointelegraph.com/rss/tag/russia"
     ]
+    # Ленты для AI-анализа
     alpha_rss_feeds: List[str] = [
         "https://thedefiant.io/feed",
         "https://bankless.substack.com/feed",
-        "https://www.theblock.co/rss.xml",
-        "https://cointelegraph.com/rss/tag/layer-2"
+        "https://www.theblock.co/rss.xml"
     ]
-    crypto_center_news_categories: str = "Airdrop,Mining,DeFi,L1,L2,Altcoin,RWA,GameFi"
+    # API для Крипто-Центра
+    crypto_center_news_api_url: str = (
+        "https://min-api.cryptocompare.com/data/v2/news/"
+        "?lang=EN&categories=Airdrop,Mining,DeFi,L1,L2,Altcoin,RWA,GameFi"
+    )
 
-class MiningGameConfig(BaseModel):
-    """Настройки для игры 'Виртуальный Майнинг'."""
-    duration_seconds: int = 8 * 3600
+class GameConfig(BaseSettings):
+    mining_duration_seconds: int = 8 * 3600  # 8 часов
     referral_bonus_amount: float = 50.0
     electricity_tariffs: Dict[str, Dict[str, float]] = {
         "Домашний 💡": {"cost_per_hour": 0.05, "unlock_price": 0},
         "Промышленный 🏭": {"cost_per_hour": 0.02, "unlock_price": 200},
-        "Зеленый 🌱": {"cost_per_hour": 0.08, "unlock_price": 50},
         "Гидроэлектростанция 💧": {"cost_per_hour": 0.01, "unlock_price": 500}
     }
     default_electricity_tariff: str = "Домашний 💡"
 
-class FeatureFlags(BaseModel):
-    """Флаги для включения/отключения экспериментальных функций."""
+class FeatureFlags(BaseSettings):
     enable_ai_consultant: bool = True
     enable_crypto_center: bool = True
     enable_mining_game: bool = True
 
-class SchedulerSettings(BaseModel):
-    """Настройки для планировщика задач."""
+class ActivityRewards(BaseSettings):
+    reward_threshold: int = 50
+    reward_points: int = 5
+
+class ThreatFilterSettings(BaseSettings):
+    sandbox_period_seconds: int = 86400  # 24 часа
+    critical_confidence_threshold: float = 0.9
+    low_trust_threshold: int = 50
+    threat_scores: Dict[str, int] = {
+        "scam": 90,
+        "phishing": 100,
+        "insult": 50,
+        "has_link": 30,
+        "stop_word": 25,
+        "velocity_burst": 40
+    }
+    trust_discount_factor: float = 0.5
+    low_trust_multiplier: float = 1.5
+
+class SchedulerSettings(BaseSettings):
     news_interval_hours: int = 3
     asic_update_hours: int = 1
     morning_summary_hour: int = 9
-    leaderboard_day: str = Field('fri', alias='LEADERBOARD_DAY_OF_WEEK')
+    leaderboard_day_of_week: str = 'fri'
     leaderboard_hour: int = 18
-    health_check_minutes: int = 15
+    health_check_minutes: int = 5
 
-class ThreatFilterSettings(BaseModel):
-    """Настройки для системы предотвращения угроз."""
-    sandbox_period_seconds: int = 24 * 3600
-    critical_toxicity_threshold: float = 0.9
-    threat_score_threshold: float = 100.0
-    low_trust_threshold: int = 50
-    high_trust_threshold: int = 150
+class AppConfig(BaseSettings):
+    log_level: str = "INFO"
+    log_format: Literal["text", "json"] = "text"
+    ai_history_limit: int = 10
+    popular_tickers: List[str] = ['BTC', 'ETH', 'SOL', 'TON', 'KAS', 'ARB']
 
-    class ScoreWeights(BaseModel):
-        ai_spam: float = 60.0
-        has_link: float = 30.0
-
-    class Multipliers(BaseModel):
-        low_trust: float = 1.5
-        high_trust_discount_factor: float = 0.25
-
-    score_weights: ScoreWeights = Field(default_factory=ScoreWeights)
-    multipliers: Multipliers = Field(default_factory=Multipliers)
-
-# --- Главный класс настроек ---
+# --- Главный класс настроек, собирающий все вместе ---
 
 class AppSettings(BaseSettings):
-    """
-    Основной класс конфигурации, объединяющий все настройки приложения.
-    """
-    app: AppConfig = Field(default_factory=AppConfig)
     api_keys: ApiKeysConfig = Field(default_factory=ApiKeysConfig)
     admin: AdminConfig = Field(default_factory=AdminConfig)
-    
-    endpoints: ApiEndpoints = Field(default_factory=ApiEndpoints)
+    endpoints: EndpointsConfig = Field(default_factory=EndpointsConfig)
     news: NewsConfig = Field(default_factory=NewsConfig)
-    game: MiningGameConfig = Field(default_factory=MiningGameConfig)
-    features: FeatureFlags = Field(default_factory=FeatureFlags)
-    scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
+    game: GameConfig = Field(default_factory=GameConfig)
+    feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
+    activity_rewards: ActivityRewards = Field(default_factory=ActivityRewards)
     threat_filter: ThreatFilterSettings = Field(default_factory=ThreatFilterSettings)
+    scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
+    app: AppConfig = Field(default_factory=AppConfig)
 
     ticker_aliases: Dict[str, str] = {
-        'бтк': 'BTC', 'биткоин': 'BTC', 'биток': 'BTC',
+        'бтк': 'BTC', 'биткоин': 'BTC', 'биток': 'BTC', 
         'eth': 'ETH', 'эфир': 'ETH', 'эфириум': 'ETH'
     }
-    popular_tickers: List[str] = ['BTC', 'ETH', 'SOL', 'TON', 'KAS', 'ARB']
-    
-    stop_words: Set[str] = {
-        "казино", "ставки", "бонус", "фриспин", "депозит", "работа",
-        "вакансия", "зарплата", "заработок"
-    }
-    allowed_link_user_ids: List[int] = []
 
-    fallback_asics: List[Dict[str, Any]] = Field(default_factory=lambda: load_json_fallback("fallback_asics.json"))
-    fallback_quiz: List[Dict[str, Any]] = Field(default_factory=lambda: load_json_fallback("fallback_quiz.json"))
-
-    @model_validator(mode='after')
-    def set_allowed_users(self) -> 'AppSettings':
-        all_admin_ids = set(self.admin.admin_user_ids)
-        if self.admin.admin_chat_id:
-            all_admin_ids.add(self.admin.admin_chat_id)
-        
-        self.allowed_link_user_ids = sorted(list(set(self.allowed_link_user_ids) | all_admin_ids))
-        return self
+    @field_validator('admin', mode='before')
+    def load_admin_config(cls, v):
+        return v if isinstance(v, dict) else {}
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -185,16 +156,23 @@ class AppSettings(BaseSettings):
         env_nested_delimiter='__'
     )
 
-def load_json_fallback(filename: str) -> List[Dict[str, Any]]:
+# --- Создаем единственный экземпляр настроек ---
+settings = AppSettings()
+
+# --- Загрузка резервных данных ---
+BASE_DIR = Path(__file__).parent.parent.parent
+
+def load_fallback_data(filename: str) -> List[Dict[str, Any]]:
     file_path = BASE_DIR / "data" / filename
     if not file_path.exists():
-        print(f"WARNING: Fallback file '{filename}' not found at '{file_path}'.")
+        logger.error(f"Fallback data file not found: {file_path}")
         return []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except (json.JSONDecodeError, IOError) as e:
-        print(f"ERROR: Failed to load fallback file '{filename}': {e}")
+    except Exception as e:
+        logger.error(f"Error loading fallback data from {file_path}: {e}")
         return []
 
-settings = AppSettings()
+settings.fallback_asics = load_fallback_data("fallback_asics.json")
+settings.fallback_quiz = load_fallback_data("fallback_quiz.json")
