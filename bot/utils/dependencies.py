@@ -87,7 +87,9 @@ async def initialize_dependencies():
     stop_word_service = StopWordService(redis_client=redis_client)
     security_service = SecurityService(http_session=http_session, config=settings.api_keys)
     admin_service = AdminService(redis_client=redis_client)
-    user_service = UserService(redis_client=redis_client, admin_service=admin_service, settings=settings)
+    # --- ИСПРАВЛЕНИЕ: Убран лишний аргумент admin_service ---
+    user_service = UserService(redis_client=redis_client, settings=settings)
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     parser_service = ParserService(http_session=http_session, config=settings.endpoints)
     asic_service = AsicService(redis_client=redis_client, parser_service=parser_service, config=settings)
     coin_list_service = CoinListService(redis_client=redis_client, http_session=http_session, config=settings.endpoints)
