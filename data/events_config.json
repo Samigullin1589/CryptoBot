@@ -1,0 +1,39 @@
+{
+  "events": [
+    {
+      "name": "POWER_SURGE",
+      "description": "Произошел скачок напряжения! Затраты на электроэнергию в этой сессии выросли на 50%.",
+      "probability": 0.05,
+      "profit_multiplier": 1.0,
+      "cost_multiplier": 1.5
+    },
+    {
+      "name": "ALGORITHM_BREAKTHROUGH",
+      "description": "Совершён прорыв в алгоритме майнинга! Ваш доход в этой сессии удвоен.",
+      "probability": 0.02,
+      "profit_multiplier": 2.0,
+      "cost_multiplier": 1.0
+    },
+    {
+      "name": "NETWORK_DIFFICULTY_INCREASE",
+      "description": "Сложность сети резко возросла. Ваш доход в этой сессии снижен на 25%.",
+      "probability": 0.07,
+      "profit_multiplier": 0.75,
+      "cost_multiplier": 1.0
+    },
+    {
+      "name": "CHEAP_ELECTRICITY",
+      "description": "Ваш поставщик электроэнергии объявил о временной акции! Затраты на э/э снижены вдвое.",
+      "probability": 0.05,
+      "profit_multiplier": 1.0,
+      "cost_multiplier": 0.5
+    },
+    {
+      "name": "EQUIPMENT_MALFUNCTION",
+      "description": "Произошел небольшой сбой в оборудовании. Сессия завершилась на 10% раньше, но обошлось без потерь.",
+      "probability": 0.03,
+      "profit_multiplier": 0.9,
+      "cost_multiplier": 0.9
+    }
+  ]
+}

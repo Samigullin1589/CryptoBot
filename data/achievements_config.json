@@ -1,0 +1,58 @@
+{
+  "achievements": [
+    {
+      "id": "first_session",
+      "name": "Первопроходец",
+      "description": "Завершить свою первую майнинг-сессию.",
+      "reward_coins": 50,
+      "trigger_event": "SESSION_END",
+      "trigger_conditions": {
+        "sessions_completed": 1
+      }
+    },
+    {
+      "id": "ten_sessions",
+      "name": "Ветеран Майнинга",
+      "description": "Завершить 10 майнинг-сессий.",
+      "reward_coins": 250,
+      "trigger_event": "SESSION_END",
+      "trigger_conditions": {
+        "sessions_completed": 10
+      }
+    },
+    {
+      "id": "first_sale",
+      "name": "Предприниматель",
+      "description": "Успешно продать свой первый ASIC на рынке.",
+      "reward_coins": 100,
+      "trigger_event": "ASIC_SOLD",
+      "trigger_conditions": {
+        "sales_completed": 1
+      }
+    },
+    {
+      "id": "event_survivor",
+      "name": "Везунчик",
+      "description": "Пережить случайное игровое событие (положительное или отрицательное).",
+      "reward_coins": 75,
+      "trigger_event": "SESSION_END_WITH_EVENT"
+    },
+    {
+      "id": "tariff_mogul",
+      "name": "Энергетический магнат",
+      "description": "Купить самый дорогой тариф на электроэнергию.",
+      "reward_coins": 500,
+      "trigger_event": "TARIFF_BOUGHT",
+      "trigger_conditions": {
+        "tariff_name": "Промышленный"
+      }
+    },
+    {
+      "id": "airdrop_hunter",
+      "name": "Охотник за сокровищами",
+      "description": "Выполнить все задачи в одном из Airdrop-проектов.",
+      "reward_coins": 150,
+      "trigger_event": "AIRDROP_COMPLETED"
+    }
+  ]
+}

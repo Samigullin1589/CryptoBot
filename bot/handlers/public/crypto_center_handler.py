@@ -1,148 +1,139 @@
-# ===============================================================
-# Файл: bot/handlers/public/crypto_center_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
-# Описание: "Тонкий" хэндлер для Крипто-Центра, разделенный на
-# логические блоки для максимальной читаемости и поддержки.
-# ===============================================================
+# =================================================================================
+# Файл: bot/handlers/public/crypto_center_handler.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ГОТОВАЯ)
+# Описание: Обработчики для интерактивного интерфейса Крипто-Центра.
+# =================================================================================
+
 import logging
-from aiogram import F, Router
-from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
-from aiogram.exceptions import TelegramBadRequest
+from math import ceil
+from aiogram import Router, F, types
+from aiogram.filters import Command
 
 from bot.services.crypto_center_service import CryptoCenterService
-from bot.states.crypto_center_states import CryptoCenterStates
-from bot.keyboards.crypto_center_keyboards import *
-from bot.utils.formatters import *
-from bot.texts.public_texts import CRYPTO_CENTER_TEXTS
+from bot.keyboards.crypto_center_keyboards import (
+    get_crypto_center_main_menu_keyboard,
+    get_airdrop_list_keyboard,
+    get_airdrop_details_keyboard,
+    get_mining_alpha_keyboard,
+    get_news_feed_keyboard,
+    CC_CALLBACK_PREFIX
+)
 
-router = Router(name="crypto_center_handler")
 logger = logging.getLogger(__name__)
+router = Router()
+PAGE_SIZE = 5
 
-# --- Точка входа и навигация по главному меню ---
+@router.message(Command("crypto_center"))
+@router.callback_query(F.data == f"{CC_CALLBACK_PREFIX}:main")
+async def crypto_center_main_menu(message: types.Message | types.CallbackQuery):
+    text = ("🧠 <b>Крипто-Центр 2025</b>\n\n"
+            "Ваш персональный AI-ассистент в мире криптовалют. "
+            "Анализирует новости и ваш профиль интересов, чтобы находить лучшие возможности.")
+    keyboard = get_crypto_center_main_menu_keyboard()
 
-@router.callback_query(F.data == "nav:crypto_center")
-async def crypto_center_entry(call: CallbackQuery, state: FSMContext):
-    """Точка входа в Крипто-Центр."""
-    await state.set_state(CryptoCenterStates.main_menu)
-    await call.message.edit_text(
-        CRYPTO_CENTER_TEXTS['main_menu'],
-        reply_markup=get_crypto_center_main_menu_keyboard()
-    )
-    await call.answer()
+    if isinstance(message, types.CallbackQuery):
+        await message.message.edit_text(text, reply_markup=keyboard)
+        await message.answer()
+    else:
+        await message.answer(text, reply_markup=keyboard)
 
-@router.callback_query(F.data == "cc_nav:main_menu")
-async def crypto_center_back_to_main(call: CallbackQuery, state: FSMContext):
-    """Возврат в главное меню Крипто-Центра."""
-    await crypto_center_entry(call, state)
 
-@router.callback_query(F.data == "cc_nav:guides_menu")
-async def crypto_center_guides_menu(call: CallbackQuery, state: FSMContext):
-    """Отображает меню гайдов."""
-    await state.set_state(CryptoCenterStates.viewing_guides_menu)
-    await call.message.edit_text(
-        CRYPTO_CENTER_TEXTS['guides_menu'],
-        reply_markup=get_crypto_center_guides_menu_keyboard()
-    )
-    await call.answer()
-
-# --- Лента новостей и майнинг-сигналы ---
-
-@router.callback_query(F.data == "cc_nav:feed")
-async def crypto_center_feed(call: CallbackQuery, state: FSMContext, crypto_center_service: CryptoCenterService):
-    """Отображает ленту новостей с AI-саммари."""
-    await state.set_state(CryptoCenterStates.viewing_feed)
-    await call.message.edit_text("⏳ AI анализирует свежие новости...")
-    feed_items = await crypto_center_service.get_live_feed_with_summary()
-    text = format_crypto_feed(feed_items)
-    await call.message.edit_text(text, reply_markup=get_live_feed_keyboard(), disable_web_page_preview=True)
-    await call.answer()
-
-@router.callback_query(F.data == "cc_nav:mining_signals")
-async def crypto_center_mining_signals(call: CallbackQuery, state: FSMContext, crypto_center_service: CryptoCenterService):
-    """Отображает майнинг-сигналы."""
-    await state.set_state(CryptoCenterStates.viewing_mining_signals)
-    await call.message.edit_text("⏳ AI анализирует майнинг-сигналы...")
-    signals = await crypto_center_service.generate_mining_alpha()
-    text = format_mining_signals(signals)
-    await call.message.edit_text(text, reply_markup=get_back_to_cc_menu_keyboard('guides_menu'), disable_web_page_preview=True)
-    await call.answer()
-
-# --- Список Airdrop'ов и детальный просмотр ---
-
-@router.callback_query(AirdropListPage.filter())
-async def airdrops_list_handler(call: CallbackQuery, callback_data: AirdropListPage, state: FSMContext, crypto_center_service: CryptoCenterService):
-    """Отображает список Airdrop'ов с пагинацией."""
-    await state.set_state(CryptoCenterStates.viewing_airdrops_list)
-    await call.message.edit_text("⏳ AI ищет Airdrop-возможности...")
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:list:"))
+async def airdrop_list_handler(callback: types.CallbackQuery, crypto_center_service: CryptoCenterService):
+    page = int(callback.data.split(":")[-1])
+    projects = await crypto_center_service.get_airdrop_alpha(callback.from_user.id)
     
-    airdrops = await crypto_center_service.generate_airdrop_alpha() # Получаем полный список
-    
-    if not airdrops:
-        await call.message.edit_text(
-            "😕 AI не нашел актуальных Airdrop-возможностей.",
-            reply_markup=get_back_to_cc_menu_keyboard('guides_menu')
-        )
-        return
-    
-    # Пагинация
-    page = callback_data.page
-    page_size = 5
-    total_pages = (len(airdrops) + page_size - 1) // page_size
-    paginated_airdrops = airdrops[(page-1)*page_size : page*page_size]
-    
-    await state.update_data(all_airdrops=airdrops) # Кэшируем полный список в FSM
-    
-    await call.message.edit_text(
-        CRYPTO_CENTER_TEXTS['airdrops_list'],
-        reply_markup=get_airdrops_list_keyboard(paginated_airdrops, page, total_pages)
-    )
-    await call.answer()
-
-@router.callback_query(AirdropDetails.filter())
-async def airdrop_details_handler(call: CallbackQuery, callback_data: AirdropDetails, state: FSMContext, crypto_center_service: CryptoCenterService):
-    """Отображает детальную информацию об Airdrop."""
-    fsm_data = await state.get_data()
-    all_airdrops = fsm_data.get('all_airdrops', [])
-    airdrop_id = callback_data.airdrop_id
-    
-    airdrop = next((a for a in all_airdrops if a['id'] == airdrop_id), None)
-    
-    if not airdrop:
-        await call.answer("❌ Проект не найден. Возможно, он уже не актуален.", show_alert=True)
-        return
-    
-    await state.set_state(CryptoCenterStates.viewing_airdrop_details)
-    user_progress = await crypto_center_service.get_user_progress(call.from_user.id, airdrop_id)
-    text = format_airdrop_details(airdrop)
-    keyboard = get_airdrop_details_keyboard(airdrop, user_progress)
-    await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
-    await call.answer()
-
-# --- Обработка действий пользователя (чеклист) ---
-
-@router.callback_query(AirdropTask.filter(), CryptoCenterStates.viewing_airdrop_details)
-async def toggle_task_handler(call: CallbackQuery, callback_data: AirdropTask, state: FSMContext, crypto_center_service: CryptoCenterService):
-    """Отмечает/снимает задачу в чеклисте."""
-    airdrop_id = callback_data.airdrop_id
-    task_index = callback_data.task_index
-
-    await crypto_center_service.toggle_task_status(call.from_user.id, airdrop_id, task_index)
-    
-    # Обновляем клавиатуру без перерисовки всего сообщения
-    fsm_data = await state.get_data()
-    all_airdrops = fsm_data.get('all_airdrops', [])
-    airdrop = next((a for a in all_airdrops if a['id'] == airdrop_id), None)
-
-    if not airdrop:
-        await call.answer("❌ Ошибка обновления.", show_alert=True)
+    if not projects:
+        text = "💎 <b>Airdrop Alpha</b>\n\nНа основе анализа новостей и вашего профиля, AI пока не нашел подходящих проектов. Загляните позже!"
+        keyboard = get_crypto_center_main_menu_keyboard()
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.answer()
         return
 
-    user_progress = await crypto_center_service.get_user_progress(call.from_user.id, airdrop_id)
-    new_keyboard = get_airdrop_details_keyboard(airdrop, user_progress)
+    total_pages = ceil(len(projects) / PAGE_SIZE)
+    start_index = page * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
     
-    try:
-        await call.message.edit_reply_markup(reply_markup=new_keyboard)
-        await call.answer("Статус задачи обновлен!")
-    except TelegramBadRequest as e:
-        logger.warning(f"Could not edit reply markup for toggle_task: {e}")
-        await call.answer("Статус обновлен, но не удалось обновить кнопки.")
+    text = "💎 <b>Airdrop Alpha (Персональная подборка)</b>\n\nНажмите на проект, чтобы увидеть детали и чек-лист задач."
+    keyboard = get_airdrop_list_keyboard(projects[start_index:end_index], page, total_pages)
+    
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:view:"))
+async def airdrop_view_handler(callback: types.CallbackQuery, crypto_center_service: CryptoCenterService):
+    project_id = callback.data.split(":")[-1]
+    projects = await crypto_center_service.get_airdrop_alpha(callback.from_user.id)
+    project = next((p for p in projects if p.id == project_id), None)
+
+    if not project:
+        await callback.answer("❌ Проект не найден. Возможно, он устарел.", show_alert=True)
+        return
+
+    completed_tasks = await crypto_center_service.get_user_progress(callback.from_user.id, project_id)
+    
+    text = (f"<b>{project.name}</b>\n\n"
+            f"<i>{project.description}</i>\n\n"
+            f"<b>Статус:</b> {project.status}\n\n"
+            "<b>Чек-лист для выполнения:</b>")
+    keyboard = get_airdrop_details_keyboard(project, completed_tasks)
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:task:"))
+async def airdrop_task_toggle_handler(callback: types.CallbackQuery, crypto_center_service: CryptoCenterService):
+    parts = callback.data.split(":")
+    project_id, task_index = parts[-2], int(parts[-1])
+    await crypto_center_service.toggle_task_status(callback.from_user.id, project_id, task_index)
+    await airdrop_view_handler(callback, crypto_center_service)
+
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:mining:list:"))
+async def mining_list_handler(callback: types.CallbackQuery, crypto_center_service: CryptoCenterService):
+    page = int(callback.data.split(":")[-1])
+    signals = await crypto_center_service.get_mining_alpha(callback.from_user.id)
+
+    if not signals:
+        text = "⚙️ <b>Mining Alpha</b>\n\nAI пока не нашел интересных возможностей для майнинга. Загляните позже!"
+        keyboard = get_crypto_center_main_menu_keyboard()
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        return
+
+    total_pages = ceil(len(signals) / PAGE_SIZE)
+    start_index = page * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    paginated_signals = signals[start_index:end_index]
+
+    text = "⚙️ <b>Mining Alpha (Персональная подборка)</b>\n\nСигналы и возможности, найденные AI на основе новостей:"
+    for signal in paginated_signals:
+        text += f"\n\n🔹 <b>{signal['name']}</b>\n{signal['description']}\n<i>Железо: {signal['hardware']}</i>"
+
+    keyboard = get_mining_alpha_keyboard(paginated_signals, page, total_pages)
+    await callback.message.edit_text(text, reply_markup=keyboard)
+    await callback.answer()
+
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:news:list:"))
+async def news_list_handler(callback: types.CallbackQuery, crypto_center_service: CryptoCenterService):
+    page = int(callback.data.split(":")[-1])
+    articles = await crypto_center_service.get_live_feed_with_summary()
+
+    if not articles:
+        text = "📰 <b>Live Лента</b>\n\nНовостей пока нет."
+        keyboard = get_crypto_center_main_menu_keyboard()
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        return
+
+    total_pages = ceil(len(articles) / PAGE_SIZE)
+    start_index = page * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    
+    text = "📰 <b>Live Лента (с AI-обзором)</b>\n"
+    for article in articles[start_index:end_index]:
+        text += f"\n\n<a href='{article.url}'><b>{article.title}</b></a>\n"
+        if article.ai_summary:
+            text += f"<i>AI-кратко: {article.ai_summary}</i>"
+        else:
+            text += f"<i>{article.body[:150]}...</i>"
+    
+    keyboard = get_news_feed_keyboard(articles, page, total_pages)
+    await callback.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
+    await callback.answer()
