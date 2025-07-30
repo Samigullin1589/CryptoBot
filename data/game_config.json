@@ -1,19 +1,20 @@
 {
-  "mining_duration_seconds": 28800,
-  "referral_bonus_amount": 50.0,
-  "default_electricity_tariff": "Домашний 💡",
+  "mining_duration_seconds": 3600,
+  "min_withdrawal_amount": 1000.0,
+  "market_commission_rate": 0.05,
+  "default_electricity_tariff": "Стандартный",
   "electricity_tariffs": {
-    "Домашний 💡": {
-      "cost_per_hour": 0.05,
+    "Стандартный": {
+      "cost_per_hour": 0.1,
       "unlock_price": 0
     },
-    "Промышленный 🏭": {
-      "cost_per_hour": 0.02,
-      "unlock_price": 200
+    "Льготный": {
+      "cost_per_hour": 0.07,
+      "unlock_price": 5000
     },
-    "Гидроэлектростанция 💧": {
-      "cost_per_hour": 0.01,
-      "unlock_price": 500
+    "Промышленный": {
+      "cost_per_hour": 0.04,
+      "unlock_price": 25000
     }
   }
 }
