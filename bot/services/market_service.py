@@ -1,7 +1,5 @@
 # =================================================================================
-# Файл: bot/services/market_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - АБСОЛЮТНО ПОЛНАЯ)
-# Описание: Полностью самодостаточный сервис для управления рынком
-# оборудования (ASIC), обеспечивающий атомарность операций и систему достижений.
+# Файл: bot/services/market_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ИСПРАВЛЕНА)
 # =================================================================================
 
 import json
@@ -13,7 +11,7 @@ from typing import List, Optional
 import redis.asyncio as redis
 from aiogram import Bot
 
-from bot.config.settings import AppSettings
+from bot.config.settings import Settings # <<< ИСПРАВЛЕНО ЗДЕСЬ
 from bot.utils.models import AsicMiner, MarketListing
 from bot.utils.lua_scripts import LuaScripts
 from bot.services.achievement_service import AchievementService
@@ -21,7 +19,6 @@ from bot.services.achievement_service import AchievementService
 logger = logging.getLogger(__name__)
 
 class _KeyFactory:
-    """Генератор ключей Redis, специфичных для рынка."""
     @staticmethod
     def user_hangar(user_id: int) -> str: return f"game:hangar:{user_id}"
     @staticmethod
@@ -32,11 +29,9 @@ class _KeyFactory:
     def market_listing_data(listing_id: str) -> str: return f"market:listing:{listing_id}"
 
 class AsicMarketService:
-    """Сервис, управляющий всеми операциями на рынке ASIC'ов."""
-
     def __init__(self,
                  redis_client: redis.Redis,
-                 settings: AppSettings,
+                 settings: Settings, # <<< ИСПРАВЛЕНО ЗДЕСЬ
                  achievement_service: AchievementService,
                  bot: Bot):
         self.redis = redis_client
@@ -49,7 +44,6 @@ class AsicMarketService:
         self.lua_buy_item = self.redis.script_load(LuaScripts.BUY_ITEM_FROM_MARKET)
 
     async def list_asic_for_sale(self, user_id: int, asic_id: str, price: float) -> Optional[str]:
-        """Выставляет ASIC из ангара пользователя на продажу. Операция атомарна."""
         if price <= 0:
             return None
 
@@ -69,7 +63,6 @@ class AsicMarketService:
             return None
 
     async def cancel_listing(self, user_id: int, listing_id: str) -> bool:
-        """Снимает лот с продажи и возвращает ASIC в ангар владельца. Атомарно."""
         keys = [self.keys.market_listing_data(listing_id), self.keys.market_listings_by_price(), self.keys.user_hangar(user_id)]
         args = [listing_id, user_id]
         
@@ -83,7 +76,6 @@ class AsicMarketService:
             return False
 
     async def buy_asic(self, buyer_id: int, listing_id: str) -> str:
-        """Покупает ASIC с рынка и проверяет достижение для продавца."""
         commission_rate = self.settings.game.market_commission_rate
         
         seller_id_bytes = await self.redis.hget(self.keys.market_listing_data(listing_id), "seller_id")
@@ -96,7 +88,7 @@ class AsicMarketService:
         ]
         args = [listing_id, buyer_id, commission_rate]
         
-        result_code = await self.redis.evalsha(self.lua_buy_item, len(keys), *args)
+        result_code = await self.redis.evalsha(self.lua_buy_item, len(keys), *keys, *args)
 
         if result_code == 1:
             logger.info(f"User {buyer_id} successfully bought listing {listing_id}.")
@@ -123,7 +115,6 @@ class AsicMarketService:
             return "❌ Произошла неизвестная ошибка при покупке."
             
     async def get_market_listings(self, offset: int = 0, count: int = 20) -> List[MarketListing]:
-        """Получает список лотов с рынка, отсортированных по цене."""
         listing_ids = await self.redis.zrange(self.keys.market_listings_by_price(), offset, offset + count - 1)
         if not listing_ids:
             return []
@@ -137,7 +128,6 @@ class AsicMarketService:
         market_listings = []
         for data in listings_data:
             if data:
-                # Преобразуем bytes в str для Pydantic
                 str_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in data.items()}
                 market_listings.append(MarketListing(**str_data))
         
