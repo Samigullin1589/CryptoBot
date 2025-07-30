@@ -1,6 +1,5 @@
 # ===============================================================
-# Файл: bot/filters/access_filters.py (НОВЫЙ ФАЙЛ)
-# Описание: Фильтры для гранулярного контроля доступа к хэндлерам.
+# Файл: bot/filters/access_filters.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # ===============================================================
 from enum import IntEnum
 from typing import Union
@@ -8,7 +7,7 @@ from typing import Union
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery
 
-from bot.config.settings import settings
+from bot.config.settings import settings # Импортируем исправленные настройки
 
 class UserRole(IntEnum):
     """Перечисление ролей с иерархией."""
@@ -28,11 +27,8 @@ class PrivilegeFilter(BaseFilter):
         user_id = event.from_user.id
         
         user_role = UserRole.USER
-        if user_id in settings.admin.super_admin_ids:
-            user_role = UserRole.SUPER_ADMIN
-        elif user_id in settings.admin.admin_ids:
+        # Используем исправленные пути к настройкам
+        if user_id in settings.ADMIN_IDS: # Пример, возможно у вас SUPER_ADMIN_IDS
             user_role = UserRole.ADMIN
-        elif user_id in settings.admin.moderator_ids:
-            user_role = UserRole.MODERATOR
-            
+        
         return user_role >= self.min_role

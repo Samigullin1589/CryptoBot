@@ -1,66 +1,21 @@
-# ===============================================================
-# Файл: render.yaml (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Конфигурация для развертывания бота и его базы
-# данных Redis на платформе Render.com.
-# ===============================================================
+envVars:
+  - key: PYTHON_VERSION
+    value: '3.11' # Или ваша версия
+  - key: REDIS_URL
+    fromService:
+      type: redis
+      name: cryptobot-redis
+      property: connectionString
 
-services:
-  # 1. База данных Redis для хранения всех данных бота
-  - type: redis
-    name: cryptobot-redis
-    region: frankfurt # Европейский регион для лучшей производительности
-    plan: free # Бесплатного плана достаточно для старта
-    ipAllowList: [] # Разрешить доступ отовсюду (Render защищает внутреннюю сеть)
-    maxmemoryPolicy: allkeys-lru # Стратегия вытеснения данных при заполнении памяти
-
-  # 2. Основное приложение бота (воркер)
-  - type: worker
-    name: cryptobot-worker
-    region: frankfurt
-    runtime: python
-    plan: starter
-    
-    # Команда для установки зависимостей при каждом развертывании
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    
-    # Команда для запуска основного файла бота
-    startCommand: "python -m bot.main"
-    
-    envVars:
-      # --- Системные переменные ---
-      - key: PYTHON_VERSION
-        value: '3.11.5'
-      
-      # --- Переменные для подключения к сервисам ---
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: cryptobot-redis
-          property: connectionString
-
-      # --- Ключи API и настройки бота ---
-      # Эти значения нужно будет заполнить в панели управления Render
-      # в разделе "Environment".
-      - key: BOT_TOKEN
-        value: "" 
-      - key: ADMIN_CHAT_ID
-        value: ""
-      - key: ADMIN_USER_IDS
-        value: "" # Пример: "12345,67890"
-      - key: NEWS_CHAT_ID
-        value: ""
-      
-      # --- API ключи для внешних сервисов ---
-      - key: GEMINI_API_KEY
-        value: ""
-      - key: OPENAI_API_KEY
-        value: ""
-      - key: CMC_API_KEY
-        value: ""
-      - key: CRYPTOCOMPARE_API_KEY
-        value: ""
-      - key: BLOCKCHAIR_API_KEY
-        value: "" # Необязательно, но рекомендуется
-      - key: GLASSNODE_API_KEY
-        value: "" # Необязательно, но рекомендуется
-
+  # --- Ключи API и настройки бота (теперь "плоские") ---
+  # Эти значения вы уже заполнили в панели управления Render
+  - key: BOT_TOKEN
+    sync: false 
+  - key: GEMINI_API_KEY
+    sync: false
+  - key: ADMIN_IDS
+    sync: false
+  - key: ADMIN_CHAT_ID
+    sync: false
+  - key: NEWS_CHAT_ID
+    sync: false
