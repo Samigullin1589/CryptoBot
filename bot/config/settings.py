@@ -1,15 +1,15 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ 3)
-# Описание: Финальная, "плоская" структура конфигурации, на 100%
-# совместимая с переменными окружения пользователя в Render.
+# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ 4)
+# Описание: Финальная конфигурация, которая корректно обрабатывает
+# переменные окружения в виде comma-separated-strings.
 # =================================================================================
 
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Any
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -40,13 +40,28 @@ class Settings(BaseSettings):
         extra='ignore' 
     )
 
-    # --- Переменные из Environment (имена соответствуют Render) ---
+    # --- Переменные из Environment ---
     BOT_TOKEN: SecretStr
     GEMINI_API_KEY: SecretStr
-    ADMIN_USER_IDS: List[int] # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
+    ADMIN_USER_IDS: List[int] # Поле остается List[int]
     ADMIN_CHAT_ID: int
     NEWS_CHAT_ID: int
     REDIS_URL: str
+
+    # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
+    @field_validator('ADMIN_USER_IDS', mode='before')
+    @classmethod
+    def parse_comma_separated_ints(cls, v: Any) -> List[int]:
+        """
+        Этот валидатор преобразует строку "123,456" в список [123, 456].
+        Именно это решает ошибку JSONDecodeError.
+        """
+        if isinstance(v, str):
+            # Разделяем строку по запятым, убираем пробелы и преобразуем в int
+            return [int(item.strip()) for item in v.split(',')]
+        # Если это уже список (например, из другого источника), оставляем как есть
+        return v
+    # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
     # --- Настройки, загружаемые из JSON-файлов ---
     game: GameSettings = Field(default_factory=lambda: GameSettings(**json.load(open(BASE_DIR / "data/game_config.json"))))
