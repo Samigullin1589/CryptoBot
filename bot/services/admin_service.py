@@ -1,14 +1,12 @@
 # =================================================================================
-# Файл: bot/services/admin_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ПОЛНАЯ И ОКОНЧАТЕЛЬНАЯ)
-# Описание: Полностью самодостаточный сервис для всех административных задач.
+# Файл: bot/services/admin_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ИСПРАВЛЕНА)
 # =================================================================================
-
 import logging
 import redis.asyncio as redis
-from typing import Optional, List
+from typing import Optional
 
 from aiogram import Bot
-from bot.config.settings import AppSettings
+from bot.config.settings import Settings # <<< ИСПРАВЛЕНО ЗДЕСЬ
 from bot.services.mining_game_service import _KeyFactory as GameKeyFactory
 
 logger = logging.getLogger(__name__)
@@ -16,11 +14,11 @@ logger = logging.getLogger(__name__)
 class AdminService:
     """Сервис, инкапсулирующий все административные функции."""
     
-    def __init__(self, redis_client: redis.Redis, settings: AppSettings, bot: Bot):
+    def __init__(self, redis_client: redis.Redis, settings: Settings, bot: Bot): # <<< ИСПРАВЛЕНО ЗДЕСЬ
         self.redis = redis_client
         self.settings = settings
         self.bot = bot
-        self.admin_ids = settings.telegram.admin_ids
+        self.admin_ids = settings.admin_ids_list # Используем правильное свойство
         self.game_keys = GameKeyFactory
 
     async def notify_admins(self, message: str, **kwargs):
@@ -53,17 +51,12 @@ class AdminService:
         }
 
     async def change_user_game_balance(self, user_id: int, amount: float) -> Optional[float]:
-        """
-        Изменяет игровой баланс пользователя на указанную сумму.
-        Может быть положительной (начисление) или отрицательной (списание).
-        Возвращает новый баланс пользователя или None, если профиль не найден.
-        """
+        """Изменяет игровой баланс пользователя на указанную сумму."""
         profile_key = self.game_keys.user_game_profile(user_id)
         if not await self.redis.exists(profile_key):
             return None
         
         new_balance = await self.redis.hincrbyfloat(profile_key, "balance", amount)
-        # Также корректируем глобальный баланс
         await self.redis.hincrbyfloat(self.game_keys.global_stats(), "total_balance", amount)
         
         logger.info(f"Admin changed game balance for user {user_id} by {amount}. New balance: {new_balance}")
