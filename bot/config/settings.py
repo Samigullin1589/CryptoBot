@@ -1,8 +1,9 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ 2)
 # Описание: Финальная, "плоская" структура конфигурации, совместимая с Render.
 # =================================================================================
 
+import json  # <<< ВОТ ИСПРАВЛЕНИЕ
 import logging
 from pathlib import Path
 from typing import List, Dict
@@ -25,6 +26,11 @@ class GameSettings(BaseModel):
     default_electricity_tariff: str
     electricity_tariffs: Dict[str, GameTariff]
 
+class CryptoCenterSettings(BaseModel):
+    news_context_limit: int
+    alpha_cache_ttl_seconds: int
+    feed_cache_ttl_seconds: int
+
 # --- Главный класс настроек ---
 
 class Settings(BaseSettings):
@@ -35,7 +41,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / '.env',
         env_file_encoding='utf-8',
-        extra='ignore' # Игнорировать лишние переменные окружения
+        extra='ignore' 
     )
 
     # --- Переменные из Environment ---
@@ -44,9 +50,11 @@ class Settings(BaseSettings):
     ADMIN_IDS: List[int]
     ADMIN_CHAT_ID: int
     NEWS_CHAT_ID: int
+    REDIS_URL: str
 
     # --- Настройки, загружаемые из JSON-файлов ---
     game: GameSettings = Field(default_factory=lambda: GameSettings(**json.load(open(BASE_DIR / "data/game_config.json"))))
+    crypto_center: CryptoCenterSettings = Field(default_factory=lambda: CryptoCenterSettings(**json.load(open(BASE_DIR / "data/crypto_center_config.json"))))
 
 # Глобальный экземпляр настроек
 settings = Settings()
