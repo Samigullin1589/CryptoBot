@@ -1,0 +1,6 @@
+{
+  "urls": {
+    "coinmarketcap_new_listings": "https://coinmarketcap.com/new/",
+    "whattomine_asics": "https://whattomine.com/asics"
+  }
+}

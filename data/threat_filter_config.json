@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "spam_keywords": [
+    "порно", "проститутки", "интим", "наркотики", "закладки", "кладмен",
+    "ставки на спорт", "казино", "раскрутка счета", "договорные матчи",
+    "заработок в интернете", "легкие деньги", "обналичка", "дропы"
+  ],
+  "external_link_patterns": [
+    "t.me/joinchat",
+    "t.me/+",
+    "http://",
+    "https://"
+  ],
+  "settings": {
+    "block_all_external_links": true,
+    "block_forwards_from_channels": true
+  }
+}
