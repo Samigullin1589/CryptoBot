@@ -1,0 +1,8 @@
+{
+  "default_model_name": "gemini-1.5-pro-latest",
+  "flash_model_name": "gemini-1.5-flash-latest",
+  "max_retries": 3,
+  "initial_retry_delay": 1.5,
+  "request_timeout": 90,
+  "default_temperature": 0.6
+}

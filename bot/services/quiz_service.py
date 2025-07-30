@@ -1,79 +1,63 @@
 # ===============================================================
-# Файл: bot/services/quiz_service.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: "Тонкий" сервис-оркестратор для управления викториной.
-# Делегирует генерацию вопросов AIContentService и использует
-# локальный файл как резервный источник.
+# Файл: bot/services/quiz_service.py (НОВЫЙ ФАЙЛ)
+# Описание: Сервис для генерации вопросов для крипто-викторины.
 # ===============================================================
-import json
 import logging
 import random
-from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple, List, Optional, Dict, Any
 
 from bot.services.ai_content_service import AIContentService
-from bot.utils.models import QuizQuestion
+from bot.texts.ai_prompts import get_quiz_question_prompt
 
 logger = logging.getLogger(__name__)
 
 class QuizService:
     """
-    Сервис для управления логикой крипто-викторины.
+    Генерирует вопросы для викторины, используя AI как основной
+    источник и локальный JSON как резервный.
     """
-    def __init__(self, ai_content_service: AIContentService):
-        """
-        Инициализирует сервис.
+    def __init__(self, ai_content_service: AIContentService, fallback_questions: List[Dict[str, Any]]):
+        self.ai_service = ai_content_service
+        self.fallback_questions = fallback_questions
 
-        :param ai_content_service: Сервис для генерации контента с помощью AI.
+    async def get_random_question(self) -> Optional[Tuple[str, List[str], int]]:
         """
-        self.ai_content_service = ai_content_service
-        self.fallback_questions = self._load_fallback_questions()
-        logger.info("QuizService инициализирован.")
+        Возвращает вопрос, варианты ответа и ID правильного ответа.
+        """
+        logger.info("Attempting to generate a quiz question via AI...")
+        
+        # 1. Попытка сгенерировать вопрос через AI
+        prompt = get_quiz_question_prompt()
+        json_schema = {
+            "type": "OBJECT",
+            "properties": {
+                "question": {"type": "STRING"},
+                "options": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "correct_option_index": {"type": "INTEGER"}
+            },
+            "required": ["question", "options", "correct_option_index"]
+        }
+        
+        ai_result = await self.ai_service.generate_structured_content(prompt, json_schema)
+        
+        if ai_result and all(k in ai_result for k in json_schema['required']):
+            options = ai_result['options']
+            correct_index = ai_result['correct_option_index']
+            # Проверяем валидность ответа от AI
+            if len(options) == 4 and 0 <= correct_index < 4:
+                logger.info("Successfully generated quiz question via AI.")
+                return ai_result['question'], options, correct_index
 
-    def _load_fallback_questions(self) -> list[QuizQuestion]:
-        """Загружает резервные вопросы из локального JSON файла."""
-        try:
-            # Этот путь будет работать независимо от того, откуда запускается бот.
-            # bot/services/quiz_service.py -> bot/services -> bot -> корень -> data
-            file_path = Path(__file__).parent.parent.parent / "data" / "fallback_quiz.json"
+        logger.warning("AI failed to generate a valid quiz question. Using fallback.")
+        
+        # 2. Если AI не справился, используем резервный список
+        if not self.fallback_questions:
+            logger.error("AI failed and no fallback questions are available.")
+            return None
             
-            with open(file_path, "r", encoding="utf-8") as f:
-                questions_data = json.load(f)
-                
-            validated_questions = [QuizQuestion.model_validate(q) for q in questions_data]
-            logger.info(f"Успешно загружено {len(validated_questions)} резервных вопросов для викторины.")
-            return validated_questions
-            
-        except (FileNotFoundError, json.JSONDecodeError, TypeError) as e:
-            logger.error(f"Не удалось загрузить резервные вопросы для викторины: {e}")
-            return []
-
-    async def get_random_question(self) -> Tuple[str, list[str], int, Optional[str]]:
-        """
-        Главный метод. Пытается получить вопрос от AI, а в случае неудачи — из файла.
-        """
-        # Попытка №1: Сгенерировать через AI
-        logger.info("Попытка сгенерировать вопрос для викторины через AIContentService...")
-        ai_quiz = await self.ai_content_service.generate_quiz_question()
-        if ai_quiz:
-            logger.info("Вопрос для викторины успешно сгенерирован AI.")
-            return (
-                ai_quiz.question,
-                ai_quiz.options,
-                ai_quiz.correct_option_index,
-                ai_quiz.explanation
-            )
-
-        # Попытка №2: Использовать резервный вопрос из файла
-        logger.warning("AI не смог сгенерировать вопрос, используется резервный из файла.")
-        if self.fallback_questions:
-            fallback_quiz = random.choice(self.fallback_questions)
-            return (
-                fallback_quiz.question,
-                fallback_quiz.options,
-                fallback_quiz.correct_option_index,
-                fallback_quiz.explanation
-            )
-            
-        # Если ничего не сработало
-        logger.error("Нет доступных вопросов для викторины ни от AI, ни из резервного файла.")
-        return ("Викторина временно недоступна.", ["Попробуйте позже"], 0, None)
+        question_data = random.choice(self.fallback_questions)
+        return (
+            question_data.get("question"),
+            question_data.get("options"),
+            question_data.get("correct_option_index")
+        )

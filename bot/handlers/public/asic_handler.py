@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/public/asic_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Обработчики для команд, связанных с ASIC-майнерами,
-# включая топ, калькулятор и паспорт устройства.
+# Файл: bot/handlers/public/asic_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ОКОНЧАТЕЛЬНАЯ)
+# Описание: "Тонкий" хэндлер для раздела ASIC. Делегирует всю
+# логику сервисам и управляет FSM для калькулятора.
 # ===============================================================
 import logging
 from datetime import datetime, timezone
@@ -15,135 +15,110 @@ from bot.services.asic_service import AsicService
 from bot.services.user_service import UserService
 from bot.states.asic_states import AsicExplorerStates
 from bot.keyboards.asic_keyboards import get_top_asics_keyboard, get_asic_passport_keyboard
-from bot.utils.models import AsicMiner
-
-# --- ИСПРАВЛЕНИЕ: Импорт удален, так как функция будет локальной ---
-# from bot.utils.formatters import format_asic_passport
+from bot.utils.formatters import format_asic_passport
 
 logger = logging.getLogger(__name__)
 router = Router(name="asic_handler")
 
-# --- ЛОКАЛЬНАЯ ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
-
-def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
-    """
-    Формирует красивый текстовый паспорт для ASIC с расчетом чистой прибыли.
-    Эта функция теперь является локальной для данного хэндлера.
-    """
-    power = asic.power or 0
-    net_profit = asic.profitability
-
-    # Считаем "грязную" прибыль, прибавляя обратно стоимость электричества
-    power_kwh_per_day = (power / 1000) * 24
-    daily_cost = power_kwh_per_day * electricity_cost
-    gross_profit_from_net = net_profit + daily_cost
-
-    specs_map = {
-        "algorithm": "Алгоритм", "hashrate": "Хешрейт",
-        "power": "Потребление", "efficiency": "Эффективность"
-    }
-    
-    specs_list = []
-    for key, rus_name in specs_map.items():
-        value = getattr(asic, key, None)
-        if value and value != "N/A":
-            unit = " Вт" if key == "power" else ""
-            specs_list.append(f" ▫️ <b>{rus_name}:</b> {value}{unit}")
-
-    specs_text = "\n".join(specs_list)
-
-    profit_text = (
-        f" ▪️ <b>Доход (грязными):</b> ${gross_profit_from_net:.2f}/день\n"
-        f" ▪️ <b>Доход (чистыми):</b> ${net_profit:.2f}/день\n"
-        f"    (при цене э/э ${electricity_cost:.4f}/кВт·ч)"
-    )
-
-    return (
-        f"📋 <b>Паспорт устройства: {asic.name}</b>\n\n"
-        f"<b><u>Экономика:</u></b>\n{profit_text}\n\n"
-        f"<b><u>Тех. характеристики:</u></b>\n{specs_text}\n"
-    )
-
 # --- ОСНОВНЫЕ ОБРАБОТЧИКИ ---
 
-async def show_top_asics_page(
-    call: CallbackQuery,
-    state: FSMContext,
-    asic_service: AsicService,
-    user_service: UserService
-):
-    """Отображает страницу с топом ASIC-майнеров."""
-    user_id = call.from_user.id
-    current_state = await state.get_data()
-    page = current_state.get("page", 1)
-    sort_by = current_state.get("sort_by", "profitability")
+async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, asic_service: AsicService, user_service: UserService):
+    """Отображает страницу с топом ASIC-майнеров, используя FSM для хранения страницы."""
+    user_id = update.from_user.id
+    fsm_data = await state.get_data()
+    page = fsm_data.get("page", 1)
 
-    electricity_cost = await user_service.get_user_electricity_cost(user_id)
+    # Получаем персональную цену э/э
+    user_profile = await user_service.get_or_create_user(user_id, update.from_user.full_name, update.from_user.username)
+    electricity_cost = user_profile.electricity_cost
     
-    top_miners, last_update_time = await asic_service.get_top_asics(
-        sort_by=sort_by,
-        electricity_cost=electricity_cost
-    )
+    # Сервис сам рассчитывает чистую прибыль
+    top_miners, last_update_time = await asic_service.get_top_asics(electricity_cost)
 
     if not top_miners:
-        await call.message.edit_text(
-            "😕 Не удалось получить данные о майнерах. База данных пуста или источники недоступны. Попробуйте позже."
-        )
+        error_text = "😕 Не удалось получить данные о майнерах. База данных пуста или источники недоступны. Попробуйте позже."
+        if isinstance(update, Message): await update.answer(error_text)
+        else: await update.message.edit_text(error_text)
         return
 
-    now = datetime.now(timezone.utc)
-    minutes_ago = int((now - last_update_time).total_seconds() / 60) if last_update_time else 0
+    minutes_ago = int((datetime.now(timezone.utc) - last_update_time).total_seconds() / 60) if last_update_time else "N/A"
     
-    await call.message.edit_text(
-        f"🏆 <b>Топ доходных ASIC</b> (сортировка: {sort_by})\n"
-        f"<i>Данные обновлены {minutes_ago} минут назад.</i>",
-        reply_markup=get_top_asics_keyboard(top_miners, page, sort_by)
-    )
-
-@router.callback_query(F.data.startswith("top_asics:"))
-async def top_asics_navigator(
-    call: CallbackQuery,
-    state: FSMContext,
-    asic_service: AsicService,
-    user_service: UserService
-):
-    """Обрабатывает навигацию по меню топа ASIC."""
-    await call.answer()
-    action, value1, value2 = call.data.split(":")[1:]
+    text = (f"🏆 <b>Топ доходных ASIC</b>\n"
+            f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago} мин. назад.</i>")
     
-    if action == "page":
-        await state.update_data(page=int(value1), sort_by=value2)
-    elif action == "sort":
-        await state.update_data(page=1, sort_by=value1)
+    keyboard = get_top_asics_keyboard(top_miners, page)
 
+    if isinstance(update, Message):
+        await update.answer(text, reply_markup=keyboard)
+    else:
+        await update.message.edit_text(text, reply_markup=keyboard)
+
+@router.message(F.text == "⚙️ Топ ASIC")
+@router.callback_query(F.data == "nav:asics")
+async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, asic_service: AsicService, user_service: UserService):
+    """Входная точка для просмотра топа ASIC."""
     await state.set_state(AsicExplorerStates.showing_top)
+    await state.update_data(page=1)
+    if isinstance(update, CallbackQuery): await update.answer()
+    await show_top_asics_page(update, state, asic_service, user_service)
+
+@router.callback_query(F.data.startswith("asic_page:"), AsicExplorerStates.showing_top)
+async def top_asics_paginator(call: CallbackQuery, state: FSMContext, asic_service: AsicService, user_service: UserService):
+    """Обрабатывает пагинацию в меню топа ASIC."""
+    page = int(call.data.split(":")[1])
+    await state.update_data(page=page)
+    await call.answer()
     await show_top_asics_page(call, state, asic_service, user_service)
 
-@router.callback_query(F.data.startswith("asic_passport:"))
-async def asic_passport_handler(
-    call: CallbackQuery,
-    state: FSMContext,
-    asic_service: AsicService,
-    user_service: UserService
-):
+@router.callback_query(F.data.startswith("asic_passport:"), AsicExplorerStates.showing_top)
+async def asic_passport_handler(call: CallbackQuery, state: FSMContext, asic_service: AsicService, user_service: UserService):
     """Отображает паспорт ASIC-майнера."""
     await call.answer()
-    asic_name = call.data.split(":", 1)[1]
+    normalized_name = call.data.split(":", 1)[1]
     
-    asic = await asic_service.find_asic_by_name(asic_name)
+    fsm_data = await state.get_data()
+    page = fsm_data.get("page", 1)
+
+    user_profile = await user_service.get_user_profile(call.from_user.id)
+    asic = await asic_service.find_asic_by_normalized_name(normalized_name, user_profile.electricity_cost)
+    
     if not asic:
         await call.answer("😕 Модель не найдена в базе.", show_alert=True)
         return
-        
-    electricity_cost = await user_service.get_user_electricity_cost(call.from_user.id)
-    
-    # Пересчитываем 'чистую' прибыльность для паспорта
-    asic.profitability = AsicService.calculate_net_profit(
-        asic.profitability, asic.power or 0, electricity_cost
+
+    await state.set_state(AsicExplorerStates.showing_passport)
+    text = format_asic_passport(asic, user_profile.electricity_cost)
+    await call.message.edit_text(text, reply_markup=get_asic_passport_keyboard(page))
+
+# --- Логика калькулятора ---
+
+@router.callback_query(F.data == "asic_action:set_cost", AsicExplorerStates.showing_top)
+async def prompt_for_electricity_cost(call: CallbackQuery, state: FSMContext):
+    """Запрашивает у пользователя стоимость электроэнергии."""
+    await state.set_state(AsicExplorerStates.prompt_electricity_cost)
+    await call.answer()
+    await call.message.edit_text(
+        "💡 <b>Введите стоимость 1 кВт·ч в USD.</b>\n\n"
+        "Например: <code>0.05</code> (это 5 центов). "
+        "Эта цена будет сохранена в вашем профиле для всех будущих расчетов.",
+        reply_markup=None
     )
 
-    text = format_asic_passport(asic, electricity_cost)
-    await call.message.edit_text(
-        text,
-        reply_markup=get_asic_passport_keyboard(page=1, sort_by="profitability")
-    )
+@router.message(AsicExplorerStates.prompt_electricity_cost)
+async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService, user_service: UserService):
+    """Обрабатывает введенную стоимость и обновляет список."""
+    try:
+        cost_str = message.text.replace(',', '.').strip()
+        cost = float(cost_str)
+        if not (0 <= cost < 1):
+            raise ValueError("Cost must be a positive number less than 1.")
+    except (ValueError, TypeError):
+        await message.reply("❌ <b>Ошибка.</b> Введите корректное число, например: <code>0.05</code>")
+        return
+
+    await user_service.set_user_electricity_cost(message.from_user.id, cost)
+    await message.answer(f"✅ Ваша цена электроэнергии <b>${cost:.4f}/кВт·ч</b> сохранена! Пересчитываю топ...")
+    
+    await state.set_state(AsicExplorerStates.showing_top)
+    # Используем message как update, чтобы отправить новое сообщение со списком
+    await show_top_asics_page(message, state, asic_service, user_service)

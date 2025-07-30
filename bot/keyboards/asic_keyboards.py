@@ -1,65 +1,44 @@
 # ===============================================================
-# Файл: bot/keyboards/asic_keyboards.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Функции для создания инлайн-клавиатур, связанных
-# с просмотром и выбором ASIC-майнеров.
+# Файл: bot/keyboards/asic_keyboards.py (НОВЫЙ ФАЙЛ)
+# Описание: Генераторы клавиатур для раздела ASIC-майнеров.
 # ===============================================================
+
 from typing import List
-from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardMarkup
+
 from bot.utils.models import AsicMiner
+from bot.utils.text_utils import normalize_asic_name
 
-ITEMS_PER_PAGE = 8
+PAGE_SIZE = 5
 
-def get_top_asics_keyboard(asics: List[AsicMiner], page: int, sort_by: str) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру для навигации по списку топ ASIC-майнеров.
-    Включает пагинацию и кнопки сортировки.
-    """
+def get_top_asics_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    
-    start_index = (page - 1) * ITEMS_PER_PAGE
-    end_index = start_index + ITEMS_PER_PAGE
-    
-    # Кнопки для каждого ASIC'а на странице
-    for asic in asics[start_index:end_index]:
+    start_offset = (page - 1) * PAGE_SIZE
+    end_offset = start_offset + PAGE_SIZE
+
+    for asic in asics[start_offset:end_offset]:
+        asic_id = normalize_asic_name(asic.name)
         builder.button(
-            text=f"{asic.name} (${asic.profitability:.2f}/день)",
-            callback_data=f"asic_passport:{asic.name}"
+            text=f"{asic.name} - ${asic.net_profit:.2f}/день",
+            callback_data=f"asic_passport:{asic_id}"
         )
-    builder.adjust(1)
     
-    # Кнопки пагинации
     nav_row = []
     if page > 1:
-        nav_row.append(builder.button(text="◀️ Пред.", callback_data=f"top_asics:page:{page - 1}:{sort_by}"))
-    if end_index < len(asics):
-        nav_row.append(builder.button(text="След. ▶️", callback_data=f"top_asics:page:{page + 1}:{sort_by}"))
+        nav_row.append(builder.button(text="⬅️ Назад", callback_data=f"asic_page:{page - 1}"))
+    if end_offset < len(asics):
+        nav_row.append(builder.button(text="Вперед ➡️", callback_data=f"asic_page:{page + 1}"))
     
-    if nav_row:
-        builder.row(*nav_row)
-
-    # Кнопки сортировки
-    sort_profit_text = "✅ По доходности" if sort_by == "profitability" else "По доходности"
-    sort_eff_text = "✅ По эффективности" if sort_by == "efficiency" else "По эффективности"
-    
+    builder.row(*nav_row)
     builder.row(
-        builder.button(text=sort_profit_text, callback_data="top_asics:sort:profitability:0"),
-        builder.button(text=sort_eff_text, callback_data="top_asics:sort:efficiency:0")
+        builder.button(text="💡 Указать цену э/э", callback_data="asic_action:set_cost"),
+        builder.button(text="⬅️ В меню", callback_data="nav:main_menu")
     )
-    
-    # Кнопка возврата в главное меню
-    builder.row(builder.button(text="⬅️ Назад в главное меню", callback_data="nav:main_menu"))
-    
+    builder.adjust(1)
     return builder.as_markup()
 
-def get_asic_passport_keyboard(page: int, sort_by: str) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру для экрана "паспорта" ASIC.
-    Основная функция - возврат к списку топа.
-    """
+def get_asic_passport_keyboard(page: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(
-        text="⬅️ Назад к списку",
-        callback_data=f"top_asics:page:{page}:{sort_by}"
-    )
+    builder.button(text="⬅️ Назад к списку", callback_data=f"asic_page:{page}")
     return builder.as_markup()

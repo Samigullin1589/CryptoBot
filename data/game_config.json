@@ -1,0 +1,19 @@
+{
+  "mining_duration_seconds": 28800,
+  "referral_bonus_amount": 50.0,
+  "default_electricity_tariff": "Домашний 💡",
+  "electricity_tariffs": {
+    "Домашний 💡": {
+      "cost_per_hour": 0.05,
+      "unlock_price": 0
+    },
+    "Промышленный 🏭": {
+      "cost_per_hour": 0.02,
+      "unlock_price": 200
+    },
+    "Гидроэлектростанция 💧": {
+      "cost_per_hour": 0.01,
+      "unlock_price": 500
+    }
+  }
+}

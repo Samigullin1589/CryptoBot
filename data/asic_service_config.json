@@ -1,0 +1,11 @@
+{
+  "specs_cache_lifetime_hours": 12,
+  "merge_score_cutoff": 85,
+  "enrich_score_cutoff": 90,
+  "search_score_cutoff": 80,
+  "cache_key_asics_sorted_set": "asics:sorted_by_profit",
+  "cache_key_asic_hash_prefix": "asic",
+  "last_update_key": "asics:last_update_ts",
+  "update_lock_key": "lock:asics_update",
+  "update_lock_timeout_seconds": 300
+}

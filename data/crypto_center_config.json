@@ -1,0 +1,5 @@
+{
+  "alpha_cache_ttl_seconds": 14400,
+  "feed_cache_ttl_seconds": 900,
+  "news_context_limit": 20
+}

@@ -1,0 +1,7 @@
+{
+  "trust_score_high_threshold": 150,
+  "trust_score_low_threshold": 50,
+  "rate_limit_high_trust": 0.5,
+  "rate_limit_normal": 1.0,
+  "rate_limit_low_trust": 2.5
+}

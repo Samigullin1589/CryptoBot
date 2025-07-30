@@ -1,0 +1,4 @@
+{
+  "news_limit_per_source": 5,
+  "deduplication_ttl_seconds": 86400
+}

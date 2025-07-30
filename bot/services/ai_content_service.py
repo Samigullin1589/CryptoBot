@@ -1,118 +1,109 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (НОВЫЙ ФАЙЛ)
-# Описание: Централизованный сервис для всех взаимодействий
-# с генеративными AI моделями (Gemini). Обеспечивает
-# отказоустойчивость, гибкую конфигурацию и чистоту кода.
+# Файл: bot/services/ai_content_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Описание: Сервис для взаимодействий с AI, использующий официальный SDK
+# и декларативные повторные запросы через 'backoff'.
 # ===============================================================
 
-import asyncio
-import json
 import logging
 from typing import Dict, Any, List, Optional
 
-import aiohttp
-from bot.config.settings import settings
+import backoff
+import google.generativeai as genai
+from google.generativeai.types import GenerationConfig, ContentDict
+from google.api_core import exceptions as google_exceptions
+
+from bot.config.settings import AIConfig
+from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
 
 logger = logging.getLogger(__name__)
 
-# ПРИМЕЧАНИЕ: В реальном проекте этот класс настроек должен быть
-# частью основного класса настроек в bot/config/settings.py
-class AIContentSettings:
-    gemini_api_key: str = settings.api_keys.gemini_api_key
-    model_name: str = "gemini-1.5-pro-latest"
-    flash_model_name: str = "gemini-1.5-flash-latest" # для простых задач
-    max_retries: int = 3
-    initial_retry_delay: float = 1.5
-    request_timeout: int = 90
+# --- УЛУЧШЕНИЕ: Используем backoff для декларативных ретраев ---
+# Определяем ошибки, при которых стоит повторять запрос
+RETRYABLE_EXCEPTIONS = (
+    google_exceptions.ResourceExhausted,  # 429 - Квоты исчерпаны
+    google_exceptions.ServiceUnavailable, # 503 - Сервис недоступен
+    google_exceptions.InternalServerError,  # 500 - Внутренняя ошибка сервера
+    google_exceptions.DeadlineExceeded,   # Таймаут
+)
 
 class AIContentService:
-    """
-    Центральный сервис для генерации контента с помощью AI.
-    Инкапсулирует логику запросов, обработку ошибок и повторные попытки.
-    """
-    def __init__(self, http_session: aiohttp.ClientSession):
-        self.session = http_session
-        self.config = AIContentSettings()
+    """Центральный сервис для генерации контента, построенный на Google AI SDK."""
+    def __init__(self, gemini_client: Optional[genai.GenerativeModel], config: AIConfig):
+        self.client = gemini_client
+        self.config = config
+        if not self.client:
+            logger.critical("Gemini client is not configured. All AI features will be disabled.")
 
-        if not self.config.gemini_api_key:
-            logger.critical("GEMINI_API_KEY is not configured. All AI features will be disabled.")
+    def _extract_text_from_response(self, response: Any) -> Optional[str]:
+        """Безопасно извлекает текстовое содержимое из ответа модели."""
+        try:
+            return response.candidates[0].content.parts[0].text
+        except (AttributeError, IndexError, KeyError) as e:
+            logger.error(f"Could not extract text from AI response: {e}. Response: {response}")
+            return None
+
+    # --- УЛУЧШЕНИЕ: Декоратор backoff для автоматических ретраев ---
+    @backoff.on_exception(
+        backoff.expo,
+        RETRYABLE_EXCEPTIONS,
+        max_tries=lambda: settings.ai.max_retries,
+        on_giveup=lambda details: logger.error(
+            f"AI request failed after {details['tries']} tries. Giving up. Error: {details['exception']}"
+        )
+    )
+    async def _make_request(self, model: Optional[genai.GenerativeModel], *args, **kwargs) -> Any:
+        """Выполняет запрос к SDK и обрабатывает ошибки с помощью backoff."""
+        if not model:
+            return None
+        return await model.generate_content_async(*args, **kwargs)
+
+    async def generate_structured_content(
+        self, prompt: str, json_schema: Dict
+    ) -> Optional[Dict[str, Any]]:
+        """Генерирует структурированный JSON с использованием Pro модели."""
+        if not self.client: return None
+
+        generation_config = GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=json_schema,
+            temperature=self.config.default_temperature
+        )
+        response = await self._make_request(
+            self.client,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+            generation_config=generation_config
+        )
         
-        self.headers = {'Content-Type': 'application/json'}
-        self.params = {'key': self.config.gemini_api_key}
-
-    async def _make_request(self, model_name: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Выполняет запрос к API Gemini с логикой повторных попыток."""
-        if not self.config.gemini_api_key:
+        json_text = self._extract_text_from_response(response)
+        if not json_text:
             return None
             
-        api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-        delay = self.config.initial_retry_delay
+        try:
+            return json.loads(json_text)
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse structured JSON from AI response: {json_text}")
+            return None
 
-        for attempt in range(self.config.max_retries):
-            try:
-                timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
-                async with self.session.post(api_url, headers=self.headers, params=self.params, json=payload, timeout=timeout) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    
-                    # Обработка ошибок, при которых стоит повторить запрос
-                    if response.status in [429, 500, 503]:
-                        logger.warning(f"AI API returned {response.status}. Retrying in {delay:.2f}s... (Attempt {attempt + 1})")
-                        await asyncio.sleep(delay)
-                        delay *= 2
-                    else:
-                        logger.error(f"AI API returned critical error {response.status}: {await response.text()}")
-                        return None
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logger.warning(f"Network error during AI request: {e}. Retrying in {delay:.2f}s... (Attempt {attempt + 1})")
-                await asyncio.sleep(delay)
-                delay *= 2
+    async def generate_summary(self, text_to_summarize: str) -> Optional[str]:
+        """Генерирует краткое саммари, используя быструю Flash модель."""
+        if not self.client: return "Не удалось проанализировать."
         
-        logger.error(f"Failed to get response from AI API after {self.config.max_retries} retries.")
-        return None
+        # --- УЛУЧШЕНИЕ: Замена модели "на лету" ---
+        flash_model = self.client.with_model(self.config.flash_model_name)
+        prompt = get_summary_prompt(text_to_summarize)
+        
+        response = await self._make_request(flash_model, contents=prompt)
+        return self._extract_text_from_response(response)
 
-    async def generate_structured_content(self, prompt: str, json_schema: Dict) -> Optional[List[Dict[str, Any]]]:
-        """
-        Генерирует структурированный контент (JSON) на основе промпта и схемы.
-        Использует самую мощную модель.
-        """
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "response_mime_type": "application/json",
-                "response_schema": json_schema,
-                "temperature": 0.5
-            }
-        }
-        result = await self._make_request(self.config.model_name, payload)
+    async def get_consultant_answer(
+        self, user_question: str, history: List[ContentDict]
+    ) -> Optional[str]:
+        """Отвечает на вопрос пользователя в режиме чата."""
+        if not self.client: return "AI-консультант временно недоступен."
         
-        if result and result.get('candidates'):
-            try:
-                text_content = result['candidates'][0]['content']['parts'][0]['text']
-                return json.loads(text_content)
-            except (json.JSONDecodeError, KeyError, IndexError) as e:
-                logger.error(f"Failed to parse structured JSON from AI response: {e}. Response: {result}")
-                return None
-        return None
-
-    async def generate_summary(self, text_to_summarize: str) -> str:
-        """
-        Генерирует краткое саммари для текста. Использует быструю модель.
-        """
-        prompt = (
-            "You are a crypto news analyst. Read the following news article and provide a very short, "
-            "one-sentence summary in Russian (10-15 words max) that captures the main point. "
-            f"Be concise and informative. Here is the article: \n\n{text_to_summarize}"
-        )
-        payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+        system_prompt = get_consultant_prompt(user_question)
+        # Добавляем системный промпт к текущей истории
+        full_history = history + [{"role": "user", "parts": [{"text": system_prompt}]}]
         
-        result = await self._make_request(self.config.flash_model_name, payload)
-
-        if result and result.get('candidates'):
-            try:
-                summary = result['candidates'][0]['content']['parts'][0]['text']
-                return summary.strip()
-            except (KeyError, IndexError):
-                logger.warning("Could not extract summary text from AI response.")
-        
-        return "Не удалось проанализировать."
+        response = await self._make_request(self.client, contents=full_history)
+        return self._extract_text_from_response(response)

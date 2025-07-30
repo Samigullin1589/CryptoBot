@@ -1,77 +1,77 @@
 # ===============================================================
 # Файл: bot/keyboards/crypto_center_keyboards.py (НОВЫЙ ФАЙЛ)
-# Описание: Функции для создания инлайн-клавиатур для
-# всех разделов Крипто-Центра.
+# Описание: Клавиатуры для Крипто-Центра с использованием CallbackData.
 # ===============================================================
-from typing import List, Dict, Set
+from typing import List, Dict, Any
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup
+from aiogram.filters.callback_data import CallbackData
+
+# --- Фабрики CallbackData ---
+
+class AirdropListPage(CallbackData, prefix="cc_air_page"):
+    page: int
+
+class AirdropDetails(CallbackData, prefix="cc_air_details"):
+    airdrop_id: str
+
+class AirdropTask(CallbackData, prefix="cc_air_task"):
+    airdrop_id: str
+    task_index: int
+
+# --- Генераторы клавиатур ---
 
 def get_crypto_center_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру главного меню Крипто-Центра."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⚡️ Лента новостей (AI-Анализ)", callback_data="cc_nav:feed")
-    builder.button(text="🤖 Аналитика и Гайды от AI", callback_data="cc_nav:guides_menu")
-    builder.button(text="⬅️ Назад в главное меню", callback_data="back_to_main_menu")
+    builder.button(text="📚 Гайды и Возможности", callback_data="cc_nav:guides_menu")
+    builder.button(text="📰 Лента с AI-анализом", callback_data="cc_nav:feed")
+    builder.button(text="⬅️ Главное меню", callback_data="nav:main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
 def get_crypto_center_guides_menu_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для меню выбора гайдов."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="💧 Охота за Airdrop'ами", callback_data="cc_nav:airdrops_list:1")
-    builder.button(text="⛏️ Сигналы для майнеров", callback_data="cc_nav:mining_signals")
+    builder.button(text="🪂 Потенциальные Airdrop'ы", callback_data=AirdropListPage(page=1).pack())
+    builder.button(text="⛏️ Майнинг-сигналы", callback_data="cc_nav:mining_signals")
     builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="cc_nav:main_menu")
     builder.adjust(1)
     return builder.as_markup()
 
-def get_back_to_cc_menu_keyboard(level: str = "main_menu") -> InlineKeyboardMarkup:
-    """Создает клавиатуру для возврата в меню Крипто-Центра."""
+def get_back_to_cc_menu_keyboard(menu: str = 'main_menu') -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if level == "guides_menu":
-        builder.button(text="⬅️ Назад к выбору аналитики", callback_data="cc_nav:guides_menu")
-    else:
-        builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="cc_nav:main_menu")
+    builder.button(text="⬅️ Назад", callback_data=f"cc_nav:{menu}")
     return builder.as_markup()
 
 def get_live_feed_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для ленты новостей."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Обновить и проанализировать", callback_data="cc_nav:feed")
-    builder.button(text="⬅️ Назад в Крипто-Центр", callback_data="cc_nav:main_menu")
-    builder.adjust(1)
-    return builder.as_markup()
+    return get_back_to_cc_menu_keyboard('main_menu')
 
-def get_airdrops_list_keyboard(airdrops_on_page: List[Dict], page: int, total_pages: int) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для списка Airdrop'ов с пагинацией."""
+def get_airdrops_list_keyboard(airdrops: List[Dict], page: int, total_pages: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    for airdrop in airdrops_on_page:
-        builder.button(
-            text=f"{airdrop['name']} ({airdrop['progress_text']})",
-            callback_data=f"cc_action:show_airdrop:{airdrop['id']}"
-        )
+    for airdrop in airdrops:
+        builder.button(text=f"{airdrop['name']} ({airdrop['status']})", callback_data=AirdropDetails(airdrop_id=airdrop['id']).pack())
     
-    if total_pages > 1:
-        prev_page = page - 1 if page > 1 else total_pages
-        next_page = page + 1 if page < total_pages else 1
-        builder.button(text="◀️", callback_data=f"cc_nav:airdrops_list:{prev_page}")
-        builder.button(text=f"{page}/{total_pages}", callback_data="do_nothing")
-        builder.button(text="▶️", callback_data=f"cc_nav:airdrops_list:{next_page}")
-
-    builder.button(text="⬅️ Назад к выбору аналитики", callback_data="cc_nav:guides_menu")
+    nav_row = []
+    if page > 1:
+        nav_row.append(builder.button(text="⬅️", callback_data=AirdropListPage(page=page - 1).pack()))
+    if page < total_pages:
+        nav_row.append(builder.button(text="➡️", callback_data=AirdropListPage(page=page + 1).pack()))
+        
+    builder.row(*nav_row)
+    builder.button(text="⬅️ Назад к гайдам", callback_data="cc_nav:guides_menu")
     builder.adjust(1)
     return builder.as_markup()
 
-def get_airdrop_details_keyboard(airdrop: Dict, user_progress: Set[int]) -> InlineKeyboardMarkup:
-    """Создает клавиатуру с чеклистом для конкретного Airdrop'а."""
+def get_airdrop_details_keyboard(airdrop: Dict, user_progress: List[int]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    airdrop_id = airdrop.get('id')
     for i, task in enumerate(airdrop.get('tasks', [])):
-        status_emoji = "✅" if i in user_progress else "☑️"
+        status_icon = "✅" if i in user_progress else "☑️"
         builder.button(
-            text=f"{status_emoji} {task['name']}",
-            callback_data=f"cc_action:toggle_task:{airdrop_id}:{i}"
+            text=f"{status_icon} {task}",
+            callback_data=AirdropTask(airdrop_id=airdrop['id'], task_index=i).pack()
         )
-    builder.button(text="⬅️ Назад к списку Airdrop'ов", callback_data="cc_nav:airdrops_list:1")
+    if airdrop.get('guide_url'):
+        builder.button(text="🔗 Открыть полный гайд", url=airdrop['guide_url'])
+        
+    builder.button(text="⬅️ Назад к списку", callback_data=AirdropListPage(page=1).pack())
     builder.adjust(1)
     return builder.as_markup()

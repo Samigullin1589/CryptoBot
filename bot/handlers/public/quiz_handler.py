@@ -1,45 +1,38 @@
 # ===============================================================
-# Файл: bot/handlers/public/quiz_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Обработчик для команды викторины.
+# Файл: bot/handlers/public/quiz_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Описание: Обработчик для крипто-викторины с разделенной логикой.
 # ===============================================================
 import logging
-from typing import Union
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.exceptions import TelegramBadRequest
 
 from bot.services.quiz_service import QuizService
-from bot.keyboards.info_keyboards import get_quiz_keyboard
-# --- ИСПРАВЛЕНИЕ: Импортируем из правильного места ---
-from bot.utils.ui_helpers import get_message_and_chat_id
+from bot.keyboards.quiz_keyboards import get_quiz_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router(name="quiz_handler")
 
-@router.callback_query(F.data == "nav:quiz")
-@router.message(F.text == "🧠 Викторина")
-async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: QuizService):
+async def _send_quiz_poll(message: Message, quiz_service: QuizService):
     """
-    Обрабатывает запуск викторины. Генерирует вопрос и отправляет его в виде опроса.
+    Общая функция для генерации и отправки вопроса викторины.
     """
-    message, _ = await get_message_and_chat_id(update)
-    
-    # Если пользователь нажал на кнопку, удаляем старое сообщение
-    if isinstance(update, CallbackQuery):
-        try:
-            await update.message.delete()
-        except TelegramBadRequest:
-            pass
-
     temp_message = await message.answer("⏳ Генерирую интересный вопрос...")
 
-    question, options, correct_option_id = await quiz_service.get_random_question()
+    question_data = await quiz_service.get_random_question()
     
-    # Удаляем временное сообщение "Генерирую..."
     await temp_message.delete()
     
-    # Отправляем вопрос в виде опроса
+    if not question_data:
+        await message.answer(
+            "😔 Не удалось сгенерировать вопрос. Попробуйте, пожалуйста, позже.",
+            reply_markup=get_quiz_keyboard()
+        )
+        return
+
+    question, options, correct_option_id = question_data
+    
     await message.answer_poll(
         question=question, 
         options=options, 
@@ -48,3 +41,21 @@ async def handle_quiz_menu(update: Union[CallbackQuery, Message], quiz_service: 
         is_anonymous=False,
         reply_markup=get_quiz_keyboard()
     )
+
+@router.callback_query(F.data == "nav:quiz")
+async def handle_quiz_callback(call: CallbackQuery, quiz_service: QuizService):
+    """Обрабатывает запуск викторины по нажатию на инлайн-кнопку."""
+    # Удаляем предыдущее сообщение с опросом для чистоты интерфейса
+    try:
+        await call.message.delete()
+    except TelegramBadRequest as e:
+        logger.warning(f"Could not delete quiz message: {e}")
+
+    # call.message здесь - это сообщение, к которому была привязана кнопка
+    await _send_quiz_poll(call.message, quiz_service)
+
+
+@router.message(F.text == "🧠 Викторина")
+async def handle_quiz_message(message: Message, quiz_service: QuizService):
+    """Обрабатывает запуск викторины по текстовой команде из меню."""
+    await _send_quiz_poll(message, quiz_service)

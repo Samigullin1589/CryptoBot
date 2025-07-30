@@ -1,0 +1,10 @@
+{
+  "main_rss_feeds": [
+    "https://forklog.com/feed",
+    "https://beincrypto.ru/feed/"
+  ],
+  "alpha_rss_feeds": [
+    "https://thedefiant.io/feed",
+    "https://bankless.substack.com/feed"
+  ]
+}

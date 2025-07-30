@@ -1,0 +1,13 @@
+{
+  "log_level": "INFO",
+  "log_format": "text",
+  "ai_history_limit": 10,
+  "popular_tickers": [
+    "BTC",
+    "ETH",
+    "SOL",
+    "TON",
+    "KAS",
+    "ARB"
+  ]
+}

@@ -1,128 +1,122 @@
 # ===============================================================
-# Файл: bot/services/coin_list_service.py (ПРОДАКШН-ВЕРСЯ 2025)
-# Описание: Сервис для управления справочником всех криптовалют.
-# Отвечает за обновление, кэширование и поиск монет.
+# Файл: bot/services/coin_list_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Описание: Высокопроизводительный сервис для управления справочником
+# криптовалют с использованием Redis-хеша в качестве поискового индекса.
 # ===============================================================
 import json
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import aiohttp
+import backoff
 import redis.asyncio as redis
 from rapidfuzz import process, fuzz
 
-from bot.config.settings import settings
-# --- ИСПРАВЛЕНИЕ: Импортируем утилиту из нового, правильного места ---
-from bot.utils.http_client import make_request
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+from bot.config.settings import CoinListServiceConfig, EndpointsConfig
+from bot.utils.keys import KeyFactory
 from bot.utils.models import CoinInfo
 
 logger = logging.getLogger(__name__)
 
+RETRYABLE_EXCEPTIONS = (aiohttp.ClientError, TimeoutError)
+
 class CoinListService:
-    """
-    Сервис для управления справочником всех криптовалют.
-    """
-    def __init__(self, redis_client: redis.Redis, http_session: aiohttp.ClientSession):
+    """Сервис для управления справочником всех криптовалют."""
+    
+    def __init__(
+        self,
+        redis_client: redis.Redis,
+        http_session: aiohttp.ClientSession,
+        config: CoinListServiceConfig,
+        endpoints: EndpointsConfig,
+        ticker_aliases: Dict[str, str]
+    ):
         self.redis = redis_client
         self.session = http_session
-        self.config = settings.coin_list_service
+        self.config = config
+        self.endpoints = endpoints
+        self.ticker_aliases = ticker_aliases
+        self.keys = KeyFactory
 
-    async def _fetch_from_minerstat(self) -> List[CoinInfo]:
-        """Получает полный список монет с MinerStat."""
-        data = await make_request(self.session, self.config.minerstat_url)
-        if not data or not isinstance(data, list):
-            logger.warning("Не удалось получить список монет от MinerStat.")
-            return []
-        
-        coins = [CoinInfo.model_validate(item) for item in data]
-        logger.info(f"Успешно получено {len(coins)} монет от MinerStat.")
-        return coins
+    @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=3)
+    async def _fetch(self, url: str) -> Optional[List[Dict]]:
+        """Выполняет отказоустойчивый HTTP-запрос."""
+        async with self.session.get(url, timeout=20) as response:
+            response.raise_for_status()
+            return await response.json()
 
     async def _fetch_from_coingecko(self) -> List[CoinInfo]:
-        """Получает резервный список монет с CoinGecko."""
-        data = await make_request(self.session, self.config.coingecko_url)
+        """Получает основной список монет с CoinGecko."""
+        url = f"{self.endpoints.coingecko_api_base}/coins/list"
+        data = await self._fetch(url)
         if not data or not isinstance(data, list):
             logger.warning("Не удалось получить список монет от CoinGecko.")
             return []
-            
-        # Адаптируем данные от Gecko под нашу модель
+        
         coins = [
             CoinInfo(
-                coin=c.get('symbol', '').upper(), 
-                name=c.get('name', 'Unknown'), 
-                algorithm='Unknown'
-            ) for c in data
+                id=c.get('id'),
+                symbol=c.get('symbol', '').lower(),
+                name=c.get('name', 'Unknown')
+            ) for c in data if c.get('id') and c.get('symbol')
         ]
         logger.info(f"Успешно получено {len(coins)} монет от CoinGecko.")
         return coins
 
-    async def update_coin_list_cache(self) -> None:
-        """
-        Обновляет кэш списка монет, используя основной и резервный источники.
-        """
+    async def update_coin_list_cache(self):
+        """Обновляет кэш и поисковый индекс монет."""
         logger.info("="*20 + " ЗАПУСК ОБНОВЛЕНИЯ СПИСКА МОНЕТ " + "="*20)
         
-        coins = await self._fetch_from_minerstat()
+        coins = await self._fetch_from_coingecko()
         if not coins:
-            logger.warning("Основной источник (MinerStat) не ответил, использую резервный (CoinGecko).")
-            coins = await self._fetch_from_coingecko()
-
-        if not coins:
-            logger.error("Все источники списка монет недоступны. Обновление не удалось.")
+            logger.error("Основной источник (CoinGecko) недоступен. Обновление не удалось.")
             return
-            
-        await self.redis.set(self.config.cache_key, json.dumps([c.model_dump() for c in coins]))
-        logger.info(f"Список из {len(coins)} монет успешно сохранен в кэш Redis.")
 
-    async def get_all_coins(self) -> List[CoinInfo]:
-        """
-        Получает полный список монет из кэша Redis.
-        Если кэш пуст, запускает принудительное обновление.
-        """
-        cached_data = await self.redis.get(self.config.cache_key)
-        if not cached_data:
-            logger.warning("Кэш списка монет пуст. Запускаю принудительное обновление.")
-            await self.update_coin_list_cache()
-            cached_data = await self.redis.get(self.config.cache_key)
-            if not cached_data:
-                logger.error("Не удалось обновить кэш списка монет.")
-                return []
+        # --- ГЕНИАЛЬНОЕ УЛУЧШЕНИЕ: Создаем поисковый индекс ---
+        search_index = {}
+        # 1. Добавляем ID, символы и имена
+        for coin in coins:
+            search_index[coin.id.lower()] = coin.id
+            search_index[coin.symbol.lower()] = coin.id
+            search_index[coin.name.lower()] = coin.id
+        # 2. Добавляем кастомные псевдонимы из конфига
+        for alias, symbol in self.ticker_aliases.items():
+            # Находим ID для этого символа
+            target_coin = next((c for c in coins if c.symbol.lower() == symbol.lower()), None)
+            if target_coin:
+                search_index[alias.lower()] = target_coin.id
         
-        return [CoinInfo.model_validate(item) for item in json.loads(cached_data)]
+        # Атомарно обновляем все в Redis
+        async with self.redis.pipeline(transaction=True) as pipe:
+            # Сначала удаляем старый индекс
+            await pipe.delete(self.keys.coin_search_index_hash())
+            # Сохраняем новый индекс
+            await pipe.hset(self.keys.coin_search_index_hash(), mapping=search_index)
+            # Сохраняем информацию о каждой монете в отдельном хэше
+            for coin in coins:
+                await pipe.hset(self.keys.coin_info_hash(coin.id), mapping=coin.model_dump())
+            await pipe.execute()
+            
+        logger.info(f"Список из {len(coins)} монет и поисковый индекс из {len(search_index)} записей сохранены в Redis.")
 
     async def find_coin(self, query: str) -> Optional[CoinInfo]:
         """
-        Выполняет интеллектуальный нечеткий поиск монеты в справочнике.
+        Мгновенно находит монету, используя поисковый индекс в Redis.
         """
         query = query.strip().lower()
         if not query:
             return None
-
-        all_coins = await self.get_all_coins()
-        if not all_coins:
+            
+        # --- ГЕНИАЛЬНОЕ УЛУЧШЕНИЕ: Один вызов к Redis для поиска ID ---
+        coin_id = await self.redis.hget(self.keys.coin_search_index_hash(), query)
+        
+        if not coin_id:
+            # Если точного совпадения нет, можно добавить опциональный нечеткий поиск по ключам индекса
+            # Но для большинства случаев это будет избыточно и медленнее
+            logger.warning(f"Монета по запросу '{query}' не найдена в индексе.")
             return None
-
-        # Создаем словарь для поиска, где ключ - тикер, и словарь, где ключ - имя
-        ticker_map = {coin.coin.lower(): coin for coin in all_coins}
-        name_map = {coin.name.lower(): coin for coin in all_coins}
-
-        # Сначала ищем по точному совпадению тикера
-        if query in ticker_map:
-            return ticker_map[query]
-
-        # Затем ищем по точному совпадению имени
-        if query in name_map:
-            return name_map[query]
-            
-        # Если точных совпадений нет, используем нечеткий поиск по именам
-        best_match_name = process.extractOne(
-            query, name_map.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.search_score_cutoff
-        )
-
-        if best_match_name:
-            match_key, _, _ = best_match_name
-            return name_map[match_key]
-            
-        logger.warning(f"Не найдено совпадений для запроса монеты '{query}'.")
-        return None
+        
+        # --- Один вызов для получения данных о монете ---
+        coin_data = await self.redis.hgetall(self.keys.coin_info_hash(coin_id))
+        
+        return CoinInfo.model_validate(coin_data) if coin_data else None

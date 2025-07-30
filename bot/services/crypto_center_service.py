@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/services/crypto_center_service.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Сервис-оркестратор для Крипто-Центра. Использует
-# NewsService и AIContentService для выполнения своих задач.
-# Реализует надежное кэширование в Redis.
+# Файл: bot/services/crypto_center_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Описание: Сервис-оркестратор для Крипто-Центра, полностью
+# интегрированный в архитектуру бота.
 # ===============================================================
 
 import json
@@ -11,132 +10,123 @@ from typing import List, Dict, Any, Optional
 
 import redis.asyncio as redis
 
+from bot.config.settings import CryptoCenterServiceConfig
 from bot.services.ai_content_service import AIContentService
 from bot.services.news_service import NewsService
+from bot.utils.keys import KeyFactory
 from bot.utils.models import NewsArticle
+from bot.texts.ai_prompts import get_airdrop_alpha_prompt, get_mining_alpha_prompt
 
 logger = logging.getLogger(__name__)
 
 class CryptoCenterService:
-    """
-    Сервис-оркестратор для управления данными Крипто-Центра.
-    """
-    def __init__(self, redis_client: redis.Redis, ai_service: AIContentService, news_service: NewsService):
+    """Сервис-оркестратор для управления данными Крипто-Центра."""
+    
+    def __init__(
+        self,
+        redis_client: redis.Redis,
+        ai_service: AIContentService,
+        news_service: NewsService,
+        config: CryptoCenterServiceConfig
+    ):
         self.redis = redis_client
         self.ai_service = ai_service
         self.news_service = news_service
-        
-        # --- Redis Keys for Caching ---
-        self.AIRDROP_CACHE_KEY = "cache:crypto_center:airdrops"
-        self.MINING_CACHE_KEY = "cache:crypto_center:mining"
-        self.FEED_CACHE_KEY = "cache:crypto_center:feed"
-        
-        # --- Cache TTLs in seconds ---
-        self.ALPHA_CACHE_TTL = 3600 * 4  # 4 часа
-        self.FEED_CACHE_TTL = 60 * 15     # 15 минут
+        self.config = config
+        self.keys = KeyFactory
+
+    async def _get_news_context(self) -> Optional[str]:
+        """Собирает текстовый контекст из последних новостей."""
+        articles = await self.news_service.get_latest_news()
+        if not articles:
+            logger.warning("Нет новостей для анализа в Crypto Center.")
+            return None
+        # Объединяем тексты последних новостей в один большой контекст
+        return "\n\n---\n\n".join([f"Title: {a.title}\nBody: {a.body}" for a in articles[:self.config.news_context_limit]])
 
     # --- Генерация "Альфы" ---
-
+    
     async def generate_airdrop_alpha(self) -> List[Dict[str, Any]]:
         """Генерирует или достает из кэша список Airdrop-проектов."""
-        cached_data = await self.redis.get(self.AIRDROP_CACHE_KEY)
-        if cached_data:
+        cache_key = self.keys.airdrop_alpha_cache()
+        if cached_data := await self.redis.get(cache_key):
             logger.info("Serving airdrop alpha from cache.")
             return json.loads(cached_data)
 
         logger.info("Generating fresh airdrop alpha...")
-        news_context = await self.news_service.get_aggregated_news_text()
-        if not news_context:
+        if not (news_context := await self._get_news_context()):
             return []
         
-        prompt = (
-            "Действуй как крипто-исследователь. На основе предоставленных новостей, определи 3 самых перспективных проекта без токена, у которых вероятен airdrop. "
-            "Для каждого проекта предоставь: 'id' (уникальный идентификатор в одно слово), 'name', 'description' (короткое описание), 'status', "
-            "'tasks' (список из 3-5 действий) и 'guide_url'. "
-            "ВСЕ ТЕКСТОВЫЕ ДАННЫЕ ДОЛЖНЫ БЫТЬ НА РУССКОМ ЯЗЫКЕ. Если информации недостаточно, верни пустой массив. Контекст:\n\n"
-            f"{news_context}"
-        )
+        prompt = get_airdrop_alpha_prompt(news_context)
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "status", "tasks"]}}
         
         result = await self.ai_service.generate_structured_content(prompt, json_schema)
-        if result is not None: # Может вернуться пустой список, это валидный результат
+        if result is not None:
             logger.info(f"AI analysis resulted in {len(result)} airdrop opportunities.")
-            await self.redis.set(self.AIRDROP_CACHE_KEY, json.dumps(result, ensure_ascii=False), ex=self.ALPHA_CACHE_TTL)
+            await self.redis.set(cache_key, json.dumps(result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
             return result
         
         return []
 
     async def generate_mining_alpha(self) -> List[Dict[str, Any]]:
         """Генерирует или достает из кэша список майнинг-сигналов."""
-        cached_data = await self.redis.get(self.MINING_CACHE_KEY)
-        if cached_data:
+        cache_key = self.keys.mining_alpha_cache()
+        if cached_data := await self.redis.get(cache_key):
             logger.info("Serving mining alpha from cache.")
             return json.loads(cached_data)
 
         logger.info("Generating fresh mining alpha...")
-        news_context = await self.news_service.get_aggregated_news_text()
-        if not news_context:
+        if not (news_context := await self._get_news_context()):
             return []
         
-        prompt = (
-            "Действуй как майнинг-аналитик. На основе предоставленных новостей, определи 3 самых актуальных майнинг-возможности (ASIC/GPU/CPU). "
-            "Для каждой предоставь: 'id', 'name', 'description', 'algorithm', 'hardware' (рекомендуемое оборудование), 'status' и 'guide_url'. "
-            "ВСЕ ТЕКСТОВЫЕ ДАННЫЕ ДОЛЖНЫ БЫТЬ НА РУССКОМ ЯЗЫКЕ. Если информации недостаточно, верни пустой массив. Контекст:\n\n"
-            f"{news_context}"
-        )
+        prompt = get_mining_alpha_prompt(news_context)
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "algorithm": {"type": "STRING"}, "hardware": {"type": "STRING"}, "status": {"type": "STRING"}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "algorithm", "hardware"]}}
         
         result = await self.ai_service.generate_structured_content(prompt, json_schema)
         if result is not None:
             logger.info(f"AI analysis resulted in {len(result)} mining opportunities.")
-            await self.redis.set(self.MINING_CACHE_KEY, json.dumps(result, ensure_ascii=False), ex=self.ALPHA_CACHE_TTL)
+            await self.redis.set(cache_key, json.dumps(result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
             return result
             
         return []
 
     async def get_live_feed_with_summary(self) -> List[NewsArticle]:
         """Получает или достает из кэша новостную ленту с AI-саммари."""
-        cached_data = await self.redis.get(self.FEED_CACHE_KEY)
-        if cached_data:
+        cache_key = self.keys.live_feed_cache()
+        if cached_data := await self.redis.get(cache_key):
             logger.info("Serving live feed from cache.")
-            articles_dicts = json.loads(cached_data)
-            return [NewsArticle(**data) for data in articles_dicts]
+            return [NewsArticle(**data) for data in json.loads(cached_data)]
 
         logger.info("Generating fresh live feed with summaries...")
-        articles = await self.news_service.get_latest_articles(limit=5)
+        articles = await self.news_service.get_latest_news()
         if not articles:
             return []
 
-        # Параллельно запрашиваем саммари для каждой статьи
-        summary_tasks = [self.ai_service.generate_summary(article.body) for article in articles]
+        summary_tasks = [self.ai_service.generate_summary(article.body) for article in articles[:5]]
         summaries = await asyncio.gather(*summary_tasks)
         
         for article, summary in zip(articles, summaries):
             article.ai_summary = summary
             
-        articles_dicts = [article.model_dump() for article in articles]
-        await self.redis.set(self.FEED_CACHE_KEY, json.dumps(articles_dicts), ex=self.FEED_CACHE_TTL)
+        await self.redis.set(cache_key, json.dumps([a.model_dump() for a in articles]), ex=self.config.feed_cache_ttl_seconds)
         
         return articles
 
     # --- Управление прогрессом пользователя ---
     
-    def _get_user_progress_key(self, user_id: int, airdrop_id: str) -> str:
-        return f"user:{user_id}:airdrop_progress:{airdrop_id}"
-
     async def get_user_progress(self, user_id: int, airdrop_id: str) -> List[int]:
         """Получает список индексов выполненных задач для пользователя."""
-        progress_key = self._get_user_progress_key(user_id, airdrop_id)
-        completed_tasks_str = await self.redis.smembers(progress_key)
-        return sorted([int(task_idx) for task_idx in completed_tasks_str])
+        progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
+        completed_tasks = await self.redis.smembers(progress_key)
+        return sorted([int(task_idx) for task_idx in completed_tasks])
 
     async def toggle_task_status(self, user_id: int, airdrop_id: str, task_index: int):
         """Переключает статус выполнения задачи."""
-        progress_key = self._get_user_progress_key(user_id, airdrop_id)
+        progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
         task_index_str = str(task_index)
         
-        if await self.redis.sismember(progress_key, task_index_str):
-            await self.redis.srem(progress_key, task_index_str)
+        # SREM возвращает 1, если элемент был удален, и 0, если его не было
+        if await self.redis.srem(progress_key, task_index_str):
             logger.info(f"User {user_id} marked task {task_index} of airdrop '{airdrop_id}' as NOT completed.")
         else:
             await self.redis.sadd(progress_key, task_index_str)
