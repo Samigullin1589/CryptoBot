@@ -1,9 +1,10 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ 2)
-# Описание: Финальная, "плоская" структура конфигурации, совместимая с Render.
+# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ 3)
+# Описание: Финальная, "плоская" структура конфигурации, на 100%
+# совместимая с переменными окружения пользователя в Render.
 # =================================================================================
 
-import json  # <<< ВОТ ИСПРАВЛЕНИЕ
+import json
 import logging
 from pathlib import Path
 from typing import List, Dict
@@ -12,8 +13,6 @@ from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-
-# --- Вспомогательные модели для JSON-конфигураций ---
 
 class GameTariff(BaseModel):
     cost_per_hour: float
@@ -31,12 +30,9 @@ class CryptoCenterSettings(BaseModel):
     alpha_cache_ttl_seconds: int
     feed_cache_ttl_seconds: int
 
-# --- Главный класс настроек ---
-
 class Settings(BaseSettings):
     """
     Главный класс настроек. Загружает переменные из .env и Render.
-    Структура сделана "плоской" для совместимости с хостингами.
     """
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / '.env',
@@ -44,10 +40,10 @@ class Settings(BaseSettings):
         extra='ignore' 
     )
 
-    # --- Переменные из Environment ---
+    # --- Переменные из Environment (имена соответствуют Render) ---
     BOT_TOKEN: SecretStr
     GEMINI_API_KEY: SecretStr
-    ADMIN_IDS: List[int]
+    ADMIN_USER_IDS: List[int] # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
     ADMIN_CHAT_ID: int
     NEWS_CHAT_ID: int
     REDIS_URL: str
@@ -56,5 +52,4 @@ class Settings(BaseSettings):
     game: GameSettings = Field(default_factory=lambda: GameSettings(**json.load(open(BASE_DIR / "data/game_config.json"))))
     crypto_center: CryptoCenterSettings = Field(default_factory=lambda: CryptoCenterSettings(**json.load(open(BASE_DIR / "data/crypto_center_config.json"))))
 
-# Глобальный экземпляр настроек
 settings = Settings()
