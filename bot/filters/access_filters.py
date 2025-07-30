@@ -1,5 +1,5 @@
 # ===============================================================
-# Файл: bot/filters/access_filters.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/filters/access_filters.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Фильтр доступа, использующий корректные имена переменных.
 # ===============================================================
 from enum import IntEnum
@@ -22,15 +22,14 @@ class PrivilegeFilter(BaseFilter):
     Фильтр, который проверяет, имеет ли пользователь достаточный уровень привилегий.
     """
     def __init__(self, min_role: str):
-        # Принимаем строку для большей читаемости
         self.min_role = UserRole[min_role.upper()]
 
     async def __call__(self, event: Union[Message, CallbackQuery]) -> bool:
         user_id = event.from_user.id
         
         user_role = UserRole.USER
-        # Используем исправленный путь к списку ID
-        if user_id in settings.ADMIN_USER_IDS: # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
+        # Используем новое, корректно распарсенное свойство
+        if user_id in settings.admin_ids_list: # <<< ИСПРАВЛЕНИЕ ЗДЕСЬ
             user_role = UserRole.ADMIN
         
         return user_role >= self.min_role

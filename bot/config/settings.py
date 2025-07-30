@@ -1,15 +1,14 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ 4)
-# Описание: Финальная конфигурация, которая корректно обрабатывает
+# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНОЕ ИСПРАВЛЕНИЕ 5)
+# Описание: Финальная конфигурация, которая 100% корректно обрабатывает
 # переменные окружения в виде comma-separated-strings.
 # =================================================================================
 
 import json
-import logging
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -43,25 +42,20 @@ class Settings(BaseSettings):
     # --- Переменные из Environment ---
     BOT_TOKEN: SecretStr
     GEMINI_API_KEY: SecretStr
-    ADMIN_USER_IDS: List[int] # Поле остается List[int]
+    ADMIN_USER_IDS: str  # <<< ИЗМЕНЕНИЕ 1: Читаем как обычную строку
     ADMIN_CHAT_ID: int
     NEWS_CHAT_ID: int
     REDIS_URL: str
 
-    # <<< НАЧАЛО ИСПРАВЛЕНИЯ >>>
-    @field_validator('ADMIN_USER_IDS', mode='before')
-    @classmethod
-    def parse_comma_separated_ints(cls, v: Any) -> List[int]:
+    # <<< ИЗМЕНЕНИЕ 2: Создаем вычисляемое поле, которое приложение будет использовать >>>
+    @computed_field
+    @property
+    def admin_ids_list(self) -> List[int]:
         """
-        Этот валидатор преобразует строку "123,456" в список [123, 456].
-        Именно это решает ошибку JSONDecodeError.
+        Парсит строку ADMIN_USER_IDS в список чисел.
+        Это решает проблему раз и навсегда.
         """
-        if isinstance(v, str):
-            # Разделяем строку по запятым, убираем пробелы и преобразуем в int
-            return [int(item.strip()) for item in v.split(',')]
-        # Если это уже список (например, из другого источника), оставляем как есть
-        return v
-    # <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+        return [int(item.strip()) for item in self.ADMIN_USER_IDS.split(',')]
 
     # --- Настройки, загружаемые из JSON-файлов ---
     game: GameSettings = Field(default_factory=lambda: GameSettings(**json.load(open(BASE_DIR / "data/game_config.json"))))
