@@ -1,8 +1,6 @@
-# ==============================================================================
-# Файл: bot/services/mining_game_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - АБСОЛЮТНО ПОЛНАЯ)
-# Описание: Полностью самодостаточная бизнес-логика игры "Виртуальный Майнинг"
-# с динамическими событиями, рынком оборудования и системой достижений.
-# ==============================================================================
+# =================================================================================
+# Файл: bot/services/mining_game_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ПОЛНАЯ)
+# =================================================================================
 
 import time
 import json
@@ -14,7 +12,7 @@ import redis.asyncio as redis
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 
-from bot.config.settings import AppSettings, GameTariff
+from bot.config.settings import Settings
 from bot.services.user_service import UserService
 from bot.services.market_service import AsicMarketService
 from bot.services.event_service import MiningEventService
@@ -26,7 +24,6 @@ from bot.utils.lua_scripts import LuaScripts
 logger = logging.getLogger(__name__)
 
 class _KeyFactory:
-    """Генератор ключей Redis, специфичных для игровой экономики."""
     @staticmethod
     def user_game_profile(user_id: int) -> str: return f"game:profile:{user_id}"
     @staticmethod
@@ -39,12 +36,10 @@ class _KeyFactory:
     def electricity_market() -> str: return "game:market:electricity"
 
 class MiningGameService:
-    """Сервис, управляющий живой экономической симуляцией майнинга."""
-
     def __init__(self,
                  redis_client: redis.Redis,
                  scheduler: AsyncIOScheduler,
-                 settings: AppSettings,
+                 settings: Settings,
                  user_service: UserService,
                  market_service: AsicMarketService,
                  event_service: MiningEventService,
@@ -63,10 +58,9 @@ class MiningGameService:
         self.lua_end_session = self.redis.script_load(LuaScripts.END_MINING_SESSION)
 
     async def get_user_game_profile(self, user_id: int) -> Dict[str, any]:
-        """Получает игровой профиль пользователя, создавая его при необходимости."""
         profile_key = self.keys.user_game_profile(user_id)
         if await self.redis.hsetnx(profile_key, "balance", 0.0):
-            default_tariff = self.settings.game.default_electricity_tariff.value
+            default_tariff = self.settings.game.default_electricity_tariff
             await self.redis.hmset(profile_key, {
                 "total_earned": 0.0,
                 "current_tariff": default_tariff,
@@ -81,7 +75,6 @@ class MiningGameService:
         }
 
     async def start_session(self, user_id: int, asic_id: str) -> str:
-        """Начинает майнинг-сессию с использованием LUA-скрипта для гарантии атомарности."""
         if await self.redis.exists(self.keys.active_session(user_id)):
             return "❌ У вас уже есть активная сессия майнинга!"
 
@@ -112,7 +105,6 @@ class MiningGameService:
                 "Я пришлю уведомление с результатами и возможными событиями.")
 
     async def end_session(self, user_id: int) -> Optional[MiningSessionResult]:
-        """Завершает сессию, рассчитывает награду и атомарно применяет случайные события."""
         logger.info(f"Ending mining session for user {user_id}")
         
         event = self.events.get_random_event()
@@ -153,7 +145,6 @@ class MiningGameService:
         return result
 
     async def get_farm_and_stats_info(self, user_id: int) -> Tuple[str, str]:
-        """Возвращает полную информацию о ферме, ангаре и статистике пользователя."""
         session_data = await self.redis.hgetall(self.keys.active_session(user_id))
         if session_data:
             end_time = datetime.fromisoformat(session_data['end_time_iso'])
@@ -179,7 +170,6 @@ class MiningGameService:
         return farm_info, stats_info
 
     async def process_withdrawal(self, user_id: int, user_profile: UserProfile) -> Tuple[str, bool]:
-        """Обрабатывает заявку на вывод средств, атомарно списывая баланс."""
         profile_key = self.keys.user_game_profile(user_id)
         profile = await self.get_user_game_profile(user_id)
         balance = profile['balance']
@@ -203,18 +193,16 @@ class MiningGameService:
         return "✅ Ваша заявка на вывод принята! Администратор скоро свяжется с вами для уточнения деталей.", True
 
     async def get_electricity_menu(self, user_id: int) -> Tuple[str, 'InlineKeyboardMarkup']:
-        """Формирует меню управления тарифами на электроэнергию."""
         profile = await self.get_user_game_profile(user_id)
         current_tariff_name = profile['current_tariff']
         owned_tariffs = profile['owned_tariffs']
-        all_tariffs: Dict[str, GameTariff] = self.settings.game.electricity_tariffs
+        all_tariffs = self.settings.game.electricity_tariffs
         
         text = f"💡 <b>Управление электроэнергией</b>\n\nВаш текущий тариф: <b>{current_tariff_name}</b>"
         keyboard = get_electricity_menu_keyboard(all_tariffs, owned_tariffs, current_tariff_name)
         return text, keyboard
 
     async def select_tariff(self, user_id: int, tariff_name: str) -> str:
-        """Устанавливает выбранный тариф как активный."""
         profile = await self.get_user_game_profile(user_id)
         if tariff_name in profile['owned_tariffs']:
             await self.redis.hset(self.keys.user_game_profile(user_id), "current_tariff", tariff_name)
@@ -223,7 +211,6 @@ class MiningGameService:
         return "❌ У вас нет доступа к этому тарифу."
 
     async def buy_tariff(self, user_id: int, tariff_name: str) -> str:
-        """Покупает новый тариф и проверяет достижение."""
         profile_key = self.keys.user_game_profile(user_id)
         profile = await self.get_user_game_profile(user_id)
         
@@ -263,6 +250,5 @@ class MiningGameService:
         return f"🎉 Поздравляем! Вы приобрели тариф '{tariff_name}'."
 
     async def get_current_electricity_price(self, tariff_name: str) -> float:
-        """Получает текущую рыночную цену на электроэнергию для тарифа."""
         price = await self.redis.hget(self.keys.electricity_market(), tariff_name)
         return float(price) if price else self.settings.game.electricity_tariffs[tariff_name].cost_per_hour
