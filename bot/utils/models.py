@@ -4,7 +4,7 @@
 # Включает недостающие модели MarketListing, Achievement и другие.
 # =================================================================================
 
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field
 
 class UserProfile(BaseModel):
@@ -34,7 +34,7 @@ class NewsArticle(BaseModel):
     ai_summary: Optional[str] = None
 
 class AirdropProject(BaseModel):
-    """Мо-дель для Airdrop-проекта из Crypto Center."""
+    """Модель для Airdrop-проекта из Crypto Center."""
     id: str
     name: str
     description: str
