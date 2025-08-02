@@ -1,11 +1,26 @@
 # =================================================================================
-# Файл: bot/utils/models.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНАЯ)
-# Описание: Все Pydantic модели, используемые в приложении.
-# Включает недостающие модели MarketListing, Achievement и другие.
+# Файл: bot/utils/models.py (ВЕРСИЯ "ГЕНИЙ 3.0" - АВГУСТ 2025)
+# Описание: Все Pydantic модели. Добавлена модель MiningEvent.
 # =================================================================================
 
+# Используем 'from __future__ import annotations' для соответствия стандартам 2025 года (PEP 563)
+from __future__ import annotations
 from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field
+
+# >>>>> НАЧАЛО ИСПРАВЛЕНИЯ: Добавлена недостающая модель MiningEvent <<<<<
+class MiningEvent(BaseModel):
+    """
+    Модель динамического игрового события, влияющего на результат майнинга.
+    Загружается из events_config.json.
+    """
+    name: str = Field(description="Название события")
+    description: str = Field(description="Описание события для пользователя")
+    probability: float = Field(ge=0.0, le=1.0, description="Вероятность возникновения (0.0-1.0)")
+    # Используем Field для установки значений по умолчанию, соответствующих отсутствию эффекта
+    profit_multiplier: float = Field(default=1.0, description="Множитель дохода (напр., 1.5 для +50%)")
+    cost_multiplier: float = Field(default=1.0, description="Множитель затрат (напр., 0.5 для -50%)")
+# >>>>> КОНЕЦ ИСПРАВЛЕНИЯ <<<<<
 
 class UserProfile(BaseModel):
     """Профиль пользователя Telegram."""
@@ -61,12 +76,12 @@ class MiningSessionResult(BaseModel):
     total_electricity_cost: float
     net_earned: float
     event_description: Optional[str] = None
+    # Используем Optional[Achievement] благодаря from __future__ import annotations
     unlocked_achievement: Optional[Achievement] = None
 
 class MarketListing(BaseModel):
     """
     Модель для лота, выставленного на продажу на рынке.
-    Именно этой модели не хватало, что приводило к ошибке импорта.
     """
     id: str
     seller_id: int

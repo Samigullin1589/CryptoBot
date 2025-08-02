@@ -1,17 +1,35 @@
-# =================================================================================
-# Файл: bot/services/admin_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ПОЛНАЯ)
-# =================================================================================
+# ===============================================================
+# Файл: bot/services/admin_service.py (ПРОДАКШН-ВЕРСИЯ АВГУСТ 2025)
+# ===============================================================
 import logging
-import redis.asyncio as redis
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, Tuple, List
 
+import redis.asyncio as redis
+from aiogram.types import InlineKeyboardMarkup
+
+# >>>>> НАЧАЛО ИСПРАВЛЕНИЯ: Добавлены импорты для синхронизации DI <<<<<
 from aiogram import Bot
-from bot.config.settings import Settings
-from bot.services.mining_game_service import _KeyFactory as GameKeyFactory
+# Предполагается, что импорт Settings ведет сюда:
+from bot.config.settings import Settings 
+# >>>>> КОНЕЦ ИСПРАВЛЕНИЯ <<<<<
+
+from bot.filters.access_filters import UserRole
+from bot.keyboards.admin_keyboards import (
+    get_admin_menu_keyboard, get_stats_menu_keyboard, 
+    get_system_actions_keyboard, get_back_to_admin_menu_keyboard
+)
 
 logger = logging.getLogger(__name__)
 
 class AdminService:
+    """
+    Сервис для сбора статистики и выполнения административных задач.
+    Использует эффективные и безопасные методы работы с Redis.
+    """
+    
+    # >>>>> НАЧАЛО ИСПРАВЛЕНИЯ: Обновленный конструктор <<<<<
+    # Было: def __init__(self, redis_client: redis.Redis):
     def __init__(self, redis_client: redis.Redis, settings: Settings, bot: Bot):
         self.redis = redis_client
         self.settings = settings
