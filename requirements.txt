@@ -8,3 +8,4 @@ aiohttp==3.9.5
 python-dotenv==1.0.1
 beautifulsoup4==4.12.3
 lxml==5.2.2
+rapidfuzz==3.13.0  # <-- Добавленная и зафиксированная зависимость
