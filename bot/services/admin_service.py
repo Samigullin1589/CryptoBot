@@ -63,7 +63,7 @@ class AdminService:
             "pending_withdrawals": int(raw_stats.get("pending_withdrawals", 0)),
         }
 
-    async def change_user_game_balance(self, user_id: int, amount: float) -> Optional[float]:
+    async def change_user_game_balance(self, user_id: int, amount: float) -> float | None:
         profile_key = self.game_keys.user_game_profile(user_id)
         if not await self.redis.exists(profile_key):
             return None
