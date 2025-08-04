@@ -1,0 +1,5 @@
+{
+  "whattomine_api": "https://whattomine.com/asic.json?gpus_boost=true",
+  "asicminervalue_api": "https://www.asicminervalue.com/api/v1/miners",
+  "minerstat_hardware_api": "https://api.minerstat.com/v2/hardware"
+}

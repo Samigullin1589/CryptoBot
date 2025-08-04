@@ -1,6 +1,6 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "ГЕНИЙ 3.0" - АВГУСТ 2025)
-# Описание: DI-контейнер. Исправлена инициализация AsicService и ParserService.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "ГЕНИЙ 3.1" - АВГУСТ 2025)
+# Описание: DI-контейнер. Синхронизирована инициализация ParserService с EndpointsConfig.
 # =================================================================================
 
 import json
@@ -25,10 +25,8 @@ from bot.middlewares.action_tracking_middleware import ActionTrackingMiddleware
 from bot.services.user_service import UserService
 from bot.services.asic_service import AsicService
 
-# >>>>> ИСПРАВЛЕНИЕ 1: Добавляем импорт ParserService (необходим для AsicService)
 # Убедитесь, что этот импорт существует в вашей структуре проекта!
 from bot.services.parser_service import ParserService 
-# >>>>> КОНЕЦ ИСПРАВЛЕНИЯ 1
 
 from bot.services.price_service import PriceService
 from bot.services.news_service import NewsService
@@ -131,25 +129,26 @@ class Dependencies:
         """Создает экземпляры всех сервисов."""
         logging.info("Создание экземпляров сервисов...")
 
-        # >>>>> ИСПРАВЛЕНИЕ 2: Инициализация ParserService (необходим для AsicService)
-        # Предполагается, что ParserService зависит от http_session
-        self.parser_service = ParserService(http_session=self.http_session)
-        # >>>>> КОНЕЦ ИСПРАВЛЕНИЯ 2
+        # >>>>> ИСПРАВЛЕНИЕ: Корректная инициализация ParserService
+        # БЫЛО: self.parser_service = ParserService(http_session=self.http_session)
+        # Передаем http_session и конфигурацию endpoints
+        self.parser_service = ParserService(
+            http_session=self.http_session,
+            config=self.settings.endpoints  # <<< Передаем EndpointsConfig
+        )
+        # >>>>> КОНЕЦ ИСПРАВЛЕНИЯ
 
         self.user_service = UserService(redis_client=self.redis_client)
         
         # Используем self.settings (Best Practice)
-        # БЫЛО: self.admin_service = AdminService(redis_client=self.redis_client, settings=settings, bot=self.bot)
         self.admin_service = AdminService(redis_client=self.redis_client, settings=self.settings, bot=self.bot)
         
-        # >>>>> ИСПРАВЛЕНИЕ 3: Корректная инициализация AsicService
-        # БЫЛО: self.asic_service = AsicService(redis_client=self.redis_client)
+        # Корректная инициализация AsicService (уже была исправлена ранее)
         self.asic_service = AsicService(
             redis_client=self.redis_client,
             parser_service=self.parser_service,      # Передаем ParserService
             config=self.settings.asic_service        # Передаем конфигурацию (AsicServiceConfig)
         )
-        # >>>>> КОНЕЦ ИСПРАВЛЕНИЯ 3
         
         self.price_service = PriceService(redis_client=self.redis_client)
         # Используем self.settings (Best Practice)
