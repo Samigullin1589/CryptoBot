@@ -2,17 +2,16 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная, самодостаточная система конфигурации.
-# Реализована гибридная загрузка: секреты из переменных окружения,
-# остальное - из JSON-файлов. Модели точно соответствуют именам переменных в Render.
-# Добавлена принудительная загрузка переменных через python-dotenv.
+# ИСПРАВЛЕНИЕ: Добавлен умный валидатор для ADMIN_USER_IDS, который
+# обрабатывает как JSON-массивы, так и строки, разделенные запятыми.
 # =================================================================================
 
 import json
+import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from loguru import logger
-# ИСПРАВЛЕНИЕ: Принудительно загружаем переменные окружения
 from dotenv import load_dotenv
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ConfigDict, ValidationError, field_validator)
@@ -55,7 +54,6 @@ class NewsServiceConfig(BaseModel):
     feeds: NewsFeeds
 
 class EndpointsConfig(BaseModel):
-    # ИСПРАВЛЕНИЕ: Все поля опциональны, чтобы избежать падения, если ключ отсутствует в JSON
     coingecko_api_base: Optional[HttpUrl] = None
     coingecko_api_coins_list: Optional[HttpUrl] = None
     coingecko_api_simple_price: Optional[HttpUrl] = None
@@ -74,19 +72,17 @@ class Settings(BaseSettings):
     """
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
-    # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ (имена и alias соответствуют скриншоту)
+    # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     BOT_TOKEN: SecretStr
     ADMIN_USER_IDS: List[int]
-    REDIS_URL: RedisDsn # ИСПРАВЛЕНО: ищем REDIS_URL, а не REDIS_DSN
+    REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
-    # Дополнительные переменные со скриншота
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
     OPENAI_API_KEY: Optional[SecretStr] = None
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
 
-
-    # 2. Поля из JSON-файлов (заполняются ниже)
+    # 2. Поля из JSON-файлов
     log_level: str = "INFO"
     throttling: ThrottlingConfig
     feature_flags: FeatureFlags
@@ -95,6 +91,25 @@ class Settings(BaseSettings):
     coin_list_service: CoinListServiceConfig
     news_service: NewsServiceConfig
     ai: AIConfig
+
+    # ИСПРАВЛЕНИЕ: Умный валидатор для поля ADMIN_USER_IDS
+    @field_validator('ADMIN_USER_IDS', mode='before')
+    @classmethod
+    def parse_admin_ids(cls, v: Any) -> Any:
+        """
+        Обрабатывает ADMIN_USER_IDS как из строки '1,2,3',
+        так и из JSON-массива '[1, 2, 3]'.
+        """
+        if isinstance(v, str):
+            try:
+                # Сначала пытаемся обработать как корректный JSON
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # Если не получилось, считаем, что это строка через запятую
+                logger.warning("ADMIN_USER_IDS не в формате JSON. Попытка разбора строки с запятыми.")
+                return [int(item.strip()) for item in v.split(',') if item.strip()]
+        # Если это уже список (например, из JSON-файла), возвращаем как есть
+        return v
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
     """Вспомогательная функция для безопасной загрузки JSON."""
