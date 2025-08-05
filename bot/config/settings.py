@@ -1,71 +1,82 @@
 # bot/config/settings.py
-# Файл полностью переработан для использования Pydantic V2.
-# ИСПРАВЛЕНИЕ: Создан глобальный экземпляр 'settings' для совместимости
-# с существующей архитектурой импортов в проекте, что решает 'ImportError'.
-# Также устранено предупреждение о конфликте имен в Pydantic.
+# =================================================================================
+# Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Описание: Финальная, самодостаточная система конфигурации.
+# Адаптирована под реальную структуру JSON-файлов проекта.
+# Загружает все конфиги, объединяет и валидирует их в единую модель.
+# =================================================================================
 
 import json
 import os
-from typing import List, Dict, Type, TypeVar
+from pathlib import Path
+from typing import List, Dict, Any
 
 from loguru import logger
-from pydantic import BaseModel, Field, RedisDsn, HttpUrl, SecretStr, ConfigDict
+from pydantic import BaseModel, Field, RedisDsn, HttpUrl, SecretStr, ConfigDict, ValidationError
 
-# Generic Pydantic model type
-T = TypeVar('T', bound=BaseModel)
+# --- Определения моделей для частей конфигурации ---
+# Эти модели не используются напрямую для загрузки файлов, а служат
+# для структурирования и валидации финального объекта Settings.
 
-
-def _load_model_from_path(model: Type[T], path: str) -> T:
-    """
-    Загружает и валидирует Pydantic модель из указанного JSON файла.
-    """
-    if not os.path.exists(path):
-        logger.error(f"Файл конфигурации не найден: {path}")
-        raise FileNotFoundError(f"Файл конфигурации не найден: {path}")
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        return model.model_validate(data)
-    except json.JSONDecodeError as e:
-        logger.error(f"Ошибка декодирования JSON из {path}: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"Не удалось загрузить или валидировать конфигурацию из {path}: {e}")
-        raise
-
-
-# --- Определения моделей конфигурации ---
-
-class BotConfig(BaseModel):
-    token: SecretStr
-    admin_ids: List[int]
-
-
-class RedisConfig(BaseModel):
-    dsn: RedisDsn
-    host: str
-    port: int
-    db: int = Field(0, ge=0, le=15)
-    password: SecretStr | None = None
-
-
-class AppConfig(BaseModel):
-    bot: BotConfig
-    redis: RedisConfig
-
+class AIConfig(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+    provider: str = "gemini"
+    api_key: SecretStr
+    model_name: str = Field(..., description="Имя модели для использования")
 
 class ThrottlingConfig(BaseModel):
     rate_limit: float = 0.5
     key_prefix: str = "throttling"
-
 
 class FeatureFlags(BaseModel):
     maintenance_mode: bool = False
     enable_game: bool = True
     enable_threat_protection: bool = True
 
+class PriceServiceConfig(BaseModel):
+    cache_ttl_seconds: int = 300
+    top_n_coins: int = 100
+
+class CoinListServiceConfig(BaseModel):
+    update_interval_hours: int
+    fallback_file_path: str
+
+class NewsServiceConfig(BaseModel):
+    cache_ttl_seconds: int = 3600
+    feeds: Dict[str, HttpUrl]
+
+# --- Главная модель настроек ---
+# Объединяет в себе ВСЕ параметры из всех конфигурационных файлов.
+# Это позволяет иметь единый, типизированный и валидированный источник истины.
+
+class Settings(BaseModel):
+    # --- Параметры из app_config.json (предположительно) ---
+    token: SecretStr = Field(..., alias='BOT_TOKEN') # Используем alias, если ключ в JSON другой
+    admin_ids: List[int]
+    dsn: RedisDsn = Field(..., alias='REDIS_DSN')
+    host: str = Field(..., alias='REDIS_HOST')
+    port: int = Field(..., alias='REDIS_PORT')
+    db: int = Field(0, ge=0, le=15, alias='REDIS_DB')
+    password: SecretStr | None = Field(None, alias='REDIS_PASSWORD')
+    log_level: str = "INFO"
+
+    # --- Параметры из других файлов ---
+    throttling: ThrottlingConfig
+    feature_flags: FeatureFlags
+    endpoints: EndpointsConfig # EndpointsConfig будет загружен как вложенный словарь
+    price_service: PriceServiceConfig
+    coin_list_service: CoinListServiceConfig
+    news_service: NewsServiceConfig
+    ai: AIConfig
+
+    class Config:
+        # Позволяет Pydantic использовать псевдонимы (aliases)
+        populate_by_name = True
+        # Позволяет игнорировать лишние поля в JSON, которые не определены в модели
+        extra = 'ignore'
 
 class EndpointsConfig(BaseModel):
+    # Эта модель остается вложенной, так как endpoints.json, скорее всего, имеет такую структуру
     coingecko_api_base: HttpUrl
     coingecko_api_coins_list: HttpUrl
     coingecko_api_simple_price: HttpUrl
@@ -75,77 +86,54 @@ class EndpointsConfig(BaseModel):
     mempool_space_difficulty: HttpUrl
 
 
-class PriceServiceConfig(BaseModel):
-    cache_ttl_seconds: int = 300
-    top_n_coins: int = 100
-
-
-class CoinListServiceConfig(BaseModel):
-    update_interval_hours: int
-    fallback_file_path: str
-
-
-class NewsServiceConfig(BaseModel):
-    cache_ttl_seconds: int = 3600
-    feeds: Dict[str, HttpUrl]
-
-
-class AIConfig(BaseModel):
-    # ИСПРАВЛЕНИЕ: Устранено предупреждение Pydantic о конфликте имен.
-    model_config = ConfigDict(protected_namespaces=())
-    
-    provider: str = "gemini"
-    api_key: SecretStr
-    model_name: str = Field(..., description="Имя модели для использования, например gemini-1.5-flash-latest")
-
-
-class Settings(BaseModel):
-    app: AppConfig
-    throttling: ThrottlingConfig
-    feature_flags: FeatureFlags
-    endpoints: EndpointsConfig
-    price_service: PriceServiceConfig
-    coin_list_service: CoinListServiceConfig
-    news_service: NewsServiceConfig
-    ai: AIConfig
-    # Другие модели конфигураций добавляются сюда
-
-
 def load_settings(base_path: str = "data") -> Settings:
     """
-    Загружает все файлы конфигурации, валидирует их и возвращает
-    единый объект Settings.
+    Загружает все файлы конфигурации из указанной директории,
+    объединяет их в один словарь и валидирует с помощью модели Settings.
     """
     logger.info(f"Загрузка конфигураций из директории: {base_path}")
-    try:
-        app_config = _load_model_from_path(AppConfig, os.path.join(base_path, "app_config.json"))
-        throttling_config = _load_model_from_path(ThrottlingConfig, os.path.join(base_path, "throttling_config.json"))
-        feature_flags = _load_model_from_path(FeatureFlags, os.path.join(base_path, "feature_flags.json"))
-        endpoints_config = _load_model_from_path(EndpointsConfig, os.path.join(base_path, "endpoints_config.json"))
-        price_service_config = _load_model_from_path(PriceServiceConfig, os.path.join(base_path, "price_service_config.json"))
-        coin_list_service_config = _load_model_from_path(CoinListServiceConfig, os.path.join(base_path, "coin_list_config.json"))
-        news_service_config = _load_model_from_path(NewsServiceConfig, os.path.join(base_path, "news_service_config.json"))
-        ai_config = _load_model_from_path(AIConfig, os.path.join(base_path, "ai_config.json"))
+    
+    # Список файлов для загрузки. Порядок важен, если ключи пересекаются.
+    config_files = {
+        "app": "app_config.json",
+        "throttling": "throttling_config.json",
+        "feature_flags": "feature_flags.json",
+        "endpoints": "endpoints_config.json",
+        "price_service": "price_service_config.json",
+        "coin_list_service": "coin_list_config.json",
+        "news_service": "news_service_config.json",
+        "ai": "ai_config.json",
+    }
+    
+    combined_config: Dict[str, Any] = {}
 
-        settings_instance = Settings(
-            app=app_config,
-            throttling=throttling_config,
-            feature_flags=feature_flags,
-            endpoints=endpoints_config,
-            price_service=price_service_config,
-            coin_list_service=coin_list_service_config,
-            news_service=news_service_config,
-            ai=ai_config,
-        )
+    for name, filename in config_files.items():
+        path = Path(base_path) / filename
+        if not path.exists():
+            logger.warning(f"Файл конфигурации не найден: {path}, пропуск.")
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Если файл не для app, вкладываем его содержимое под соответствующим ключом
+                if name != "app":
+                    combined_config[name] = data
+                else:
+                    # Содержимое app_config.json добавляем на верхний уровень
+                    combined_config.update(data)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Не удалось прочитать или декодировать файл {path}: {e}")
+            raise SystemExit(f"Критическая ошибка конфигурации в файле: {filename}")
+
+    try:
+        settings_instance = Settings.model_validate(combined_config)
         logger.info("Все конфигурации успешно загружены и валидированы.")
         return settings_instance
+    except ValidationError as e:
+        # ИСПРАВЛЕНИЕ: Безопасное логирование ошибки валидации
+        logger.critical(f"Критическая ошибка валидации настроек. Проверьте ваши .json файлы. Ошибки: {e}")
+        raise SystemExit("Не удалось инициализировать настройки из-за ошибок валидации.")
 
-    except Exception as e:
-        logger.critical(f"Критическая ошибка во время инициализации настроек: {e}", exc_info=True)
-        # Выход из приложения, так как без настроек оно работать не может
-        raise SystemExit(f"Не удалось инициализировать настройки: {e}")
-
-# ИСПРАВЛЕНИЕ: Создаем единственный глобальный экземпляр настроек,
+# Создаем единственный глобальный экземпляр настроек,
 # который будет импортироваться во всем приложении.
-# Это решает проблему `ImportError: cannot import name 'settings'`.
 settings = load_settings()
