@@ -1,13 +1,15 @@
 # bot/states/admin_states.py
 # =================================================================================
-# Файл: bot/states/admin_states.py (ВЕРСИЯ "Distinguished Engineer" - ОБЪЕДИНЕННАЯ)
+# Файл: bot/states/admin_states.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛ)
 # Описание: Полный и логически сгруппированный набор состояний для
-# всей административной панели. Объединяет лучшие практики из всех версий.
+# всей административной панели.
+# ИСПРАВЛЕНИЕ: Главный класс переименован в 'AdminStates' для решения 'ImportError'.
 # =================================================================================
 
 from aiogram.fsm.state import StatesGroup, State
 
-class AdminMenu(StatesGroup):
+# ИСПРАВЛЕНО: Класс переименован с AdminMenu на AdminStates для соответствия импортам
+class AdminStates(StatesGroup):
     """
     Главные состояния навигации по административной панели.
     """
@@ -44,4 +46,3 @@ class GameAdmin(StatesGroup):
 
     # Редактирование общих игровых параметров
     edit_parameter = State()
-
