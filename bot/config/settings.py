@@ -2,8 +2,8 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная, самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлен умный валидатор для ADMIN_USER_IDS, который
-# обрабатывает как JSON-массивы, так и строки, разделенные запятыми.
+# ИСПРАВЛЕНИЕ: Использован @model_validator для гарантированной обработки
+# ADMIN_USER_IDS до основной валидации, что решает ошибку парсинга.
 # =================================================================================
 
 import json
@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 from dotenv import load_dotenv
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
-                      ConfigDict, ValidationError, field_validator)
+                      ConfigDict, ValidationError, model_validator)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Гарантированно загружаем переменные из .env файла или окружения Render
@@ -92,24 +92,24 @@ class Settings(BaseSettings):
     news_service: NewsServiceConfig
     ai: AIConfig
 
-    # ИСПРАВЛЕНИЕ: Умный валидатор для поля ADMIN_USER_IDS
-    @field_validator('ADMIN_USER_IDS', mode='before')
+    # ИСПРАВЛЕНИЕ: Использован @model_validator, который срабатывает раньше
+    @model_validator(mode='before')
     @classmethod
-    def parse_admin_ids(cls, v: Any) -> Any:
+    def _parse_admin_ids_from_str(cls, data: Any) -> Any:
         """
-        Обрабатывает ADMIN_USER_IDS как из строки '1,2,3',
-        так и из JSON-массива '[1, 2, 3]'.
+        Перехватывает и преобразует ADMIN_USER_IDS до начала основной валидации.
         """
-        if isinstance(v, str):
-            try:
-                # Сначала пытаемся обработать как корректный JSON
-                return json.loads(v)
-            except json.JSONDecodeError:
-                # Если не получилось, считаем, что это строка через запятую
-                logger.warning("ADMIN_USER_IDS не в формате JSON. Попытка разбора строки с запятыми.")
-                return [int(item.strip()) for item in v.split(',') if item.strip()]
-        # Если это уже список (например, из JSON-файла), возвращаем как есть
-        return v
+        if isinstance(data, dict):
+            admin_ids = data.get('ADMIN_USER_IDS')
+            if admin_ids and isinstance(admin_ids, str):
+                try:
+                    # Пытаемся обработать как JSON. Если получится, Pydantic справится сам.
+                    json.loads(admin_ids)
+                except json.JSONDecodeError:
+                    # Если это не JSON, значит, это строка с запятыми. Преобразуем ее в список.
+                    logger.warning("ADMIN_USER_IDS не в формате JSON. Преобразование из строки с запятыми.")
+                    data['ADMIN_USER_IDS'] = [int(i.strip()) for i in admin_ids.split(',') if i.strip()]
+        return data
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
     """Вспомогательная функция для безопасной загрузки JSON."""
