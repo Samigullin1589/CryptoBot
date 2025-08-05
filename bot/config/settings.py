@@ -2,8 +2,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная, самодостаточная система конфигурации.
-# Адаптирована под реальную структуру JSON-файлов проекта.
-# Загружает все конфиги, объединяет и валидирует их в единую модель.
+# ИСПРАВЛЕНИЕ: Устранена ошибка NameError путем изменения порядка определения классов.
 # =================================================================================
 
 import json
@@ -45,6 +44,17 @@ class NewsServiceConfig(BaseModel):
     cache_ttl_seconds: int = 3600
     feeds: Dict[str, HttpUrl]
 
+# ИСПРАВЛЕНИЕ: Класс EndpointsConfig перенесен ВЫШЕ класса Settings, чтобы избежать NameError.
+class EndpointsConfig(BaseModel):
+    # Эта модель остается вложенной, так как endpoints.json, скорее всего, имеет такую структуру
+    coingecko_api_base: HttpUrl
+    coingecko_api_coins_list: HttpUrl
+    coingecko_api_simple_price: HttpUrl
+    coingecko_api_coins_markets: HttpUrl
+    coingecko_api_trending: HttpUrl
+    blockchain_info_hashrate: HttpUrl
+    mempool_space_difficulty: HttpUrl
+
 # --- Главная модель настроек ---
 # Объединяет в себе ВСЕ параметры из всех конфигурационных файлов.
 # Это позволяет иметь единый, типизированный и валидированный источник истины.
@@ -63,7 +73,7 @@ class Settings(BaseModel):
     # --- Параметры из других файлов ---
     throttling: ThrottlingConfig
     feature_flags: FeatureFlags
-    endpoints: EndpointsConfig # EndpointsConfig будет загружен как вложенный словарь
+    endpoints: EndpointsConfig # Теперь EndpointsConfig определен и доступен
     price_service: PriceServiceConfig
     coin_list_service: CoinListServiceConfig
     news_service: NewsServiceConfig
@@ -74,16 +84,6 @@ class Settings(BaseModel):
         populate_by_name = True
         # Позволяет игнорировать лишние поля в JSON, которые не определены в модели
         extra = 'ignore'
-
-class EndpointsConfig(BaseModel):
-    # Эта модель остается вложенной, так как endpoints.json, скорее всего, имеет такую структуру
-    coingecko_api_base: HttpUrl
-    coingecko_api_coins_list: HttpUrl
-    coingecko_api_simple_price: HttpUrl
-    coingecko_api_coins_markets: HttpUrl
-    coingecko_api_trending: HttpUrl
-    blockchain_info_hashrate: HttpUrl
-    mempool_space_difficulty: HttpUrl
 
 
 def load_settings(base_path: str = "data") -> Settings:
@@ -130,7 +130,7 @@ def load_settings(base_path: str = "data") -> Settings:
         logger.info("Все конфигурации успешно загружены и валидированы.")
         return settings_instance
     except ValidationError as e:
-        # ИСПРАВЛЕНИЕ: Безопасное логирование ошибки валидации
+        # Безопасное логирование ошибки валидации
         logger.critical(f"Критическая ошибка валидации настроек. Проверьте ваши .json файлы. Ошибки: {e}")
         raise SystemExit("Не удалось инициализировать настройки из-за ошибок валидации.")
 
