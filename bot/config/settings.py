@@ -2,8 +2,9 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная, самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Использован @model_validator для гарантированной обработки
-# ADMIN_USER_IDS до основной валидации, что решает ошибку парсинга.
+# ИСПРАВЛЕНИЕ: Изменен тип ADMIN_USER_IDS на 'Any' и используется
+# @field_validator для гарантированной обработки строки с запятыми ПОСЛЕ
+# её успешного считывания, что решает ошибку парсинга.
 # =================================================================================
 
 import json
@@ -14,7 +15,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 from dotenv import load_dotenv
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
-                      ConfigDict, ValidationError, model_validator)
+                      ConfigDict, ValidationError, field_validator)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Гарантированно загружаем переменные из .env файла или окружения Render
@@ -74,7 +75,8 @@ class Settings(BaseSettings):
 
     # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     BOT_TOKEN: SecretStr
-    ADMIN_USER_IDS: List[int]
+    # ИСПРАВЛЕНИЕ: Читаем как 'Any', чтобы избежать ошибки парсинга по умолчанию
+    ADMIN_USER_IDS: Any
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     ADMIN_CHAT_ID: Optional[int] = None
@@ -92,24 +94,20 @@ class Settings(BaseSettings):
     news_service: NewsServiceConfig
     ai: AIConfig
 
-    # ИСПРАВЛЕНИЕ: Использован @model_validator, который срабатывает раньше
-    @model_validator(mode='before')
+    # ИСПРАВЛЕНИЕ: Используем @field_validator, который сработает ПОСЛЕ чтения строки
+    @field_validator('ADMIN_USER_IDS', mode='before')
     @classmethod
-    def _parse_admin_ids_from_str(cls, data: Any) -> Any:
+    def parse_admin_ids(cls, v: Any) -> List[int]:
         """
-        Перехватывает и преобразует ADMIN_USER_IDS до начала основной валидации.
+        Преобразует строку '1,2,3' в список чисел [1, 2, 3].
         """
-        if isinstance(data, dict):
-            admin_ids = data.get('ADMIN_USER_IDS')
-            if admin_ids and isinstance(admin_ids, str):
-                try:
-                    # Пытаемся обработать как JSON. Если получится, Pydantic справится сам.
-                    json.loads(admin_ids)
-                except json.JSONDecodeError:
-                    # Если это не JSON, значит, это строка с запятыми. Преобразуем ее в список.
-                    logger.warning("ADMIN_USER_IDS не в формате JSON. Преобразование из строки с запятыми.")
-                    data['ADMIN_USER_IDS'] = [int(i.strip()) for i in admin_ids.split(',') if i.strip()]
-        return data
+        if isinstance(v, str):
+            # Если это строка, разделяем ее по запятой и преобразуем в список int
+            return [int(item.strip()) for item in v.split(',') if item.strip()]
+        if isinstance(v, list):
+            # Если это уже список (например, из JSON), просто возвращаем его
+            return v
+        raise ValueError("ADMIN_USER_IDS должен быть строкой с запятыми или списком")
 
 def _load_json_file(path: Path) -> Dict[str, Any]:
     """Вспомогательная функция для безопасной загрузки JSON."""
