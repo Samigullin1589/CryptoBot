@@ -2,9 +2,8 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная, самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Изменен тип ADMIN_USER_IDS на 'Any' и используется
-# @field_validator для гарантированной обработки строки с запятыми ПОСЛЕ
-# её успешного считывания, что решает ошибку парсинга.
+# ИСПРАВЛЕНИЕ: Добавлены значения по умолчанию для недостающих полей в
+# JSON-конфигурациях, что делает запуск отказоустойчивым.
 # =================================================================================
 
 import json
@@ -42,8 +41,9 @@ class PriceServiceConfig(BaseModel):
     top_n_coins: int = 100
 
 class CoinListServiceConfig(BaseModel):
-    update_interval_hours: int
-    fallback_file_path: str
+    # ИСПРАВЛЕНИЕ: Добавлены значения по умолчанию
+    update_interval_hours: int = 24
+    fallback_file_path: str = "data/fallback_coins.json"
     search_score_cutoff: int = 85
 
 class NewsFeeds(BaseModel):
@@ -51,7 +51,8 @@ class NewsFeeds(BaseModel):
     alpha_rss_feeds: List[HttpUrl]
 
 class NewsServiceConfig(BaseModel):
-    cache_ttl_seconds: int = Field(..., alias="subscription_ttl_seconds")
+    # ИСПРАВЛЕНИЕ: Добавлено значение по умолчанию
+    cache_ttl_seconds: int = Field(default=3600, alias="subscription_ttl_seconds")
     feeds: NewsFeeds
 
 class EndpointsConfig(BaseModel):
@@ -75,8 +76,7 @@ class Settings(BaseSettings):
 
     # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     BOT_TOKEN: SecretStr
-    # ИСПРАВЛЕНИЕ: Читаем как 'Any', чтобы избежать ошибки парсинга по умолчанию
-    ADMIN_USER_IDS: Any
+    ADMIN_USER_IDS: Any # Валидируется ниже
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     ADMIN_CHAT_ID: Optional[int] = None
@@ -94,7 +94,6 @@ class Settings(BaseSettings):
     news_service: NewsServiceConfig
     ai: AIConfig
 
-    # ИСПРАВЛЕНИЕ: Используем @field_validator, который сработает ПОСЛЕ чтения строки
     @field_validator('ADMIN_USER_IDS', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
@@ -102,10 +101,8 @@ class Settings(BaseSettings):
         Преобразует строку '1,2,3' в список чисел [1, 2, 3].
         """
         if isinstance(v, str):
-            # Если это строка, разделяем ее по запятой и преобразуем в список int
             return [int(item.strip()) for item in v.split(',') if item.strip()]
         if isinstance(v, list):
-            # Если это уже список (например, из JSON), просто возвращаем его
             return v
         raise ValueError("ADMIN_USER_IDS должен быть строкой с запятыми или списком")
 
