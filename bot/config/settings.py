@@ -1,137 +1,159 @@
-# =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "ГЕНИЙ 5.0" - АВГУСТ 2025 - ПРОДАКШН)
-# Описание: Полная, самодостаточная конфигурация приложения.
-# =================================================================================
+# bot/config/settings.py
+# Файл полностью переработан для использования Pydantic V2.
+# Это обеспечивает строгую валидацию данных при запуске, повышает надёжность
+# и упрощает работу с конфигурациями.
 
 import json
-from pathlib import Path
-from typing import List, Dict, Any
-import logging
-import sys
+import os
+from typing import List, Dict, Type, TypeVar
 
-# Импортируем HttpUrl для валидации URL-адресов
-from pydantic import BaseModel, Field, SecretStr, computed_field, HttpUrl
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from loguru import logger
+from pydantic import BaseModel, Field, RedisDsn, HttpUrl, SecretStr
 
-# Определяем BASE_DIR и директорию для конфигураций
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-CONFIG_DATA_DIR = BASE_DIR / "data"
+# Generic Pydantic model type
+T = TypeVar('T', bound=BaseModel)
 
-# --- Вспомогательные модели для JSON-конфигураций ---
 
-class PriceServiceConfig(BaseModel):
+def _load_model_from_path(model: Type[T], path: str) -> T:
     """
-    Конфигурация для PriceService.
+    Загружает и валидирует Pydantic модель из указанного JSON файла.
+    Вызывает исключения, если файл не найден, имеет неверный формат или не проходит валидацию.
     """
-    cache_ttl_seconds: int = Field(default=60, description="Время жизни кэша цен в секундах")
-    tracked_coins: List[str] = Field(description="Список тикеров монет для отслеживания (например, BTC, ETH)")
+    if not os.path.exists(path):
+        logger.error(f"Файл конфигурации не найден: {path}")
+        raise FileNotFoundError(f"Файл конфигурации не найден: {path}")
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return model.model_validate(data)
+    except json.JSONDecodeError as e:
+        logger.error(f"Ошибка декодирования JSON из {path}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Не удалось загрузить или валидировать конфигурацию из {path}: {e}")
+        raise
+
+
+# --- Определения моделей конфигурации ---
+
+class BotConfig(BaseModel):
+    """Конфигурация для самого Telegram бота."""
+    token: SecretStr  # SecretStr защищает токен от случайного логирования
+    admin_ids: List[int]
+
+
+class RedisConfig(BaseModel):
+    """Конфигурация для подключения к Redis."""
+    dsn: RedisDsn = Field(..., description="Строка подключения к Redis, например 'redis://user:password@host:port'")
+    host: str
+    port: int
+    db: int = Field(0, ge=0, le=15)
+    password: SecretStr | None = None
+
+
+class AppConfig(BaseModel):
+    """Вложенная структура для файла app_config.json."""
+    bot: BotConfig
+    redis: RedisConfig
+
+
+class ThrottlingConfig(BaseModel):
+    """Конфигурация для middleware ограничения запросов."""
+    rate_limit: float = 0.5
+    key_prefix: str = "throttling"
+
+
+class FeatureFlags(BaseModel):
+    """Флаги для включения/отключения функционала бота."""
+    maintenance_mode: bool = False
+    enable_game: bool = True
+    enable_threat_protection: bool = True
+
 
 class EndpointsConfig(BaseModel):
+    """API эндпоинты, используемые различными сервисами."""
+    coingecko_api_base: HttpUrl
+    coingecko_api_coins_list: HttpUrl
+    coingecko_api_simple_price: HttpUrl
+    coingecko_api_coins_markets: HttpUrl
+    coingecko_api_trending: HttpUrl
+    blockchain_info_hashrate: HttpUrl
+    mempool_space_difficulty: HttpUrl
+
+
+class PriceServiceConfig(BaseModel):
+    """Конфигурация для сервиса цен."""
+    cache_ttl_seconds: int = 300
+    top_n_coins: int = 100
+
+
+class CoinListServiceConfig(BaseModel):
+    """Конфигурация для сервиса списка монет. ИСПРАВЛЯЕТ ИСХОДНУЮ ОШИБКУ."""
+    update_interval_hours: int
+    fallback_file_path: str
+
+
+class NewsServiceConfig(BaseModel):
+    """Конфигурация для сервиса новостей."""
+    cache_ttl_seconds: int = 3600
+    feeds: Dict[str, HttpUrl]
+
+
+class AIConfig(BaseModel):
+    """Конфигурация для AI сервисов (например, Gemini)."""
+    provider: str = "gemini"
+    api_key: SecretStr
+    model_name: str = "gemini-1.5-flash-latest"
+
+
+class Settings(BaseModel):
     """
-    Конфигурация URL-адресов для внешних источников данных.
-    Использует Pydantic HttpUrl для строгой валидации.
+    Главный объект настроек, агрегирующий все конфигурации.
+    Собирается функцией load_settings.
     """
-    whattomine_api: HttpUrl
-    asicminervalue_api: HttpUrl
-    minerstat_hardware_api: HttpUrl
-    
-    # Используем T | None для опциональности (Стандарт 2025).
-    coingecko_api_base: HttpUrl | None = None
+    app: AppConfig
+    throttling: ThrottlingConfig
+    feature_flags: FeatureFlags
+    endpoints: EndpointsConfig
+    price_service: PriceServiceConfig
+    coin_list_service: CoinListServiceConfig
+    news_service: NewsServiceConfig
+    ai: AIConfig
+    # Другие модели конфигураций добавляются сюда как атрибуты
 
-class GameTariff(BaseModel):
-    cost_per_hour: float
-    unlock_price: float
 
-class GameSettings(BaseModel):
-    mining_duration_seconds: int
-    min_withdrawal_amount: float
-    market_commission_rate: float
-    default_electricity_tariff: str
-    electricity_tariffs: Dict[str, GameTariff]
+def load_settings(base_path: str = "data") -> Settings:
+    """
+    Загружает все файлы конфигурации из указанной директории,
+    валидирует их и возвращает единый, всеобъемлющий объект Settings.
+    Эта функция является единственным источником истины для всех настроек бота.
+    """
+    logger.info(f"Загрузка конфигураций из директории: {base_path}")
+    try:
+        # Загружаем каждый файл конфигурации в соответствующую Pydantic модель
+        app_config = _load_model_from_path(AppConfig, os.path.join(base_path, "app_config.json"))
+        throttling_config = _load_model_from_path(ThrottlingConfig, os.path.join(base_path, "throttling_config.json"))
+        feature_flags = _load_model_from_path(FeatureFlags, os.path.join(base_path, "feature_flags.json"))
+        endpoints_config = _load_model_from_path(EndpointsConfig, os.path.join(base_path, "endpoints_config.json"))
+        price_service_config = _load_model_from_path(PriceServiceConfig, os.path.join(base_path, "price_service_config.json"))
+        coin_list_service_config = _load_model_from_path(CoinListServiceConfig, os.path.join(base_path, "coin_list_config.json"))
+        news_service_config = _load_model_from_path(NewsServiceConfig, os.path.join(base_path, "news_service_config.json"))
+        ai_config = _load_model_from_path(AIConfig, os.path.join(base_path, "ai_config.json"))
 
-class CryptoCenterSettings(BaseModel):
-    news_context_limit: int
-    alpha_cache_ttl_seconds: int
-    feed_cache_ttl_seconds: int
+        # Собираем финальный объект Settings
+        settings = Settings(
+            app=app_config,
+            throttling=throttling_config,
+            feature_flags=feature_flags,
+            endpoints=endpoints_config,
+            price_service=price_service_config,
+            coin_list_service=coin_list_service_config,
+            news_service=news_service_config,
+            ai=ai_config,
+        )
+        logger.info("Все конфигурации успешно загружены и валидированы.")
+        return settings
 
-class ThrottlingSettings(BaseModel):
-    rate_limit: float
-    user_rate_limit: float
-    chat_rate_limit: float
-
-class AsicServiceConfig(BaseModel):
-    # Пороги для RapidFuzz
-    merge_score_cutoff: int = Field(ge=0, le=100, default=90)
-    enrich_score_cutoff: int = Field(ge=0, le=100, default=85)
-
-# --- Главный класс настроек ---
-
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=BASE_DIR / '.env',
-        env_file_encoding='utf-8',
-        extra='ignore' # Игнорируем переменные окружения, не описанные в модели
-    )
-
-    # --- Переменные из Environment ---
-    BOT_TOKEN: SecretStr
-    GEMINI_API_KEY: SecretStr | None = None
-    ADMIN_USER_IDS: str
-    ADMIN_CHAT_ID: int
-    NEWS_CHAT_ID: int
-    REDIS_URL: str
-
-    @computed_field
-    @property
-    def admin_ids_list(self) -> List[int]:
-        if not self.ADMIN_USER_IDS:
-            return []
-        try:
-            return [int(item.strip()) for item in self.ADMIN_USER_IDS.split(',')]
-        except ValueError:
-            # Критическая ошибка конфигурации должна останавливать запуск
-            logging.critical("Ошибка конфигурации: ADMIN_USER_IDS должен быть списком чисел, разделенных запятыми.")
-            raise ValueError("ADMIN_USER_IDS имеет неверный формат.")
-
-    # --- Вспомогательная функция для безопасной загрузки JSON ---
-    # Обеспечивает надежность запуска при отсутствии или повреждении конфигурационных файлов.
-    @staticmethod
-    def _load_json_config(file_path: Path) -> Dict[str, Any]:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logging.critical(f"Критическая ошибка запуска: Конфигурационный файл не найден: {file_path}")
-            raise
-        except json.JSONDecodeError:
-            logging.critical(f"Критическая ошибка запуска: Ошибка декодирования JSON в файле: {file_path}")
-            raise
-
-    # --- Настройки, загружаемые из JSON-файлов ---
-    
-    game: GameSettings = Field(
-        default_factory=lambda: GameSettings(**Settings._load_json_config(CONFIG_DATA_DIR / "game_config.json"))
-    )
-    crypto_center: CryptoCenterSettings = Field(
-        default_factory=lambda: CryptoCenterSettings(**Settings._load_json_config(CONFIG_DATA_DIR / "crypto_center_config.json"))
-    )
-    throttling: ThrottlingSettings = Field(
-        default_factory=lambda: ThrottlingSettings(**Settings._load_json_config(CONFIG_DATA_DIR / "throttling_config.json"))
-    )
-    asic_service: AsicServiceConfig = Field(
-        default_factory=lambda: AsicServiceConfig(**Settings._load_json_config(CONFIG_DATA_DIR / "asic_service_config.json"))
-    )
-    endpoints: EndpointsConfig = Field(
-        default_factory=lambda: EndpointsConfig(**Settings._load_json_config(CONFIG_DATA_DIR / "endpoints_config.json"))
-    )
-    price_service: PriceServiceConfig = Field(
-        default_factory=lambda: PriceServiceConfig(**Settings._load_json_config(CONFIG_DATA_DIR / "price_service_config.json"))
-    )
-
-# Глобальный экземпляр настроек. Инициализируется при импорте модуля.
-try:
-    settings = Settings()
-except Exception as e:
-    # Перехватываем любую ошибку инициализации и завершаем работу
-    logging.critical(f"Не удалось инициализировать настройки приложения: {e}")
-    sys.exit(1)
+    except Exception as e:
+        logger.critical(f"Критическая ошибка во время инициализации настроек: {e}")
+        raise SystemExit(f"Не удалось инициализировать настройки: {e}")

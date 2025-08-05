@@ -1,21 +1,35 @@
-envVars:
-  - key: PYTHON_VERSION
-    value: '3.11' # Или ваша версия
-  - key: REDIS_URL
-    fromService:
-      type: redis
-      name: cryptobot-redis
-      property: connectionString
+# Файл конфигурации для хостинга Render.com
+# Указана современная версия Python и улучшена команда сборки.
 
-  # --- Ключи API и настройки бота (теперь "плоские") ---
-  # Эти значения вы уже заполнили в панели управления Render
-  - key: BOT_TOKEN
-    sync: false 
-  - key: GEMINI_API_KEY
-    sync: false
-  - key: ADMIN_IDS
-    sync: false
-  - key: ADMIN_CHAT_ID
-    sync: false
-  - key: NEWS_CHAT_ID
-    sync: false
+services:
+  - type: worker # Тип сервиса - воркер, т.к. бот работает постоянно
+    name: crypto-bot
+    env: python
+    # Указываем современную, стабильную версию Python
+    pythonVersion: "3.12"
+    # Обновлённая команда сборки
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    # Команда для запуска бота. Флаг -m позволяет Python запускать модуль как скрипт.
+    startCommand: python -m bot.main
+    envVars:
+      - key: PYTHONPATH
+        value: . # Добавляем корневую директорию проекта в пути поиска модулей
+      # Переменные окружения, такие как токен бота, следует хранить
+      # в секретах Render, а не в этом файле.
+      # Пример того, как это могло бы выглядеть:
+      # - key: BOT_TOKEN
+      #   fromSecret: BOT_TOKEN_SECRET
+    # Автоматический перезапуск при сбоях
+    restartPolicy: on-failure
+
+  - type: redis # Отдельный сервис для Redis
+    name: cache
+    # IP-адреса, с которых разрешён доступ. Должен включать IP воркера.
+    # Для простоты можно оставить пустым, но для безопасности лучше настроить.
+    ipAllowList: []
+    # Выберите подходящий план. 'free' для тестов, платный для продакшена.
+    plan: free
+    # Политика вытеснения ключей при нехватке памяти. allkeys-lru - хороший выбор для кэша.
+    maxmemoryPolicy: allkeys-lru

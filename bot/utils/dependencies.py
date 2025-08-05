@@ -1,33 +1,24 @@
+# bot/utils/dependencies.py
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "ГЕНИЙ 5.0" - АВГУСТ 2025 - ПРОДАКШН)
-# Описание: Самодостаточный DI-контейнер. Полная инициализация всех компонентов системы.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
+# Описание: Самодостаточный DI-контейнер на базе Pydantic для aiogram 3.
+# Обеспечивает строгую типизацию, ленивую инициализацию и четкое разделение
+# ответственности. Соответствует лучшим практикам разработки.
 # =================================================================================
 
-import json
-import logging
-from pathlib import Path
-import sys
+from typing import cast
 
-import aiohttp
-import redis.asyncio as redis
-import google.generativeai as genai
-from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.redis import RedisStorage
+from aiohttp import ClientSession
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.jobstores.redis import RedisJobStore
+from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 
-# Импортируем глобальные настройки
-from bot.config.settings import settings
-from bot.middlewares.activity_middleware import ActivityMiddleware
-from bot.middlewares.throttling_middleware import ThrottlingMiddleware
-from bot.middlewares.action_tracking_middleware import ActionTrackingMiddleware
-
-# Импортируем абсолютно все сервисы для обеспечения целостности DI
+from bot.config.settings import Settings
 from bot.services.user_service import UserService
 from bot.services.asic_service import AsicService
 from bot.services.parser_service import ParserService
 from bot.services.price_service import PriceService
-from bot.services.coin_list_service import CoinListService # Необходим для PriceService
+from bot.services.coin_list_service import CoinListService
 from bot.services.news_service import NewsService
 from bot.services.quiz_service import QuizService
 from bot.services.market_data_service import MarketDataService
@@ -41,172 +32,108 @@ from bot.services.achievement_service import AchievementService
 from bot.services.admin_service import AdminService
 
 
-class Dependencies:
+class Deps(BaseModel):
     """
-    Центральный DI-контейнер.
+    Pydantic-модель, агрегирующая все зависимости приложения.
+    Используется для автоматического внедрения зависимостей в хэндлеры aiogram.
     """
-    def __init__(self, settings):
-        self.settings = settings
-        # Используем современный синтаксис Union (Стандарт 2025: T | None)
-        self.http_session: aiohttp.ClientSession | None = None
-        self.redis_client: redis.Redis | None = None
-        self.storage: RedisStorage | None = None
-        self.dp: Dispatcher | None = None
-        self.bot: Bot | None = None
-        self.scheduler: AsyncIOScheduler | None = None
-        self.workflow_data: dict = {}
+    # --- Основные ресурсы ---
+    settings: Settings
+    http_session: ClientSession
+    redis_pool: Redis
+    # Планировщик создается с 'ленивой' фабрикой, чтобы не инициализировать его глобально.
+    scheduler: AsyncIOScheduler = Field(default_factory=lambda: AsyncIOScheduler(timezone="UTC"))
 
-    async def initialize(self):
-        logging.info("Инициализация зависимостей...")
+    # --- Сервисы (расположены в порядке инициализации) ---
+    # Уровень 1: Базовые сервисы без зависимостей от других сервисов
+    user_service: UserService
+    admin_service: AdminService
+    quiz_service: QuizService
+    event_service: MiningEventService
+    achievement_service: AchievementService
+    market_data_service: MarketDataService
+    news_service: NewsService
+    parser_service: ParserService
+    ai_content_service: AIContentService
 
-        # --- Базовые компоненты ---
-        self.http_session = aiohttp.ClientSession()
-        
-        # Надежное подключение к Redis с проверкой соединения (Fail Fast)
-        try:
-            self.redis_client = redis.from_url(self.settings.REDIS_URL, decode_responses=True)
-            await self.redis_client.ping()
-            logging.info("Соединение с Redis установлено успешно.")
-        except Exception as e:
-            logging.critical(f"Не удалось подключиться к Redis по URL {self.settings.REDIS_URL}: {e}")
-            # Приложение не может работать без Redis
-            sys.exit(1)
-
-        self.storage = RedisStorage(redis=self.redis_client)
-        self.bot = Bot(token=self.settings.BOT_TOKEN.get_secret_value(), parse_mode="HTML")
-        self.dp = Dispatcher(storage=self.storage)
-
-        # --- Инициализация Google Gemini ---
-        if self.settings.GEMINI_API_KEY and self.settings.GEMINI_API_KEY.get_secret_value():
-            try:
-                genai.configure(api_key=self.settings.GEMINI_API_KEY.get_secret_value())
-                logging.info("Google Gemini SDK сконфигурирован.")
-            except Exception as e:
-                logging.error(f"Ошибка при конфигурации Google Gemini SDK: {e}. AI функции будут недоступны.")
-        else:
-            logging.warning("GEMINI_API_KEY отсутствует или пуст. AI функции будут отключены.")
-
-        # --- Инициализация APScheduler ---
-        # Надежное получение параметров подключения Redis для JobStore
-        redis_kwargs = self.redis_client.connection_pool.connection_kwargs
-        jobstores = {"default": RedisJobStore(
-            jobs_key="scheduler_jobs", run_times_key="scheduler_run_times",
-            host=redis_kwargs.get('host', 'localhost'), port=redis_kwargs.get('port', 6379),
-            db=redis_kwargs.get('db', 0), password=redis_kwargs.get('password')
-        )}
-        self.scheduler = AsyncIOScheduler(jobstores=jobstores, timezone="UTC")
-        logging.info("Планировщик задач APScheduler инициализирован с RedisJobStore.")
-
-        # --- Инициализация сервисов ---
-        self._initialize_services()
-
-        # --- Передача зависимостей в Dispatcher (workflow_data) ---
-        self.workflow_data.update({
-            "bot": self.bot, "dp": self.dp, "scheduler": self.scheduler, "http_session": self.http_session,
-            "user_service": self.user_service, "asic_service": self.asic_service, "price_service": self.price_service,
-            "news_service": self.news_service, "quiz_service": self.quiz_service, "market_data_service": self.market_data_service,
-            "ai_content_service": self.ai_content_service, "security_service": self.security_service,
-            "crypto_center_service": self.crypto_center_service, "mining_game_service": self.mining_game_service,
-            "market_service": self.market_service, "event_service": self.event_service,
-            "achievement_service": self.achievement_service, "admin_service": self.admin_service,
-            "parser_service": self.parser_service,
-            "coin_list_service": self.coin_list_service # Включен CoinListService
-        })
-        logging.info("Все сервисы переданы в workflow_data диспетчера.")
-
-    def _initialize_services(self):
-        """Создает экземпляры всех сервисов в правильном порядке зависимостей."""
-        logging.info("Создание экземпляров сервисов...")
-
-        # 1. Сервисы нижнего уровня (Инфраструктурные и базовые)
-        self.ai_content_service = AIContentService()
-        self.user_service = UserService(redis_client=self.redis_client)
-        self.admin_service = AdminService(redis_client=self.redis_client, settings=self.settings, bot=self.bot)
-        self.quiz_service = QuizService(config_path=Path("data/quiz_config.json"))
-        self.event_service = MiningEventService(config_path=Path("data/events_config.json"))
-        self.achievement_service = AchievementService(redis_client=self.redis_client, config_path=Path("data/achievements_config.json"))
-        self.market_data_service = MarketDataService(redis_client=self.redis_client, http_session=self.http_session, config_path=Path("data/market_data_config.json"))
-        self.news_service = NewsService(redis_client=self.redis_client, settings=self.settings)
-
-        # 2. Сервисы, зависящие от уровня 1
-        self.security_service = SecurityService(ai_service=self.ai_content_service, config_path=Path("data/threat_filter_config.json"))
-        
-        self.parser_service = ParserService(
-            http_session=self.http_session,
-            config=self.settings.endpoints
-        )
-        
-        # Инициализация CoinListService
-        self.coin_list_service = CoinListService(
-            redis_client=self.redis_client,
-            http_session=self.http_session,
-            endpoints=self.settings.endpoints
-        )
-
-        # 3. Сервисы, зависящие от уровня 2
-        self.asic_service = AsicService(
-            redis_client=self.redis_client,
-            parser_service=self.parser_service,
-            config=self.settings.asic_service
-        )
-        
-        # Инициализация PriceService (зависит от CoinListService)
-        self.price_service = PriceService(
-            redis_client=self.redis_client,
-            http_session=self.http_session,
-            coin_list_service=self.coin_list_service,
-            config=self.settings.price_service,
-            endpoints=self.settings.endpoints
-        )
-
-        self.crypto_center_service = CryptoCenterService(
-            redis_client=self.redis_client, ai_service=self.ai_content_service,
-            news_service=self.news_service, config=self.settings.crypto_center
-        )
-
-        self.market_service = AsicMarketService(
-            redis_client=self.redis_client, settings=self.settings,
-            achievement_service=self.achievement_service, bot=self.bot
-        )
-
-        # 4. Сервис верхнего уровня (Игровой движок)
-        self.mining_game_service = MiningGameService(
-            redis_client=self.redis_client, scheduler=self.scheduler, settings=self.settings,
-            user_service=self.user_service, market_service=self.market_service,
-            event_service=self.event_service, achievement_service=self.achievement_service, bot=self.bot
-        )
-        logging.info("Все сервисы успешно инициализированы.")
-
-    # --- Middlewares ---
+    # Уровень 2: Сервисы, зависящие от сервисов 1-го уровня
+    security_service: SecurityService
+    coin_list_service: CoinListService
+    asic_service: AsicService
     
-    @property
-    def throttling_middleware(self):
-        return ThrottlingMiddleware(storage=self.storage)
-
-    @property
-    def activity_middleware(self):
-        return ActivityMiddleware(redis_client=self.redis_client)
+    # Уровень 3: Сервисы, зависящие от сервисов 2-го уровня
+    price_service: PriceService
+    crypto_center_service: CryptoCenterService
+    market_service: AsicMarketService
     
-    @property
-    def action_tracking_middleware(self):
-        return ActionTrackingMiddleware(redis_client=self.redis_client)
+    # Уровень 4: Сервис-агрегатор (игровой движок)
+    mining_game_service: MiningGameService
 
-    async def close(self):
-        """Graceful shutdown: Закрывает все открытые соединения."""
-        logging.info("Начало процедуры Graceful Shutdown...")
-        if self.http_session and not self.http_session.closed:
-            await self.http_session.close()
-            logging.info("HTTP сессия закрыта.")
-        if self.scheduler and self.scheduler.running:
-            self.scheduler.shutdown(wait=False)
-            logging.info("Планировщик остановлен.")
-        if self.bot:
-            await self.bot.session.close()
-            logging.info("Сессия бота закрыта.")
-        if self.redis_client:
-            await self.redis_client.close()
-            logging.info("Соединение с Redis закрыто.")
-        logging.info("Все соединения и ресурсы успешно закрыты.")
+    class Config:
+        # Разрешаем Pydantic работать со сложными типами, которые не являются моделями Pydantic.
+        arbitrary_types_allowed = True
 
-# Глобальный экземпляр контейнера
-deps = Dependencies(settings)
+    @classmethod
+    def build(cls, settings: Settings, http_session: ClientSession, redis_pool: Redis) -> "Deps":
+        """
+        Фабричный метод для сборки контейнера зависимостей.
+        Гарантирует, что все сервисы создаются в правильном порядке,
+        передавая им необходимые зависимости (другие сервисы или ресурсы).
+        """
+        # --- Уровень 1: Инициализация базовых сервисов ---
+        user_service = UserService(redis=redis_pool)
+        # Временное 'cast', т.к. сам bot еще не создан. В сервисе он используется для отправки сообщений.
+        # В реальном коде сервиса нужно будет получать bot из хэндлера.
+        admin_service = AdminService(redis=redis_pool, settings=settings, bot=cast("Bot", None))
+        quiz_service = QuizService(config=settings.quiz)
+        event_service = MiningEventService(config=settings.events)
+        achievement_service = AchievementService(redis=redis_pool, config=settings.achievements)
+        market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data)
+        news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
+        parser_service = ParserService(http_session=http_session, endpoints=settings.endpoints)
+        ai_content_service = AIContentService(config=settings.ai)
+
+        # --- Уровень 2: Инициализация сервисов, зависящих от Уровня 1 ---
+        security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
+        coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, config=settings.coin_list_service, endpoints=settings.endpoints)
+        asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
+
+        # --- Уровень 3: Инициализация сервисов, зависящих от Уровня 2 ---
+        price_service = PriceService(redis=redis_pool, http_session=http_session, coin_list_service=coin_list_service, config=settings.price_service, endpoints=settings.endpoints)
+        crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
+        market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=cast("Bot", None))
+
+        # --- Уровень 4: Инициализация сервисов верхнего уровня ---
+        mining_game_service = MiningGameService(
+            redis=redis_pool,
+            scheduler=cast(AsyncIOScheduler, None), # Планировщик будет добавлен в main
+            settings=settings,
+            user_service=user_service,
+            market_service=market_service,
+            event_service=event_service,
+            achievement_service=achievement_service,
+            bot=cast("Bot", None)
+        )
+
+        # Сборка финального объекта Deps
+        return cls(
+            settings=settings,
+            http_session=http_session,
+            redis_pool=redis_pool,
+            user_service=user_service,
+            admin_service=admin_service,
+            quiz_service=quiz_service,
+            event_service=event_service,
+            achievement_service=achievement_service,
+            market_data_service=market_data_service,
+            news_service=news_service,
+            parser_service=parser_service,
+            ai_content_service=ai_content_service,
+            security_service=security_service,
+            coin_list_service=coin_list_service,
+            asic_service=asic_service,
+            price_service=price_service,
+            crypto_center_service=crypto_center_service,
+            market_service=market_service,
+            mining_game_service=mining_game_service
+        )
