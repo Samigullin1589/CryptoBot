@@ -1,3 +1,4 @@
 {
-  "cache_ttl_seconds": 120
+  "cache_ttl_seconds": 60,
+  "tracked_coins": ["BTC", "ETH", "LTC", "DOGE", "KAS", "XCH", "TON"]
 }
