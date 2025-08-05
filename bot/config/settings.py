@@ -3,25 +3,30 @@
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная, самодостаточная система конфигурации.
 # Реализована гибридная загрузка: секреты из переменных окружения,
-# остальное - из JSON-файов. Модели точно соответствуют структуре данных.
+# остальное - из JSON-файлов. Модели точно соответствуют именам переменных в Render.
+# Добавлена принудительная загрузка переменных через python-dotenv.
 # =================================================================================
 
 import json
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from loguru import logger
-from pydantic import BaseModel, Field, RedisDsn, HttpUrl, SecretStr, ConfigDict, ValidationError
+# ИСПРАВЛЕНИЕ: Принудительно загружаем переменные окружения
+from dotenv import load_dotenv
+from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
+                      ConfigDict, ValidationError, field_validator)
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Гарантированно загружаем переменные из .env файла или окружения Render
+load_dotenv()
 
 # --- Определения моделей для частей конфигурации ---
 
 class AIConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     provider: str = "gemini"
-    # api_key будет загружен из переменных окружения
-    model_name: str = Field(..., alias="default_model_name", description="Имя модели для использования")
+    model_name: str = Field(..., alias="default_model_name")
 
 class ThrottlingConfig(BaseModel):
     rate_limit: float = 0.5
@@ -39,20 +44,18 @@ class PriceServiceConfig(BaseModel):
 class CoinListServiceConfig(BaseModel):
     update_interval_hours: int
     fallback_file_path: str
-    search_score_cutoff: int = 85 # Добавлено поле из coin_list_config.json
+    search_score_cutoff: int = 85
 
 class NewsFeeds(BaseModel):
-    # ИСПРАВЛЕНО: Модель для правильной валидации списков URL
     main_rss_feeds: List[HttpUrl]
     alpha_rss_feeds: List[HttpUrl]
 
 class NewsServiceConfig(BaseModel):
     cache_ttl_seconds: int = Field(..., alias="subscription_ttl_seconds")
-    feeds: NewsFeeds # Feeds будут добавлены из отдельного файла
+    feeds: NewsFeeds
 
 class EndpointsConfig(BaseModel):
-    # ИСПРАВЛЕНО: Все поля сделаны опциональными для гибкости.
-    # Pydantic будет использовать только те, что найдет в файле.
+    # ИСПРАВЛЕНИЕ: Все поля опциональны, чтобы избежать падения, если ключ отсутствует в JSON
     coingecko_api_base: Optional[HttpUrl] = None
     coingecko_api_coins_list: Optional[HttpUrl] = None
     coingecko_api_simple_price: Optional[HttpUrl] = None
@@ -69,15 +72,21 @@ class Settings(BaseSettings):
     """
     Главный класс настроек. Загружает данные из переменных окружения и JSON-файлов.
     """
-    # 1. Поля, загружаемые из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ (стандарт для Render)
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
+    # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ (имена и alias соответствуют скриншоту)
     BOT_TOKEN: SecretStr
-    ADMIN_IDS: List[int]
-    REDIS_DSN: RedisDsn
+    ADMIN_USER_IDS: List[int]
+    REDIS_URL: RedisDsn # ИСПРАВЛЕНО: ищем REDIS_URL, а не REDIS_DSN
     GEMINI_API_KEY: SecretStr
+    # Дополнительные переменные со скриншота
+    ADMIN_CHAT_ID: Optional[int] = None
+    NEWS_CHAT_ID: Optional[int] = None
+    OPENAI_API_KEY: Optional[SecretStr] = None
+    CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
 
-    # 2. Поля, загружаемые из JSON-файлов (заполняются ниже)
+
+    # 2. Поля из JSON-файлов (заполняются ниже)
     log_level: str = "INFO"
     throttling: ThrottlingConfig
     feature_flags: FeatureFlags
@@ -99,39 +108,40 @@ def _load_json_file(path: Path) -> Dict[str, Any]:
         logger.error(f"Не удалось прочитать или декодировать файл {path}: {e}")
         raise SystemExit(f"Критическая ошибка конфигурации в файле: {path.name}")
 
-def load_settings_from_files(base_path: str = "data") -> Settings:
+def load_settings_from_files() -> Settings:
     """
     Загружает JSON-файлы, переменные окружения и создает финальный объект настроек.
     """
-    logger.info(f"Загрузка конфигураций из директории: {base_path}")
-    
-    base_dir = Path(base_path)
-    
-    # 1. Загружаем JSON-конфиги
-    throttling_config = _load_json_file(base_dir / "throttling_config.json")
-    feature_flags_config = _load_json_file(base_dir / "feature_flags.json")
-    endpoints_config = _load_json_file(base_dir / "endpoints_config.json")
-    price_service_config = _load_json_file(base_dir / "price_service_config.json")
-    coin_list_config = _load_json_file(base_dir / "coin_list_config.json")
-    ai_config_file = _load_json_file(base_dir / "ai_config.json")
-    app_config = _load_json_file(base_dir / "app_config.json")
+    logger.info("Загрузка конфигураций...")
+    base_dir = Path("data")
 
-    # 2. Особая обработка для NewsService (объединение двух файлов)
-    news_service_config_file = _load_json_file(base_dir / "news_service_config.json")
-    news_feeds = _load_json_file(base_dir / "news_feeds.json")
-    if news_feeds:
-        news_service_config_file['feeds'] = news_feeds
+    # 1. Загружаем все JSON-конфиги
+    json_files = {
+        "throttling": _load_json_file(base_dir / "throttling_config.json"),
+        "feature_flags": _load_json_file(base_dir / "feature_flags.json"),
+        "endpoints": _load_json_file(base_dir / "endpoints_config.json"),
+        "price_service": _load_json_file(base_dir / "price_service_config.json"),
+        "coin_list_service": _load_json_file(base_dir / "coin_list_config.json"),
+        "ai": _load_json_file(base_dir / "ai_config.json"),
+        "app": _load_json_file(base_dir / "app_config.json"),
+        "news_service": _load_json_file(base_dir / "news_service_config.json"),
+        "news_feeds": _load_json_file(base_dir / "news_feeds.json"),
+    }
 
-    # 3. Собираем единый словарь из JSON-файлов
+    # 2. Объединяем связанные конфиги
+    if json_files["news_feeds"]:
+        json_files["news_service"]['feeds'] = json_files["news_feeds"]
+
+    # 3. Собираем единый словарь из JSON-данных
     json_data = {
-        "log_level": app_config.get("log_level", "INFO"),
-        "throttling": throttling_config,
-        "feature_flags": feature_flags_config,
-        "endpoints": endpoints_config,
-        "price_service": price_service_config,
-        "coin_list_service": coin_list_config,
-        "news_service": news_service_config_file,
-        "ai": ai_config_file,
+        "log_level": json_files["app"].get("log_level", "INFO"),
+        "throttling": json_files["throttling"],
+        "feature_flags": json_files["feature_flags"],
+        "endpoints": json_files["endpoints"],
+        "price_service": json_files["price_service"],
+        "coin_list_service": json_files["coin_list_service"],
+        "news_service": json_files["news_service"],
+        "ai": json_files["ai"],
     }
 
     try:
