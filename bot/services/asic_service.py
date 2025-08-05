@@ -16,7 +16,7 @@ from bot.services.parser_service import ParserService
 from bot.utils.keys import KeyFactory
 from bot.utils.models import AsicMiner
 from bot.utils.text_utils import normalize_asic_name
-from bot.services.user_service import RedisLock
+from bot.utils.redis_lock import RedisLock, LockAcquisitionError
 
 logger = logging.getLogger(__name__)
 
@@ -130,12 +130,19 @@ class AsicService:
         """Получает топ ASIC, рассчитывая чистую прибыль для заданной цены э/э."""
         is_cache_present = await self.redis.exists(self.keys.asics_sorted_set())
         if not is_cache_present:
-            lock_key = f"lock:{self.keys.asics_sorted_set()}"
+            # Ключ для блокировки операции обновления
+            lock_key = self.keys.asics_sorted_set() 
             try:
-                async with RedisLock(self.redis, lock_key, timeout=300):
+                # Добавляем wait_timeout=60 для предотвращения бесконечного ожидания
+                async with RedisLock(self.redis, lock_key, timeout=300, wait_timeout=60):
+                    # Double-Checked Locking Pattern: проверяем еще раз после получения блокировки
                     if not await self.redis.exists(self.keys.asics_sorted_set()):
+                        logger.info("Кэш ASIC отсутствует. Запуск обновления под блокировкой.")
                         await self.update_asic_list_from_sources()
-            except TimeoutError:
+            # Используем собственное исключение из redis_lock.py
+            except LockAcquisitionError: 
+                logger.warning("Не удалось получить блокировку для обновления ASIC (Timeout). Ожидаем завершения текущего обновления.")
+                # Ждем немного и продолжаем, надеясь, что кэш появится
                 await asyncio.sleep(5)
 
         asic_keys = await self.redis.zrevrange(self.keys.asics_sorted_set(), 0, count - 1)
