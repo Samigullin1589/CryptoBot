@@ -2,7 +2,7 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ОБЪЕДИНЕННАЯ)
 # Описание: Полный и самодостаточный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая модель 'Coin' для решения ImportError.
+# ИСПРАВЛЕНИЕ: Добавлены недостающие модели 'Coin' и 'PriceInfo'.
 # =================================================================================
 
 from __future__ import annotations
@@ -17,6 +17,15 @@ class Coin(BaseModel):
     id: str = Field(description="Уникальный идентификатор CoinGecko (например, 'bitcoin')")
     symbol: str = Field(description="Тикер монеты (например, 'btc')")
     name: str = Field(description="Полное название монеты (например, 'Bitcoin')")
+
+class PriceInfo(BaseModel):
+    """
+    Модель для хранения детальной информации о цене криптовалюты.
+    """
+    price: float
+    market_cap: Optional[float] = None
+    volume_24h: Optional[float] = None
+    change_24h: Optional[float] = None
 
 class MiningEvent(BaseModel):
     """
