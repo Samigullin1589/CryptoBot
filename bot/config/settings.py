@@ -1,8 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Устранена ошибка JSONDecodeError для ADMIN_USER_IDS.
-# Устранено предупреждение UserWarning для "model_name".
+# ИСПРАВЛЕНИЕ: Добавлена недостающая модель CryptoCenterServiceConfig.
 # =================================================================================
 
 import json
@@ -16,15 +15,12 @@ from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ValidationError, field_validator, ConfigDict)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Гарантированно загружаем переменные из .env файла в самом начале
 load_dotenv()
 
 # --- Определения моделей для частей конфигурации (из JSON-файлов) ---
 
 class AIConfig(BaseModel):
-    # ИСПРАВЛЕНО: Убираем конфликт с защищенным пространством имен Pydantic
     model_config = ConfigDict(protected_namespaces=())
-    
     provider: str = "gemini"
     model_name: str = "gemini-1.5-flash-latest"
 
@@ -69,23 +65,24 @@ class AsicServiceConfig(BaseModel):
     update_interval_hours: int = 6
     fallback_file_path: str = "data/fallback_asics.json"
 
+# ИСПРАВЛЕНО: Добавлена недостающая модель конфигурации
+class CryptoCenterServiceConfig(BaseModel):
+    """Конфигурация для сервиса Crypto Center."""
+    news_context_limit: int = Field(default=20, description="Количество новостей для контекста AI.")
+    alpha_cache_ttl_seconds: int = Field(default=1800, description="Время жизни кэша для персональной 'альфы' (в секундах).")
+    feed_cache_ttl_seconds: int = Field(default=600, description="Время жизни кэша для новостной ленты с саммари (в секундах).")
+
 # --- Главная модель настроек ---
 
 class Settings(BaseSettings):
-    """
-    Главный класс настроек. Pydantic автоматически загружает данные
-    из переменных окружения. Остальные настройки подтягиваются из JSON.
-    """
+    """Главный класс настроек."""
     # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     BOT_TOKEN: SecretStr
-    # ИСПРАВЛЕНО: Тип изменен на Any, чтобы pydantic не пытался парсить его как JSON.
-    # Валидатор ниже преобразует его в List[int].
-    ADMIN_USER_IDS: Any 
+    ADMIN_USER_IDS: Any
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
-    
     OPENAI_API_KEY: Optional[SecretStr] = None
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     PERSPECTIVE_API_KEY: Optional[SecretStr] = None
@@ -101,6 +98,8 @@ class Settings(BaseSettings):
     endpoints: EndpointsConfig = Field(default_factory=EndpointsConfig)
     threat_filter: ThreatFilterConfig = Field(default_factory=ThreatFilterConfig)
     asic_service: AsicServiceConfig = Field(default_factory=AsicServiceConfig)
+    # ИСПРАВЛЕНО: Добавлено поле для новой конфигурации
+    crypto_center: CryptoCenterServiceConfig = Field(default_factory=CryptoCenterServiceConfig)
     
     model_config = SettingsConfigDict(
         env_file='.env', 
@@ -111,12 +110,10 @@ class Settings(BaseSettings):
     @field_validator('ADMIN_USER_IDS', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
-        """Парсит ID администраторов из строки с запятыми."""
         if isinstance(v, str):
-            # Убираем лишние пробелы и пустые строки после разделения
             return [int(item.strip()) for item in v.split(',') if item.strip()]
         if isinstance(v, list):
-            return v # Если уже передан список, возвращаем его
+            return v
         raise ValueError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком чисел.")
 
 def _load_json_config_data() -> Dict[str, Any]:
@@ -133,6 +130,8 @@ def _load_json_config_data() -> Dict[str, Any]:
         "threat_filter": "threat_filter_config.json",
         "asic_service": "asic_service_config.json",
         "app": "app_config.json",
+        # ИСПРАВЛЕНО: Добавлена загрузка конфига для нового сервиса
+        "crypto_center": "crypto_center_config.json",
     }
     
     loaded_data = {}
@@ -178,5 +177,4 @@ def load_settings() -> Settings:
         logger.critical(f"Критическая ошибка валидации настроек. Проверьте .env и *.json файлы.\n{e}")
         raise SystemExit("Ошибки валидации конфигурации.")
 
-# Создаем единственный глобальный экземпляр настроек для всего приложения
 settings: Settings = load_settings()

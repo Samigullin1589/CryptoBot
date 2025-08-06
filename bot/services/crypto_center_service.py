@@ -1,7 +1,8 @@
 # ==================================================================================
-# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
-# Описание: Полностью самодостаточный и персонализированный сервис-оркестратор
-# для Крипто-Центра с профилированием интересов и проактивными уведомлениями.
+# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ИСПРАВЛЕННАЯ)
+# Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
+# ИСПРАВЛЕНИЕ: Параметр 'redis_client' в __init__ заменен на 'redis' для
+# соответствия с DI-контейнером.
 # ==================================================================================
 
 import json
@@ -23,9 +24,10 @@ logger = logging.getLogger(__name__)
 class CryptoCenterService:
     """Персональный AI-ассистент для навигации в мире криптовалют."""
 
-    def __init__(self, redis_client: redis.Redis, ai_service: AIContentService,
+    # ИСПРАВЛЕНО: 'redis_client' -> 'redis'
+    def __init__(self, redis: redis.Redis, ai_service: AIContentService,
                  news_service: NewsService, config: CryptoCenterServiceConfig):
-        self.redis = redis_client
+        self.redis = redis
         self.ai_service = ai_service
         self.news_service = news_service
         self.config = config
@@ -50,7 +52,7 @@ class CryptoCenterService:
         logger.debug(f"Updated interest profile for user {user_id} with tags={tags}, coins={coins}")
 
     async def _generate_alpha(self, user_id: int, alpha_type: str, json_schema: Dict) -> List[Dict[str, Any]]:
-        """Универсальный, полностью рабочий метод для генерации персонализированной 'альфы'."""
+        """Универсальный метод для генерации персонализированной 'альфы'."""
         user_profile = await self._get_user_interest_profile(user_id)
         cache_key = self.keys.personalized_alpha_cache(user_id, alpha_type)
 
@@ -84,7 +86,7 @@ class CryptoCenterService:
         return await self._generate_alpha(user_id, "mining", json_schema)
 
     async def get_live_feed_with_summary(self) -> List[NewsArticle]:
-        """Получает новостную ленту с AI-саммари, избегая дублирования в кэше."""
+        """Получает новостную ленту с AI-саммари."""
         cache_key = self.keys.live_feed_cache()
         if cached_data := await self.redis.get(cache_key):
             logger.info("Serving live feed from cache.")
@@ -120,5 +122,4 @@ class CryptoCenterService:
         else:
             await self.redis.sadd(progress_key, task_index_str)
             logger.info(f"User {user_id} marked task {task_index} of airdrop '{airdrop_id}' as completed.")
-            # Обновляем профиль: пользователь активно участвует в airdrop
             await self.update_user_interest(user_id, tags=['airdrop_hunter'])
