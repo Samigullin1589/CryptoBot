@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Самодостаточный DI-контейнер, собирающий все сервисы проекта.
-# ИСПРАВЛЕНИЕ: Инициализация ParserService приведена в соответствие
-# с его конструктором.
+# ИСПРАВЛЕНИЕ: Инициализация MarketDataService и PriceService приведена
+# в соответствие с их новыми версиями.
 # =================================================================================
 
 from typing import cast
@@ -67,14 +67,18 @@ class Deps(BaseModel):
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
         ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)
         news_service = NewsService(redis=redis_pool, http_session=http_session, settings=settings)
-        
-        # ИСПРАВЛЕНО: 'endpoints' заменен на 'config'
         parser_service = ParserService(http_session=http_session, config=settings.endpoints)
-        
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
         event_service = MiningEventService(config=settings.events)
         achievement_service = AchievementService(redis=redis_pool, config=settings.achievements)
-        market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data)
+        
+        # ИСПРАВЛЕНО: MarketDataService теперь принимает config и endpoints
+        market_data_service = MarketDataService(
+            redis=redis_pool, 
+            http_session=http_session, 
+            config=settings.market_data,
+            endpoints=settings.endpoints
+        )
 
         # --- Уровень 2: Сервисы, зависящие от Уровня 1 ---
         security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
@@ -82,7 +86,14 @@ class Deps(BaseModel):
         asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
 
         # --- Уровень 3: Сервисы, зависящие от Уровня 2 ---
-        price_service = PriceService(redis=redis_pool, http_session=http_session, coin_list_service=coin_list_service, config=settings.price_service, endpoints=settings.endpoints)
+        # ИСПРАВЛЕНО: PriceService теперь принимает config и endpoints
+        price_service = PriceService(
+            redis=redis_pool, 
+            http_session=http_session, 
+            coin_list_service=coin_list_service, 
+            config=settings.price_service, 
+            endpoints=settings.endpoints
+        )
         crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
         market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
 

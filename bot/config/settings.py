@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлено поле config_path в MiningEventServiceConfig.
+# ИСПРАВЛЕНИЕ: Добавлены поля для MarketDataService и PriceService.
 # =================================================================================
 
 import json
@@ -35,9 +35,11 @@ class FeatureFlags(BaseModel):
     enable_game: bool = True
     enable_threat_protection: bool = True
 
+# ИСПРАВЛЕНО: Добавлена валюта по умолчанию
 class PriceServiceConfig(BaseModel):
     cache_ttl_seconds: int = 300
     top_n_coins: int = 100
+    default_vs_currency: str = "usd"
 
 class CoinListServiceConfig(BaseModel):
     update_interval_hours: int = 24
@@ -53,8 +55,11 @@ class NewsServiceConfig(BaseModel):
     feeds: NewsFeeds = Field(default_factory=NewsFeeds)
     news_limit_per_source: int = 5
 
+# ИСПРАВЛЕНО: Добавлены конкретные эндпоинты для CoinGecko
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
+    coins_markets_endpoint: str = "/coins/markets"
+    simple_price_endpoint: str = "/simple/price"
     blockchain_info_hashrate: HttpUrl = "https://api.blockchain.info/q/hashrate"
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
     whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
@@ -78,7 +83,6 @@ class CryptoCenterServiceConfig(BaseModel):
 class QuizServiceConfig(BaseModel):
     fallback_questions_path: str = "data/quiz_fallback.json"
 
-# ИСПРАВЛЕНО: Добавлен путь к файлу конфигурации событий
 class MiningEventServiceConfig(BaseModel):
     config_path: str = "data/events_config.json"
     default_multiplier: float = 1.0
@@ -86,8 +90,11 @@ class MiningEventServiceConfig(BaseModel):
 class AchievementServiceConfig(BaseModel):
     config_path: str = "data/achievements.json"
 
+# ИСПРАВЛЕНО: Добавлены поля для MarketDataService
 class MarketDataServiceConfig(BaseModel):
     update_interval_seconds: int = 60
+    top_n_coins: int = 100
+    default_vs_currency: str = "usd"
 
 class MiningGameServiceConfig(BaseModel):
     session_duration_minutes: int = 60
