@@ -1,13 +1,21 @@
-# ===============================================================
-# Файл: bot/states/crypto_center_states.py (НОВЫЙ ФАЙЛ)
-# Описание: Состояния FSM для Крипто-Центра.
-# ===============================================================
-from aiogram.fsm.state import State, StatesGroup
+# bot/states/common_states.py
+# =================================================================================
+# Файл: bot/states/common_states.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Описание: Состояния, общие для разных модулей бота.
+# =================================================================================
 
-class CryptoCenterStates(StatesGroup):
+from aiogram.fsm.state import StatesGroup, State
+
+class CommonStates(StatesGroup):
+    """
+    Определяет общие состояния, которые могут использоваться
+    в разных частях бота, например, для навигации.
+    """
+    # Состояние главного меню, куда пользователь возвращается из разных разделов
     main_menu = State()
-    viewing_guides_menu = State()
-    viewing_feed = State()
-    viewing_airdrops_list = State()
-    viewing_airdrop_details = State()
-    viewing_mining_signals = State()
+
+    # Состояние для ожидания ввода текста для поиска
+    waiting_for_search_query = State()
+
+    # Состояние для подтверждения действия (например, "Вы уверены?")
+    confirmation = State()
