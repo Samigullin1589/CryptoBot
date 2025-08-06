@@ -1,41 +1,67 @@
-# ===============================================================
-# Файл: bot/utils/ui_helpers.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Вспомогательные функции для работы с UI в aiogram.
-# ===============================================================
-import logging
-from typing import Union, Tuple
-from aiogram.types import Message, CallbackQuery
-from aiogram.exceptions import TelegramBadRequest
+# bot/utils/ui_helpers.py
+# =================================================================================
+# Файл: bot/utils/ui_helpers.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Описание: Универсальные и отказоустойчивые вспомогательные функции для
+# работы с интерфейсом пользователя в aiogram.
+# =================================================================================
 
-from bot.keyboards.keyboards import get_main_menu_keyboard
+import logging
+from typing import Union
+
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
 
 logger = logging.getLogger(__name__)
 
-async def show_main_menu(message: Message):
-    """Отображает главное меню, пытаясь отредактировать сообщение или отправляя новое."""
-    try:
-        await message.edit_text("Главное меню:", reply_markup=get_main_menu_keyboard())
-    except (TelegramBadRequest, AttributeError):
-        await message.answer("Главное меню:", reply_markup=get_main_menu_keyboard())
+async def edit_or_send_message(
+    event: Union[CallbackQuery, Message],
+    text: str,
+    keyboard: InlineKeyboardMarkup = None,
+    **kwargs
+) -> Message:
+    """
+    Универсальная, отказоустойчивая функция для отправки или редактирования сообщения.
 
-async def show_main_menu_from_callback(call: CallbackQuery):
-    """Корректно обрабатывает возврат в главное меню из callback query."""
-    try:
-        await call.message.edit_text(
-            "Главное меню:",
-            reply_markup=get_main_menu_keyboard()
+    Она заменяет собой необходимость иметь отдельные функции для Message и CallbackQuery.
+    Пытается отредактировать существующее сообщение. Если это невозможно
+    (например, это не callback-запрос или сообщение не изменилось),
+    отправляет новое сообщение или просто убирает "часики" с кнопки.
+
+    :param event: Объект CallbackQuery или Message, вызвавший действие.
+    :param text: Текст для отправки/редактирования.
+    :param keyboard: Клавиатура для сообщения.
+    :param kwargs: Дополнительные параметры для send_message или edit_text.
+    :return: Отправленное или отредактированное сообщение.
+    """
+    if isinstance(event, CallbackQuery):
+        # Если это CallbackQuery, всегда есть message для редактирования
+        try:
+            # Пытаемся отредактировать сообщение
+            return await event.message.edit_text(
+                text=text,
+                reply_markup=keyboard,
+                **kwargs
+            )
+        except TelegramBadRequest as e:
+            # Эта ошибка возникает, если текст и клавиатура не изменились.
+            # В этом случае мы просто отвечаем на callback, чтобы убрать "часики".
+            if "message is not modified" in e.message:
+                await event.answer()
+                return event.message
+            # Если ошибка другая (например, сообщение слишком старое для редактирования),
+            # логируем ее и отправляем новое сообщение как ответ.
+            logger.error(f"Не удалось отредактировать сообщение (ID: {event.message.message_id}): {e}. Отправляем новое.")
+            await event.answer() # Убираем "часики" в любом случае
+            return await event.message.answer(
+                text=text,
+                reply_markup=keyboard,
+                **kwargs
+            )
+    elif isinstance(event, Message):
+        # Если это обычное сообщение, просто отправляем ответ
+        return await event.answer(
+            text=text,
+            reply_markup=keyboard,
+            **kwargs
         )
-    except TelegramBadRequest as e:
-        logger.warning(f"Не удалось отредактировать сообщение для показа главного меню: {e}.")
-    finally:
-        await call.answer()
 
-async def get_message_and_chat_id(update: Union[CallbackQuery, Message]) -> Tuple[Message, int]:
-    """
-    Извлекает объекты сообщения и ID чата из CallbackQuery или Message.
-    Автоматически отвечает на CallbackQuery, чтобы убрать "часики".
-    """
-    if isinstance(update, CallbackQuery):
-        await update.answer()
-        return update.message, update.message.chat.id
-    return update, update.chat.id
