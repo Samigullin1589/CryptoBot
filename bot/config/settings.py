@@ -2,7 +2,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ЗАПУСК)
 # Описание: Финальная, самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая конфигурация ThreatFilterConfig.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая конфигурация AsicServiceConfig.
 # =================================================================================
 
 import json
@@ -63,11 +63,16 @@ class EndpointsConfig(BaseModel):
     whattomine_api: Optional[HttpUrl] = None
     minerstat_api: Optional[HttpUrl] = None
 
-# ИСПРАВЛЕНО: Добавлена недостающая модель конфигурации
 class ThreatFilterConfig(BaseModel):
     """Конфигурация для фильтра угроз."""
     enabled: bool = Field(default=True)
     thresholds: Dict[str, float] = Field(default_factory=dict)
+
+# ИСПРАВЛЕНО: Добавлена недостающая модель конфигурации
+class AsicServiceConfig(BaseModel):
+    """Конфигурация для сервиса ASIC-майнеров."""
+    update_interval_hours: int = Field(default=6)
+    fallback_file_path: str = Field(default="data/fallback_asics.json")
 
 # --- Главная модель настроек ---
 
@@ -86,7 +91,7 @@ class Settings(BaseSettings):
     NEWS_CHAT_ID: Optional[int] = None
     OPENAI_API_KEY: Optional[SecretStr] = None
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
-    PERSPECTIVE_API_KEY: Optional[SecretStr] = None # Для ThreatFilter
+    PERSPECTIVE_API_KEY: Optional[SecretStr] = None
 
     # 2. Поля из JSON-файлов
     log_level: str = "INFO"
@@ -97,7 +102,8 @@ class Settings(BaseSettings):
     coin_list_service: CoinListServiceConfig
     news_service: NewsServiceConfig
     ai: AIConfig
-    threat_filter: ThreatFilterConfig # ИСПРАВЛЕНО: Добавлено поле
+    threat_filter: ThreatFilterConfig
+    asic_service: AsicServiceConfig # ИСПРАВЛЕНО: Добавлено поле
 
     @field_validator('ADMIN_USER_IDS', mode='before')
     @classmethod
@@ -138,7 +144,8 @@ def load_settings_from_files() -> Settings:
         "app": _load_json_file(base_dir / "app_config.json"),
         "news_service": _load_json_file(base_dir / "news_service_config.json"),
         "news_feeds": _load_json_file(base_dir / "news_feeds.json"),
-        "threat_filter": _load_json_file(base_dir / "threat_filter_config.json"), # ИСПРАВЛЕНО: Добавлена загрузка
+        "threat_filter": _load_json_file(base_dir / "threat_filter_config.json"),
+        "asic_service": _load_json_file(base_dir / "asic_service_config.json"), # ИСПРАВЛЕНО: Добавлена загрузка
     }
 
     # 2. Объединяем связанные конфиги
@@ -155,7 +162,8 @@ def load_settings_from_files() -> Settings:
         "coin_list_service": json_files["coin_list_service"],
         "news_service": json_files["news_service"],
         "ai": json_files["ai"],
-        "threat_filter": json_files["threat_filter"], # ИСПРАВЛЕНО: Добавлено в финальный словарь
+        "threat_filter": json_files["threat_filter"],
+        "asic_service": json_files["asic_service"], # ИСПРАВЛЕНО: Добавлено в финальный словарь
     }
 
     try:
