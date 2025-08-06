@@ -1,7 +1,8 @@
 # =================================================================================
 # Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Самодостаточный DI-контейнер, собирающий все сервисы проекта.
-# Включает инициализацию всех известных сервисов в правильном порядке.
+# ИСПРАВЛЕНИЕ: Инициализация ParserService приведена в соответствие
+# с его конструктором.
 # =================================================================================
 
 from typing import cast
@@ -32,15 +33,12 @@ from bot.services.mining_game_service import MiningGameService
 
 
 class Deps(BaseModel):
-    """
-    Pydantic-модель, агрегирующая все зависимости приложения для DI.
-    """
+    """Pydantic-модель, агрегирующая все зависимости приложения для DI."""
     settings: Settings
     http_session: aiohttp.ClientSession
     redis_pool: Redis
     scheduler: AsyncIOScheduler = Field(default_factory=lambda: AsyncIOScheduler(timezone="UTC"))
 
-    # --- Сервисы (поля для всех сервисов проекта) ---
     user_service: UserService
     admin_service: AdminService
     ai_content_service: AIContentService
@@ -63,22 +61,16 @@ class Deps(BaseModel):
 
     @classmethod
     def build(cls, settings: Settings, http_session: aiohttp.ClientSession, redis_pool: Redis, bot: Bot) -> "Deps":
-        """
-        Фабричный метод для сборки контейнера зависимостей.
-        Гарантирует, что все сервисы создаются в правильном порядке.
-        """
-        # --- Уровень 1: Базовые сервисы без зависимостей от других сервисов ---
+        """Фабричный метод для сборки контейнера зависимостей."""
+        # --- Уровень 1: Базовые сервисы ---
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
-        
-        ai_content_service = AIContentService(
-            api_key=settings.GEMINI_API_KEY.get_secret_value(),
-            config=settings.ai
-        )
-        
+        ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)
         news_service = NewsService(redis=redis_pool, http_session=http_session, settings=settings)
         
-        parser_service = ParserService(http_session=http_session, endpoints=settings.endpoints)
+        # ИСПРАВЛЕНО: 'endpoints' заменен на 'config'
+        parser_service = ParserService(http_session=http_session, config=settings.endpoints)
+        
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
         event_service = MiningEventService(config=settings.events)
         achievement_service = AchievementService(redis=redis_pool, config=settings.achievements)
@@ -97,36 +89,17 @@ class Deps(BaseModel):
         # --- Уровень 4: Сервис-агрегатор (игровой движок) ---
         scheduler_instance = AsyncIOScheduler(timezone="UTC")
         mining_game_service = MiningGameService(
-            redis=redis_pool,
-            scheduler=scheduler_instance,
-            settings=settings,
-            user_service=user_service,
-            market_service=market_service,
-            event_service=event_service,
-            achievement_service=achievement_service,
-            bot=bot
+            redis=redis_pool, scheduler=scheduler_instance, settings=settings, user_service=user_service,
+            market_service=market_service, event_service=event_service, achievement_service=achievement_service, bot=bot
         )
 
         # Сборка финального объекта Deps
         return cls(
-            settings=settings,
-            http_session=http_session,
-            redis_pool=redis_pool,
-            scheduler=scheduler_instance,
-            user_service=user_service,
-            admin_service=admin_service,
-            ai_content_service=ai_content_service,
-            news_service=news_service,
-            parser_service=parser_service,
-            quiz_service=quiz_service,
-            event_service=event_service,
-            achievement_service=achievement_service,
-            market_data_service=market_data_service,
-            security_service=security_service,
-            coin_list_service=coin_list_service,
-            asic_service=asic_service,
-            price_service=price_service,
-            crypto_center_service=crypto_center_service,
-            market_service=market_service,
+            settings=settings, http_session=http_session, redis_pool=redis_pool, scheduler=scheduler_instance,
+            user_service=user_service, admin_service=admin_service, ai_content_service=ai_content_service,
+            news_service=news_service, parser_service=parser_service, quiz_service=quiz_service,
+            event_service=event_service, achievement_service=achievement_service, market_data_service=market_data_service,
+            security_service=security_service, coin_list_service=coin_list_service, asic_service=asic_service,
+            price_service=price_service, crypto_center_service=crypto_center_service, market_service=market_service,
             mining_game_service=mining_game_service
         )

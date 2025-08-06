@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# Включает все необходимые модели для полной сборки проекта.
+# ИСПРАВЛЕНИЕ: Добавлены недостающие URL в EndpointsConfig для ParserService.
 # =================================================================================
 
 import json
@@ -53,12 +53,14 @@ class NewsServiceConfig(BaseModel):
     feeds: NewsFeeds = Field(default_factory=NewsFeeds)
     news_limit_per_source: int = 5
 
+# ИСПРАВЛЕНО: Добавлены URL для парсера
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
     blockchain_info_hashrate: HttpUrl = "https://api.blockchain.info/q/hashrate"
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
-    whattomine_api: Optional[HttpUrl] = None
-    minerstat_api: Optional[HttpUrl] = None
+    whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
+    asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
+    minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
     cryptocompare_news_api_url: Optional[HttpUrl] = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
 
 class ThreatFilterConfig(BaseModel):
@@ -92,7 +94,6 @@ class MiningGameServiceConfig(BaseModel):
 # --- Главная модель настроек ---
 
 class Settings(BaseSettings):
-    """Главный класс настроек, агрегирующий все конфигурации."""
     BOT_TOKEN: SecretStr
     ADMIN_USER_IDS: Any
     REDIS_URL: RedisDsn
@@ -132,27 +133,8 @@ class Settings(BaseSettings):
         raise ValueError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком чисел.")
 
 def _load_json_config_data() -> Dict[str, Any]:
-    """Вспомогательная функция для загрузки всех JSON-конфигов в один словарь."""
     base_dir = Path("data")
-    config_files = {
-        "app": "app_config.json",
-        "throttling": "throttling_config.json",
-        "feature_flags": "feature_flags.json",
-        "endpoints": "endpoints_config.json",
-        "price_service": "price_service_config.json",
-        "coin_list_service": "coin_list_config.json",
-        "ai": "ai_config.json",
-        "news_service": "news_service_config.json",
-        "threat_filter": "threat_filter_config.json",
-        "asic_service": "asic_service_config.json",
-        "crypto_center": "crypto_center_config.json",
-        "quiz": "quiz_config.json",
-        "events": "events_config.json",
-        "achievements": "achievements_config.json",
-        "market_data": "market_data_config.json",
-        "game": "game_config.json",
-    }
-    
+    config_files = { "app": "app_config.json", "throttling": "throttling_config.json", "feature_flags": "feature_flags.json", "endpoints": "endpoints_config.json", "price_service": "price_service_config.json", "coin_list_service": "coin_list_config.json", "ai": "ai_config.json", "news_service": "news_service_config.json", "threat_filter": "threat_filter_config.json", "asic_service": "asic_service_config.json", "crypto_center": "crypto_center_config.json", "quiz": "quiz_config.json", "events": "events_config.json", "achievements": "achievements_config.json", "market_data": "market_data_config.json", "game": "game_config.json" }
     loaded_data = {}
     for key, filename in config_files.items():
         path = base_dir / filename
@@ -170,7 +152,6 @@ def _load_json_config_data() -> Dict[str, Any]:
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Не удалось прочитать или декодировать JSON {path}: {e}")
             raise SystemExit(f"Критическая ошибка конфигурации в файле: {path.name}")
-
     news_feeds_path = base_dir / "news_feeds.json"
     if news_feeds_path.exists():
         try:
@@ -180,14 +161,11 @@ def _load_json_config_data() -> Dict[str, Any]:
             loaded_data["news_service"]["feeds"] = feeds_data
         except (json.JSONDecodeError, IOError) as e:
             logger.error(f"Не удалось обработать {news_feeds_path}: {e}")
-            
     return loaded_data
 
 def load_settings() -> Settings:
-    """Главная функция для создания объекта настроек."""
     logger.info("Загрузка и валидация конфигураций...")
     json_data = _load_json_config_data()
-    
     try:
         settings_instance = Settings(**json_data)
         logger.info("Все конфигурации успешно загружены и валидированы.")
