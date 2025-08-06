@@ -2,7 +2,8 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная версия главного файла.
-# ИСПРАВЛЕНИЕ: Исправлен импорт и вызов функции настройки планировщика.
+# ИСПРАВЛЕНИЕ: Исправлена инициализация ActivityMiddleware в соответствии
+# с продвинутой версией этого файла.
 # =================================================================================
 
 import asyncio
@@ -17,9 +18,9 @@ from aiogram.types import BotCommand, BotCommandScopeDefault
 from bot.config.settings import settings
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.public.common_handler import public_router
-# ИСПРАВЛЕНО: Импортируем правильную функцию 'setup_jobs'
 from bot.jobs.scheduled_tasks import setup_jobs
-from bot.middlewares.activity_middleware import UserActivityMiddleware
+# ИСПРАВЛЕНО: Импортируем правильное имя класса
+from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.utils.dependencies import Deps
 from bot.utils.logging_setup import setup_logging
@@ -44,13 +45,10 @@ async def on_startup(bot: Bot, deps: Deps):
     logger.info("Бот запускается...")
     await set_bot_commands(bot)
 
-    # Настройка и запуск планировщика задач
-    # ИСПРАВЛЕНО: Вызываем правильную функцию и передаем нужные зависимости
-    setup_jobs(deps.scheduler, deps.coin_list_service)
+    setup_jobs(deps.scheduler, deps)
     deps.scheduler.start()
     logger.info("Планировщик запущен.")
 
-    # Принудительное обновление списка монет при старте
     await deps.coin_list_service.update_coin_list()
     logger.info("Данные успешно загружены при старте.")
 
@@ -86,20 +84,25 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), parse_mode="HTML")
     dp = Dispatcher(storage=storage)
 
-    dp.update.middleware(ThrottlingMiddleware(rate_limit=settings.throttling.rate_limit, redis_pool=redis_pool))
-    dp.update.middleware(UserActivityMiddleware(redis_pool=redis_pool))
-
+    # Подключение роутеров
     dp.include_router(admin_router)
     dp.include_router(public_router)
     logger.info("Роутеры подключены.")
 
     async with ClientSession() as http_session:
-        deps = Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool)
+        # Сначала создаем все зависимости
+        deps = Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool, bot=bot)
 
+        # ИСПРАВЛЕНО: Регистрируем middleware ПОСЛЕ создания зависимостей
+        # и передаем нужные сервисы, а не redis_pool.
+        dp.update.middleware(ThrottlingMiddleware(storage=storage))
+        dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
+        
         dp.startup.register(lambda bot_instance: on_startup(bot_instance, deps))
         dp.shutdown.register(lambda: on_shutdown(deps))
 
         logger.info("Запуск бота...")
+        # Передаем все зависимости в хэндлеры
         await dp.start_polling(bot, **deps.model_dump())
 
 
