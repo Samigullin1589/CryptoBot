@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
+# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Финальная, отказоустойчивая точка входа в приложение.
-# ИСПРАВЛЕНИЕ: Устранена ошибка AttributeError при подключении к Redis.
-# Используется str(settings.REDIS_URL) вместо get_secret_value().
+# ИСПРАВЛЕНИЕ: Инициализация Bot обновлена для aiogram 3.7.0+.
+# Восстановлена передача 'bot' в DI-контейнер.
 # =================================================================================
 
 import asyncio
@@ -11,6 +11,7 @@ import logging
 import redis.asyncio as redis
 from aiohttp import ClientSession
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
@@ -58,7 +59,8 @@ async def on_shutdown(deps: Deps):
     """Выполняет действия при остановке бота."""
     logger.info("Запуск процедур on_shutdown...")
     
-    if deps.admin_service:
+    # Проверяем наличие сервиса перед вызовом
+    if hasattr(deps, 'admin_service') and deps.admin_service:
         await deps.admin_service.notify_admins("❗️ Бот останавливается!")
 
     if deps.scheduler and deps.scheduler.running:
@@ -79,7 +81,6 @@ async def main():
     """Главная точка входа для приложения бота."""
     setup_logging(level=settings.log_level)
     
-    # ИСПРАВЛЕНО: Для типа RedisDsn используется str(), а не get_secret_value()
     redis_pool = redis.from_url(
         str(settings.REDIS_URL),
         encoding="utf-8",
@@ -87,7 +88,11 @@ async def main():
     )
     storage = RedisStorage(redis=redis_pool)
 
-    bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), parse_mode="HTML")
+    # ИСПРАВЛЕНО: Инициализация Bot для aiogram 3.7.0+
+    bot = Bot(
+        token=settings.BOT_TOKEN.get_secret_value(),
+        default=DefaultBotProperties(parse_mode="HTML")
+    )
     dp = Dispatcher(storage=storage)
 
     dp.include_router(admin_router)
@@ -95,26 +100,26 @@ async def main():
     logger.info("Роутеры успешно подключены.")
 
     async with ClientSession() as http_session:
-        # В вашем файле dependencies.py нет зависимости от bot, поэтому убираем ее из build
-        # Если она нужна, ее нужно добавить в метод build в dependencies.py
+        # ИСПРАВЛЕНО: Восстановлена передача 'bot' в DI-контейнер
         deps = Deps.build(
             settings=settings, 
             http_session=http_session, 
-            redis_pool=redis_pool
-            # bot=bot # Раскомментируйте, если добавите bot в Deps.build
+            redis_pool=redis_pool,
+            bot=bot
         )
 
+        # ИСПРАВЛЕНО: Восстановлена регистрация ActivityMiddleware
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
-        # В вашем файле dependencies.py нет user_service, поэтому middleware пока отключен
-        # dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
+        if hasattr(deps, 'user_service'):
+             dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
         logger.info("Middleware успешно зарегистрированы.")
         
+        # Лямбда-функции для передачи аргументов в хуки
         dp.startup.register(lambda: on_startup(bot, deps))
         dp.shutdown.register(lambda: on_shutdown(deps))
 
         logger.info("Запуск процесса опроса Telegram...")
         try:
-            # Передаем deps в виде kwargs, чтобы aiogram мог внедрить их в хэндлеры
             await dp.start_polling(bot, **deps.model_dump())
         finally:
             await on_shutdown(deps)
@@ -127,4 +132,3 @@ if __name__ == "__main__":
         logger.info("Бот остановлен вручную.")
     except Exception as e:
         logger.critical(f"Критическая ошибка привела к остановке бота: {e}", exc_info=True)
-
