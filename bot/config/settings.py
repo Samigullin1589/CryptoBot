@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Устранена причина ImportError. Структура унифицирована.
-# Все настройки загружаются из .env и JSON-файлов в единую модель.
+# ИСПРАВЛЕНИЕ: Устранена ошибка JSONDecodeError для ADMIN_USER_IDS.
+# Устранено предупреждение UserWarning для "model_name".
 # =================================================================================
 
 import json
@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 from dotenv import load_dotenv
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
-                      ValidationError, field_validator)
+                      ValidationError, field_validator, ConfigDict)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Гарантированно загружаем переменные из .env файла в самом начале
@@ -22,6 +22,9 @@ load_dotenv()
 # --- Определения моделей для частей конфигурации (из JSON-файлов) ---
 
 class AIConfig(BaseModel):
+    # ИСПРАВЛЕНО: Убираем конфликт с защищенным пространством имен Pydantic
+    model_config = ConfigDict(protected_namespaces=())
+    
     provider: str = "gemini"
     model_name: str = "gemini-1.5-flash-latest"
 
@@ -73,15 +76,16 @@ class Settings(BaseSettings):
     Главный класс настроек. Pydantic автоматически загружает данные
     из переменных окружения. Остальные настройки подтягиваются из JSON.
     """
-    # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ (префикс не нужен)
+    # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
     BOT_TOKEN: SecretStr
-    ADMIN_USER_IDS: List[int]
+    # ИСПРАВЛЕНО: Тип изменен на Any, чтобы pydantic не пытался парсить его как JSON.
+    # Валидатор ниже преобразует его в List[int].
+    ADMIN_USER_IDS: Any 
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
     
-    # Необязательные ключи API
     OPENAI_API_KEY: Optional[SecretStr] = None
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     PERSPECTIVE_API_KEY: Optional[SecretStr] = None
@@ -98,7 +102,6 @@ class Settings(BaseSettings):
     threat_filter: ThreatFilterConfig = Field(default_factory=ThreatFilterConfig)
     asic_service: AsicServiceConfig = Field(default_factory=AsicServiceConfig)
     
-    # Модель конфигурации для pydantic-settings
     model_config = SettingsConfigDict(
         env_file='.env', 
         env_file_encoding='utf-8', 
@@ -110,9 +113,10 @@ class Settings(BaseSettings):
     def parse_admin_ids(cls, v: Any) -> List[int]:
         """Парсит ID администраторов из строки с запятыми."""
         if isinstance(v, str):
+            # Убираем лишние пробелы и пустые строки после разделения
             return [int(item.strip()) for item in v.split(',') if item.strip()]
         if isinstance(v, list):
-            return v
+            return v # Если уже передан список, возвращаем его
         raise ValueError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком чисел.")
 
 def _load_json_config_data() -> Dict[str, Any]:
@@ -128,7 +132,7 @@ def _load_json_config_data() -> Dict[str, Any]:
         "news_service": "news_service_config.json",
         "threat_filter": "threat_filter_config.json",
         "asic_service": "asic_service_config.json",
-        "app": "app_config.json", # Для log_level
+        "app": "app_config.json",
     }
     
     loaded_data = {}
@@ -140,7 +144,7 @@ def _load_json_config_data() -> Dict[str, Any]:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 json_content = json.load(f)
-                if key == "app": # Особый случай для log_level
+                if key == "app":
                     if "log_level" in json_content:
                         loaded_data["log_level"] = json_content["log_level"]
                 else:
@@ -149,23 +153,20 @@ def _load_json_config_data() -> Dict[str, Any]:
             logger.error(f"Не удалось прочитать или декодировать JSON {path}: {e}")
             raise SystemExit(f"Критическая ошибка конфигурации в файле: {path.name}")
 
-    # Обработка вложенных конфигов, как в оригинале
     news_feeds_path = base_dir / "news_feeds.json"
     if news_feeds_path.exists():
-        feeds_data = json.loads(news_feeds_path.read_text(encoding='utf-8'))
-        if "news_service" not in loaded_data:
-            loaded_data["news_service"] = {}
-        loaded_data["news_service"]["feeds"] = feeds_data
-        
+        try:
+            feeds_data = json.loads(news_feeds_path.read_text(encoding='utf-8'))
+            if "news_service" not in loaded_data:
+                loaded_data["news_service"] = {}
+            loaded_data["news_service"]["feeds"] = feeds_data
+        except (json.JSONDecodeError, IOError) as e:
+            logger.error(f"Не удалось обработать {news_feeds_path}: {e}")
+            
     return loaded_data
 
 def load_settings() -> Settings:
-    """
-    Главная функция для создания объекта настроек.
-    1. Загружает переменные окружения (автоматически через Pydantic).
-    2. Загружает данные из JSON-файлов.
-    3. Объединяет все в единый объект `Settings`.
-    """
+    """Главная функция для создания объекта настроек."""
     logger.info("Загрузка и валидация конфигураций...")
     json_data = _load_json_config_data()
     
