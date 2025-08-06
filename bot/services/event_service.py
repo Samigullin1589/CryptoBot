@@ -1,7 +1,8 @@
 # =================================================================================
-# Файл: bot/services/event_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
+# Файл: bot/services/event_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полностью самодостаточный сервис для управления динамическими
-# игровыми событиями, загружаемыми из конфигурационного файла.
+# игровыми событиями, полностью интегрированный в DI-архитектуру.
+# ИСПРАВЛЕНИЕ: Сервис переработан для получения всех зависимостей через __init__.
 # =================================================================================
 
 import json
@@ -10,6 +11,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
+from bot.config.settings import MiningEventServiceConfig
 from bot.utils.models import MiningEvent
 
 logger = logging.getLogger(__name__)
@@ -20,9 +22,17 @@ class MiningEventService:
     События и их вероятности полностью управляются через внешний JSON-файл.
     """
 
-    def __init__(self, config_path: Path):
+    # ИСПРАВЛЕНО: Конструктор теперь принимает объект config
+    def __init__(self, config: MiningEventServiceConfig):
+        """
+        Инициализирует сервис игровых событий.
+
+        :param config: Конфигурация для сервиса событий.
+        """
+        self.config = config
         self.events: List[MiningEvent] = []
-        self._load_events_from_config(config_path)
+        # Путь к файлу теперь берется из объекта конфигурации
+        self._load_events_from_config(Path(self.config.config_path))
 
     def _load_events_from_config(self, config_path: Path):
         """Загружает и валидирует события из JSON-файла."""
@@ -48,27 +58,20 @@ class MiningEventService:
 
     def get_random_event(self) -> Optional[MiningEvent]:
         """
-        Возвращает случайное событие на основе его вероятности или None, если событие не произошло.
-        
-        Используется метод взвешенного случайного выбора.
+        Возвращает случайное событие на основе его вероятности или None.
         """
         if not self.events:
             return None
 
-        # Формируем список событий и их весов (вероятностей)
         events = self.events
         weights = [event.probability for event in self.events]
         
-        # Добавляем "пустое" событие (никакое событие не произошло)
-        # Его вес равен разнице между 1.0 и суммой вероятностей всех событий.
         total_probability = sum(weights)
         no_event_probability = max(0, 1.0 - total_probability)
         
-        # Финальный список для выбора
         choices = events + [None]
         final_weights = weights + [no_event_probability]
 
-        # Выбираем одно событие из списка на основе его веса
         chosen_event = random.choices(choices, weights=final_weights, k=1)[0]
         
         if chosen_event:

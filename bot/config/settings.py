@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлены недостающие URL в EndpointsConfig для ParserService.
+# ИСПРАВЛЕНИЕ: Добавлено поле config_path в MiningEventServiceConfig.
 # =================================================================================
 
 import json
@@ -53,7 +53,6 @@ class NewsServiceConfig(BaseModel):
     feeds: NewsFeeds = Field(default_factory=NewsFeeds)
     news_limit_per_source: int = 5
 
-# ИСПРАВЛЕНО: Добавлены URL для парсера
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
     blockchain_info_hashrate: HttpUrl = "https://api.blockchain.info/q/hashrate"
@@ -79,7 +78,9 @@ class CryptoCenterServiceConfig(BaseModel):
 class QuizServiceConfig(BaseModel):
     fallback_questions_path: str = "data/quiz_fallback.json"
 
+# ИСПРАВЛЕНО: Добавлен путь к файлу конфигурации событий
 class MiningEventServiceConfig(BaseModel):
+    config_path: str = "data/events_config.json"
     default_multiplier: float = 1.0
 
 class AchievementServiceConfig(BaseModel):
