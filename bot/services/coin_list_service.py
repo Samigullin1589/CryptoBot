@@ -1,123 +1,109 @@
 # =================================================================================
-# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Полный и самодостаточный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлено поле 'type' в модель Achievement.
+# Файл: bot/services/coin_list_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Сервис для управления списком криптовалют.
+# ИСПРАВЛЕНИЕ: Добавлен 'from __future__ import annotations' для решения
+# проблемы циклического импорта.
 # =================================================================================
 
-from __future__ import annotations
-from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, Field
+from __future__ import annotations # <--- ИСПРАВЛЕНО
+import json
+import logging
+from typing import List, Dict, Any, Optional
 
-class Coin(BaseModel):
-    """
-    Pydantic-модель для представления данных о криптовалюте,
-    получаемых от API CoinGecko.
-    """
-    id: str = Field(description="Уникальный идентификатор CoinGecko (например, 'bitcoin')")
-    symbol: str = Field(description="Тикер монеты (например, 'btc')")
-    name: str = Field(description="Полное название монеты (например, 'Bitcoin')")
+import aiohttp
+from redis.asyncio import Redis
 
-class PriceInfo(BaseModel):
-    """
-    Модель для хранения детальной информации о цене криптовалюты.
-    """
-    price: float
-    market_cap: Optional[float] = None
-    volume_24h: Optional[float] = None
-    change_24h: Optional[float] = None
+from bot.config.settings import CoinListServiceConfig, EndpointsConfig
+from bot.utils.models import Coin
 
-class MiningEvent(BaseModel):
+logger = logging.getLogger(__name__)
+
+class CoinListService:
     """
-    Модель динамического игрового события, влияющего на результат майнинга.
-    Загружается из events_config.json.
+    Управляет получением, кэшированием и предоставлением списка криптовалют.
     """
-    name: str = Field(description="Название события")
-    description: str = Field(description="Описание события для пользователя")
-    probability: float = Field(ge=0.0, le=1.0, description="Вероятность возникновения (0.0-1.0)")
-    profit_multiplier: float = Field(default=1.0, description="Множитель дохода (напр., 1.5 для +50%)")
-    cost_multiplier: float = Field(default=1.0, description="Множитель затрат (напр., 0.5 для -50%)")
+    _COIN_LIST_CACHE_KEY = "cache:coin_list"
 
-class UserProfile(BaseModel):
-    """Профиль пользователя Telegram."""
-    user_id: int
-    username: Optional[str] = None
-    full_name: str
-    language_code: Optional[str] = None
+    def __init__(
+        self,
+        redis: Redis,
+        http_session: aiohttp.ClientSession,
+        config: CoinListServiceConfig,
+        endpoints: EndpointsConfig,
+    ):
+        self.redis = redis
+        self.http_session = http_session
+        self.config = config
+        self.endpoints = endpoints
+        self._coin_list_url = f"{endpoints.coingecko_api_base}{endpoints.coins_list_endpoint}"
 
-class AsicMiner(BaseModel):
-    """Модель данных для ASIC-майнера."""
-    id: str
-    name: str
-    hashrate: str
-    power: int
-    algorithm: str
-    profitability: Optional[float] = None
-    price: Optional[float] = None
+    async def _fetch_from_api(self) -> Optional[List[Dict[str, Any]]]:
+        """Загружает сырой список монет с API CoinGecko."""
+        logger.info(f"Загрузка свежего списка монет с API: {self._coin_list_url}")
+        try:
+            async with self.http_session.get(self._coin_list_url) as response:
+                response.raise_for_status()
+                data = await response.json()
+                logger.info(f"Успешно загружено {len(data)} монет с API.")
+                return data
+        except aiohttp.ClientError as e:
+            logger.error(f"Ошибка HTTP клиента при загрузке списка монет: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Не удалось декодировать JSON ответ от API списка монет: {e}")
+        return None
 
-class NewsArticle(BaseModel):
-    """Модель для новостной статьи."""
-    title: str
-    url: str
-    body: str
-    source: str
-    timestamp: int
-    ai_summary: Optional[str] = None
+    async def _load_fallback_data(self) -> List[Dict[str, Any]]:
+        """Загружает список монет из локального резервного файла."""
+        logger.warning(f"Попытка загрузить список монет из резервного файла: {self.config.fallback_file_path}")
+        try:
+            with open(self.config.fallback_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"Успешно загружено {len(data)} монет из резервного файла.")
+            return data
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Не удалось загрузить или разобрать резервный файл списка монет: {e}")
+            return []
 
-class AirdropProject(BaseModel):
-    """Модель для Airdrop-проекта из Crypto Center."""
-    id: str
-    name: str
-    description: str
-    status: str
-    tasks: List[str]
-    guide_url: Optional[str] = None
+    async def update_coin_list(self) -> None:
+        """
+        Обновляет список монет в кэше Redis.
+        """
+        logger.info("Запуск планового обновления списка монет.")
+        coin_data = await self._fetch_from_api()
 
-# ИСПРАВЛЕНО: Добавлено поле 'type' для поддержки динамических достижений
-class Achievement(BaseModel):
-    """
-    Модель для достижения. Загружается из achievements_config.json.
-    """
-    id: str
-    name: str
-    description: str
-    reward_coins: float
-    trigger_event: str
-    type: str = "static" # 'static' или 'dynamic'
-    trigger_conditions: Optional[Dict[str, Any]] = None
+        if coin_data is None:
+            logger.warning("Загрузка с API не удалась, попытка загрузки из резервного файла.")
+            coin_data = await self._load_fallback_data()
 
-class MiningSessionResult(BaseModel):
-    """Результаты завершенной майнинг-сессии."""
-    asic_name: str
-    user_tariff_name: str
-    gross_earned: float
-    total_electricity_cost: float
-    net_earned: float
-    event_description: Optional[str] = None
-    unlocked_achievement: Optional[Achievement] = None
+        if coin_data:
+            try:
+                coins = [Coin.model_validate(coin) for coin in coin_data]
+                coins_to_cache = [c.model_dump(mode='json') for c in coins]
+                await self.redis.set(self._COIN_LIST_CACHE_KEY, json.dumps(coins_to_cache))
+                logger.info(f"Успешно обновлено и кэшировано {len(coins)} монет.")
+            except Exception as e:
+                logger.error(f"Не удалось валидировать или кэшировать данные монет: {e}")
+        else:
+            logger.error("Не удалось обновить список монет ни с API, ни из резервного файла.")
 
-class MarketListing(BaseModel):
-    """
-    Модель для лота, выставленного на продажу на рынке.
-    """
-    id: str
-    seller_id: int
-    price: float
-    created_at: int
-    asic_data: str # Храним данные асика в виде JSON-строки
+    async def get_all_coins(self) -> List[Coin]:
+        """
+        Получает список всех монет из кэша.
+        """
+        cached_data = await self.redis.get(self._COIN_LIST_CACHE_KEY)
+        if cached_data:
+            try:
+                coins_data = json.loads(cached_data)
+                return [Coin.model_validate(c) for c in coins_data]
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Ошибка декодирования кэшированного списка монет: {e}. Запускаю обновление.")
 
-class QuizQuestion(BaseModel):
-    """Модель для вопроса в викторине."""
-    question: str
-    options: List[str]
-    correct_option_index: int # Индекс правильного ответа
-    explanation: Optional[str] = None
+        logger.warning("Кэш списка монет пуст или невалиден. Запускаю немедленное обновление.")
+        await self.update_coin_list()
 
-class AIVerdict(BaseModel):
-    """
-    Модель для структурированного ответа от AI-анализатора безопасности.
-    Определяет вердикт по проанализированному сообщению.
-    """
-    intent: str = Field(default="other", description="Основное намерение сообщения.")
-    toxicity_score: float = Field(default=0.0, description="Оценка токсичности от 0.0 до 1.0.")
-    is_potential_scam: bool = Field(default=False, description="True, если сообщение похоже на мошенничество.")
-    is_potential_phishing: bool = Field(default=False, description="True, если сообщение содержит подозрительные ссылки.")
+        cached_data_after_update = await self.redis.get(self._COIN_LIST_CACHE_KEY)
+        if cached_data_after_update:
+            return [Coin.model_validate(c) for c in json.loads(cached_data_after_update)]
+
+        logger.error("Не удалось получить список монет даже после попытки обновления.")
+        return []
