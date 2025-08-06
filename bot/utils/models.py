@@ -1,8 +1,7 @@
-# bot/utils/models.py
 # =================================================================================
-# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ОБЪЕДИНЕННАЯ)
+# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полный и самодостаточный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлены недостающие модели 'Coin' и 'PriceInfo'.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая модель 'AIVerdict' для сервиса безопасности.
 # =================================================================================
 
 from __future__ import annotations
@@ -110,4 +109,15 @@ class QuizQuestion(BaseModel):
     options: List[str]
     correct_option_index: int # Индекс правильного ответа
     explanation: Optional[str] = None
+
+# ИСПРАВЛЕНО: Добавлена недостающая модель для сервиса безопасности
+class AIVerdict(BaseModel):
+    """
+    Модель для структурированного ответа от AI-анализатора безопасности.
+    Определяет вердикт по проанализированному сообщению.
+    """
+    intent: str = Field(default="other", description="Основное намерение сообщения.")
+    toxicity_score: float = Field(default=0.0, description="Оценка токсичности от 0.0 до 1.0.")
+    is_potential_scam: bool = Field(default=False, description="True, если сообщение похоже на мошенничество.")
+    is_potential_phishing: bool = Field(default=False, description="True, если сообщение содержит подозрительные ссылки.")
 
