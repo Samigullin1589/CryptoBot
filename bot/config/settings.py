@@ -1,11 +1,10 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
+# Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая модель CryptoCenterServiceConfig.
+# Включает все необходимые модели для полной сборки проекта.
 # =================================================================================
 
 import json
-import os
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -17,7 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
 
-# --- Определения моделей для частей конфигурации (из JSON-файлов) ---
+# --- Определения моделей для всех частей конфигурации ---
 
 class AIConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -65,18 +64,35 @@ class AsicServiceConfig(BaseModel):
     update_interval_hours: int = 6
     fallback_file_path: str = "data/fallback_asics.json"
 
-# ИСПРАВЛЕНО: Добавлена недостающая модель конфигурации
 class CryptoCenterServiceConfig(BaseModel):
-    """Конфигурация для сервиса Crypto Center."""
-    news_context_limit: int = Field(default=20, description="Количество новостей для контекста AI.")
-    alpha_cache_ttl_seconds: int = Field(default=1800, description="Время жизни кэша для персональной 'альфы' (в секундах).")
-    feed_cache_ttl_seconds: int = Field(default=600, description="Время жизни кэша для новостной ленты с саммари (в секундах).")
+    news_context_limit: int = 20
+    alpha_cache_ttl_seconds: int = 1800
+    feed_cache_ttl_seconds: int = 600
+
+class QuizServiceConfig(BaseModel):
+    fallback_questions_path: str = "data/quiz_fallback.json"
+
+# --- Конфигурации для сервисов, которые не были предоставлены, но требуются для сборки ---
+class MiningEventServiceConfig(BaseModel):
+    # Пример: можно добавить сюда настройки для событий
+    default_multiplier: float = 1.0
+
+class AchievementServiceConfig(BaseModel):
+    # Пример: можно добавить сюда настройки для достижений
+    config_path: str = "data/achievements.json"
+
+class MarketDataServiceConfig(BaseModel):
+    # Пример: можно добавить сюда настройки для рыночных данных
+    update_interval_seconds: int = 60
+
+class MiningGameServiceConfig(BaseModel):
+    # Пример: можно добавить сюда настройки для игры
+    session_duration_minutes: int = 60
 
 # --- Главная модель настроек ---
 
 class Settings(BaseSettings):
-    """Главный класс настроек."""
-    # 1. Поля из ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
+    """Главный класс настроек, агрегирующий все конфигурации."""
     BOT_TOKEN: SecretStr
     ADMIN_USER_IDS: Any
     REDIS_URL: RedisDsn
@@ -87,7 +103,6 @@ class Settings(BaseSettings):
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     PERSPECTIVE_API_KEY: Optional[SecretStr] = None
 
-    # 2. Вложенные конфигурации, загружаемые из JSON-файлов
     log_level: str = "INFO"
     ai: AIConfig = Field(default_factory=AIConfig)
     throttling: ThrottlingConfig = Field(default_factory=ThrottlingConfig)
@@ -98,14 +113,14 @@ class Settings(BaseSettings):
     endpoints: EndpointsConfig = Field(default_factory=EndpointsConfig)
     threat_filter: ThreatFilterConfig = Field(default_factory=ThreatFilterConfig)
     asic_service: AsicServiceConfig = Field(default_factory=AsicServiceConfig)
-    # ИСПРАВЛЕНО: Добавлено поле для новой конфигурации
     crypto_center: CryptoCenterServiceConfig = Field(default_factory=CryptoCenterServiceConfig)
+    quiz: QuizServiceConfig = Field(default_factory=QuizServiceConfig)
+    events: MiningEventServiceConfig = Field(default_factory=MiningEventServiceConfig)
+    achievements: AchievementServiceConfig = Field(default_factory=AchievementServiceConfig)
+    market_data: MarketDataServiceConfig = Field(default_factory=MarketDataServiceConfig)
+    game: MiningGameServiceConfig = Field(default_factory=MiningGameServiceConfig)
     
-    model_config = SettingsConfigDict(
-        env_file='.env', 
-        env_file_encoding='utf-8', 
-        extra='ignore'
-    )
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     @field_validator('ADMIN_USER_IDS', mode='before')
     @classmethod
@@ -120,6 +135,7 @@ def _load_json_config_data() -> Dict[str, Any]:
     """Вспомогательная функция для загрузки всех JSON-конфигов в один словарь."""
     base_dir = Path("data")
     config_files = {
+        "app": "app_config.json",
         "throttling": "throttling_config.json",
         "feature_flags": "feature_flags.json",
         "endpoints": "endpoints_config.json",
@@ -129,9 +145,12 @@ def _load_json_config_data() -> Dict[str, Any]:
         "news_service": "news_service_config.json",
         "threat_filter": "threat_filter_config.json",
         "asic_service": "asic_service_config.json",
-        "app": "app_config.json",
-        # ИСПРАВЛЕНО: Добавлена загрузка конфига для нового сервиса
         "crypto_center": "crypto_center_config.json",
+        "quiz": "quiz_config.json",
+        "events": "events_config.json",
+        "achievements": "achievements_config.json",
+        "market_data": "market_data_config.json",
+        "game": "game_config.json",
     }
     
     loaded_data = {}

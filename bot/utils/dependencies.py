@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
-# Описание: Самодостаточный DI-контейнер.
-# ИСПРАВЛЕНИЕ: Добавлен `bot: Bot` в метод `build` для корректной инициализации
-# сервисов. Убраны `cast`. Исправлена инициализация SecurityService.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
+# Описание: Самодостаточный DI-контейнер, собирающий все сервисы проекта.
+# Включает инициализацию всех известных сервисов в правильном порядке.
 # =================================================================================
 
 from typing import cast
@@ -15,59 +14,48 @@ from redis.asyncio import Redis
 
 from bot.config.settings import Settings
 from bot.services.user_service import UserService
-from bot.services.asic_service import AsicService
-from bot.services.parser_service import ParserService
-from bot.services.price_service import PriceService
-from bot.services.coin_list_service import CoinListService
+from bot.services.admin_service import AdminService
+from bot.services.ai_content_service import AIContentService
 from bot.services.news_service import NewsService
+from bot.services.parser_service import ParserService
+from bot.services.security_service import SecurityService
+from bot.services.coin_list_service import CoinListService
+from bot.services.price_service import PriceService
+from bot.services.asic_service import AsicService
+from bot.services.crypto_center_service import CryptoCenterService
 from bot.services.quiz_service import QuizService
 from bot.services.market_data_service import MarketDataService
-from bot.services.ai_content_service import AIContentService
-from bot.services.security_service import SecurityService
-from bot.services.crypto_center_service import CryptoCenterService
-from bot.services.mining_game_service import MiningGameService
-from bot.services.market_service import AsicMarketService
 from bot.services.event_service import MiningEventService
 from bot.services.achievement_service import AchievementService
-from bot.services.admin_service import AdminService
+from bot.services.market_service import AsicMarketService
+from bot.services.mining_game_service import MiningGameService
 
 
 class Deps(BaseModel):
     """
-    Pydantic-модель, агрегирующая все зависимости приложения.
-    Используется для автоматического внедрения зависимостей в хэндлеры.
+    Pydantic-модель, агрегирующая все зависимости приложения для DI.
     """
-    # --- Основные ресурсы ---
     settings: Settings
     http_session: aiohttp.ClientSession
     redis_pool: Redis
     scheduler: AsyncIOScheduler = Field(default_factory=lambda: AsyncIOScheduler(timezone="UTC"))
 
-    # --- Сервисы (расположены в логическом порядке инициализации) ---
-    # Уровень 1: Базовые сервисы
+    # --- Сервисы (поля для всех сервисов проекта) ---
     user_service: UserService
     admin_service: AdminService
-    # ... (остальные сервисы из вашего списка)
-    # Я оставлю ваш список сервисов без изменений, так как он выглядит логично
+    ai_content_service: AIContentService
+    news_service: NewsService
+    parser_service: ParserService
     quiz_service: QuizService
     event_service: MiningEventService
     achievement_service: AchievementService
     market_data_service: MarketDataService
-    news_service: NewsService
-    parser_service: ParserService
-    ai_content_service: AIContentService
-
-    # Уровень 2: Сервисы, зависящие от Уровня 1
     security_service: SecurityService
     coin_list_service: CoinListService
     asic_service: AsicService
-    
-    # Уровень 3: Сервисы, зависящие от Уровня 2
     price_service: PriceService
     crypto_center_service: CryptoCenterService
     market_service: AsicMarketService
-    
-    # Уровень 4: Сервис-агрегатор (игровой движок)
     mining_game_service: MiningGameService
 
     class Config:
@@ -79,41 +67,36 @@ class Deps(BaseModel):
         Фабричный метод для сборки контейнера зависимостей.
         Гарантирует, что все сервисы создаются в правильном порядке.
         """
-        # --- Уровень 1: Инициализация базовых сервисов ---
+        # --- Уровень 1: Базовые сервисы без зависимостей от других сервисов ---
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
-        
-        # Здесь я предполагаю, что остальные сервисы из вашего списка существуют
-        # и имеют корректные __init__ сигнатуры.
-        # Если какого-то файла нет, Python выдаст ошибку импорта.
-        # Я оставлю их как в вашем оригинальном файле.
-        quiz_service = QuizService(config=settings.quiz)
-        event_service = MiningEventService(config=settings.events)
-        achievement_service = AchievementService(redis=redis_pool, config=settings.achievements)
-        market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data)
-        news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
-        parser_service = ParserService(http_session=http_session, endpoints=settings.endpoints)
         ai_content_service = AIContentService(
             http_session=http_session, 
             api_key=settings.GEMINI_API_KEY.get_secret_value(),
             config=settings.ai
         )
+        news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
+        parser_service = ParserService(http_session=http_session, endpoints=settings.endpoints)
+        quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
+        event_service = MiningEventService(config=settings.events)
+        achievement_service = AchievementService(redis=redis_pool, config=settings.achievements)
+        market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data)
 
-        # --- Уровень 2: Инициализация сервисов, зависящих от Уровня 1 ---
-        # ИСПРАВЛЕНО: SecurityService теперь создается корректно
+        # --- Уровень 2: Сервисы, зависящие от Уровня 1 ---
         security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
         coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, config=settings.coin_list_service, endpoints=settings.endpoints)
         asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
 
-        # --- Уровень 3: Инициализация сервисов, зависящих от Уровня 2 ---
+        # --- Уровень 3: Сервисы, зависящие от Уровня 2 ---
         price_service = PriceService(redis=redis_pool, http_session=http_session, coin_list_service=coin_list_service, config=settings.price_service, endpoints=settings.endpoints)
         crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
         market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
 
-        # --- Уровень 4: Инициализация сервисов верхнего уровня ---
+        # --- Уровень 4: Сервис-агрегатор (игровой движок) ---
+        scheduler_instance = AsyncIOScheduler(timezone="UTC")
         mining_game_service = MiningGameService(
             redis=redis_pool,
-            scheduler=cast(AsyncIOScheduler, None), # Планировщик будет добавлен в main
+            scheduler=scheduler_instance,
             settings=settings,
             user_service=user_service,
             market_service=market_service,
@@ -127,16 +110,16 @@ class Deps(BaseModel):
             settings=settings,
             http_session=http_session,
             redis_pool=redis_pool,
-            bot=bot, # Добавляем bot в сам контейнер на всякий случай
+            scheduler=scheduler_instance,
             user_service=user_service,
             admin_service=admin_service,
+            ai_content_service=ai_content_service,
+            news_service=news_service,
+            parser_service=parser_service,
             quiz_service=quiz_service,
             event_service=event_service,
             achievement_service=achievement_service,
             market_data_service=market_data_service,
-            news_service=news_service,
-            parser_service=parser_service,
-            ai_content_service=ai_content_service,
             security_service=security_service,
             coin_list_service=coin_list_service,
             asic_service=asic_service,
@@ -145,4 +128,3 @@ class Deps(BaseModel):
             market_service=market_service,
             mining_game_service=mining_game_service
         )
-
