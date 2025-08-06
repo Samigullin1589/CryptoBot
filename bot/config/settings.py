@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлены все необходимые поля для MiningGameService.
+# ИСПРАВЛЕНИЕ: Добавлены все необходимые поля для ThrottlingMiddleware.
 # =================================================================================
 
 import json
@@ -26,8 +26,11 @@ class AIConfig(BaseModel):
     default_temperature: float = 0.5
     max_retries: int = 5
 
+# ИСПРАВЛЕНО: Добавлены лимиты для пользователя и чата
 class ThrottlingConfig(BaseModel):
-    rate_limit: float = 0.5
+    rate_limit: float = 0.5 # Общий лимит
+    user_rate_limit: float = 2.0 # Лимит для одного пользователя (2 секунды)
+    chat_rate_limit: float = 1.0 # Лимит для одного чата (1 секунда)
     key_prefix: str = "throttling"
 
 class FeatureFlags(BaseModel):
@@ -100,7 +103,6 @@ class ElectricityTariff(BaseModel):
     cost_per_kwh: float
     unlock_price: float
 
-# ИСПРАВЛЕНО: Добавлены все необходимые настройки для игры
 class MiningGameServiceConfig(BaseModel):
     session_duration_minutes: int = 60
     market_commission_rate: float = 0.05
