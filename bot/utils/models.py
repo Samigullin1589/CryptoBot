@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полный и самодостаточный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая модель 'AIVerdict' для сервиса безопасности.
+# ИСПРАВЛЕНИЕ: Добавлено поле 'type' в модель Achievement.
 # =================================================================================
 
 from __future__ import annotations
@@ -72,6 +72,7 @@ class AirdropProject(BaseModel):
     tasks: List[str]
     guide_url: Optional[str] = None
 
+# ИСПРАВЛЕНО: Добавлено поле 'type' для поддержки динамических достижений
 class Achievement(BaseModel):
     """
     Модель для достижения. Загружается из achievements_config.json.
@@ -81,6 +82,7 @@ class Achievement(BaseModel):
     description: str
     reward_coins: float
     trigger_event: str
+    type: str = "static" # 'static' или 'dynamic'
     trigger_conditions: Optional[Dict[str, Any]] = None
 
 class MiningSessionResult(BaseModel):
@@ -110,7 +112,6 @@ class QuizQuestion(BaseModel):
     correct_option_index: int # Индекс правильного ответа
     explanation: Optional[str] = None
 
-# ИСПРАВЛЕНО: Добавлена недостающая модель для сервиса безопасности
 class AIVerdict(BaseModel):
     """
     Модель для структурированного ответа от AI-анализатора безопасности.
@@ -120,4 +121,3 @@ class AIVerdict(BaseModel):
     toxicity_score: float = Field(default=0.0, description="Оценка токсичности от 0.0 до 1.0.")
     is_potential_scam: bool = Field(default=False, description="True, если сообщение похоже на мошенничество.")
     is_potential_phishing: bool = Field(default=False, description="True, если сообщение содержит подозрительные ссылки.")
-

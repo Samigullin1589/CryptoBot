@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлены поля для MarketDataService и PriceService.
+# ИСПРАВЛЕНИЕ: Добавлен эндпоинт для CoinListService.
 # =================================================================================
 
 import json
@@ -35,7 +35,6 @@ class FeatureFlags(BaseModel):
     enable_game: bool = True
     enable_threat_protection: bool = True
 
-# ИСПРАВЛЕНО: Добавлена валюта по умолчанию
 class PriceServiceConfig(BaseModel):
     cache_ttl_seconds: int = 300
     top_n_coins: int = 100
@@ -55,9 +54,10 @@ class NewsServiceConfig(BaseModel):
     feeds: NewsFeeds = Field(default_factory=NewsFeeds)
     news_limit_per_source: int = 5
 
-# ИСПРАВЛЕНО: Добавлены конкретные эндпоинты для CoinGecko
+# ИСПРАВЛЕНО: Добавлены все необходимые эндпоинты для CoinGecko
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
+    coins_list_endpoint: str = "/coins/list"
     coins_markets_endpoint: str = "/coins/markets"
     simple_price_endpoint: str = "/simple/price"
     blockchain_info_hashrate: HttpUrl = "https://api.blockchain.info/q/hashrate"
@@ -90,7 +90,6 @@ class MiningEventServiceConfig(BaseModel):
 class AchievementServiceConfig(BaseModel):
     config_path: str = "data/achievements.json"
 
-# ИСПРАВЛЕНО: Добавлены поля для MarketDataService
 class MarketDataServiceConfig(BaseModel):
     update_interval_seconds: int = 60
     top_n_coins: int = 100
