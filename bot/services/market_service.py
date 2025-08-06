@@ -1,5 +1,7 @@
 # =================================================================================
-# Файл: bot/services/market_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ИСПРАВЛЕНА)
+# Файл: bot/services/market_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Сервис, управляющий рынком ASIC-майнеров.
+# ИСПРАВЛЕНИЕ: Конструктор приведен в полное соответствие с DI-контейнером.
 # =================================================================================
 
 import json
@@ -11,34 +13,26 @@ from typing import List, Optional
 import redis.asyncio as redis
 from aiogram import Bot
 
-from bot.config.settings import Settings # <<< ИСПРАВЛЕНО ЗДЕСЬ
+from bot.config.settings import Settings
 from bot.utils.models import AsicMiner, MarketListing
 from bot.utils.lua_scripts import LuaScripts
 from bot.services.achievement_service import AchievementService
+from bot.utils.keys import KeyFactory
 
 logger = logging.getLogger(__name__)
 
-class _KeyFactory:
-    @staticmethod
-    def user_hangar(user_id: int) -> str: return f"game:hangar:{user_id}"
-    @staticmethod
-    def user_game_profile(user_id: int) -> str: return f"game:profile:{user_id}"
-    @staticmethod
-    def market_listings_by_price() -> str: return "market:listings:price"
-    @staticmethod
-    def market_listing_data(listing_id: str) -> str: return f"market:listing:{listing_id}"
-
 class AsicMarketService:
+    # ИСПРАВЛЕНО: Конструктор теперь принимает 'redis'
     def __init__(self,
-                 redis_client: redis.Redis,
-                 settings: Settings, # <<< ИСПРАВЛЕНО ЗДЕСЬ
+                 redis: redis.Redis,
+                 settings: Settings,
                  achievement_service: AchievementService,
                  bot: Bot):
-        self.redis = redis_client
+        self.redis = redis
         self.settings = settings
         self.achievements = achievement_service
         self.bot = bot
-        self.keys = _KeyFactory
+        self.keys = KeyFactory
         self.lua_list_item = self.redis.script_load(LuaScripts.LIST_ITEM_FOR_SALE)
         self.lua_cancel_listing = self.redis.script_load(LuaScripts.CANCEL_LISTING)
         self.lua_buy_item = self.redis.script_load(LuaScripts.BUY_ITEM_FROM_MARKET)
@@ -85,15 +79,18 @@ class AsicMarketService:
             self.keys.market_listing_data(listing_id),
             self.keys.market_listings_by_price(),
             self.keys.user_game_profile(buyer_id),
+            self.keys.user_hangar(buyer_id), # Ключ ангара покупателя
+            self.keys.user_game_profile(seller_id) if seller_id else "nil" # Ключ профиля продавца
         ]
-        args = [listing_id, buyer_id, commission_rate]
+        args = [listing_id, buyer_id, seller_id or 0, commission_rate]
         
         result_code = await self.redis.evalsha(self.lua_buy_item, len(keys), *keys, *args)
 
         if result_code == 1:
             logger.info(f"User {buyer_id} successfully bought listing {listing_id}.")
             if seller_id:
-                unlocked_ach = await self.achievements.process_event(seller_id, "ASIC_SOLD")
+                # Используем process_static_event для событий, инициированных пользователем
+                unlocked_ach = await self.achievements.process_static_event(seller_id, "asic_sold")
                 if unlocked_ach:
                     try:
                         await self.bot.send_message(

@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлены поля для AsicService.
+# ИСПРАВЛЕНИЕ: Добавлено поле market_commission_rate для MarketService.
 # =================================================================================
 
 import json
@@ -70,7 +70,6 @@ class ThreatFilterConfig(BaseModel):
     enabled: bool = True
     toxicity_threshold: float = 0.75
 
-# ИСПРАВЛЕНО: Добавлены пороговые значения для нечеткого поиска
 class AsicServiceConfig(BaseModel):
     update_interval_hours: int = 6
     fallback_file_path: str = "data/fallback_asics.json"
@@ -97,8 +96,10 @@ class MarketDataServiceConfig(BaseModel):
     top_n_coins: int = 100
     default_vs_currency: str = "usd"
 
+# ИСПРАВЛЕНО: Добавлена комиссия рынка
 class MiningGameServiceConfig(BaseModel):
     session_duration_minutes: int = 60
+    market_commission_rate: float = 0.05 # 5% комиссия
 
 # --- Главная модель настроек ---
 
