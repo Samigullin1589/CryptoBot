@@ -1,8 +1,8 @@
-# bot/services/news_service.py
 # =================================================================================
-# Файл: bot/services/news_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - АДАПТИРОВАННАЯ)
-# Описание: Отказоустойчивый сервис для сбора новостей, адаптированный
-# для работы с единой системой настроек.
+# Файл: bot/services/news_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Отказоустойчивый сервис для сбора новостей, полностью
+# интегрированный в архитектуру с инъекцией зависимостей.
+# ИСПРАВЛЕНИЕ: Сервис переработан для получения всех зависимостей через __init__.
 # =================================================================================
 import asyncio
 import logging
@@ -15,27 +15,35 @@ import feedparser
 import redis.asyncio as redis
 from aiogram import Bot
 
-# ИСПРАВЛЕНО: Импортируем единый объект настроек
-from bot.config.settings import settings
+# ИСПРАВЛЕНО: Импортируем только типы, а не глобальные объекты
+from bot.config.settings import Settings
 from bot.utils.keys import KeyFactory
 from bot.utils.models import NewsArticle
 from bot.utils.text_utils import normalize_asic_name, sanitize_html
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_EXCEPTIONS = (aiohttp.ClientError, TimeoutError)
+RETRYABLE_EXCEPTIONS = (aiohttp.ClientError, TimeoutError, asyncio.TimeoutError)
 
 class NewsService:
     """Сервис для сбора и дедупликации новостей из различных источников."""
     
+    # ИСПРАВЛЕНО: Конструктор теперь принимает все зависимости через инъекцию.
     def __init__(
         self,
-        redis_client: redis.Redis,
+        redis: redis.Redis,
         http_session: aiohttp.ClientSession,
+        settings: Settings,
     ):
-        self.redis = redis_client
+        """
+        Инициализирует сервис новостей.
+
+        :param redis: Асинхронный клиент Redis.
+        :param http_session: Клиентская сессия aiohttp.
+        :param settings: Глобальный объект настроек.
+        """
+        self.redis = redis
         self.session = http_session
-        # ИСПРАВЛЕНО: Все настройки берутся из единого объекта
         self.settings = settings
         self.keys = KeyFactory
 
@@ -49,7 +57,7 @@ class NewsService:
     async def _fetch_from_cryptocompare(self) -> List[NewsArticle]:
         """Получает новости из API CryptoCompare."""
         api_key = self.settings.CRYPTOCOMPARE_API_KEY
-        api_url = self.settings.endpoints.crypto_center_news_api_url
+        api_url = self.settings.endpoints.cryptocompare_news_api_url
 
         if not api_key or not api_url:
             logger.warning("CryptoCompare API key или URL не заданы. Пропуск источника новостей.")
@@ -97,9 +105,7 @@ class NewsService:
             return []
 
     async def get_latest_news(self) -> List[NewsArticle]:
-        """
-        Собирает новости из всех источников и отфильтровывает дубликаты.
-        """
+        """Собирает новости из всех источников и отфильтровывает дубликаты."""
         logger.info("Запуск сбора последних новостей...")
         
         tasks = [self._fetch_from_cryptocompare()]
@@ -149,4 +155,3 @@ class NewsService:
             await bot.send_message(chat_id, "".join(message_parts), disable_web_page_preview=True)
         except Exception as e:
             logger.error(f"Не удалось отправить дайджест новостей в чат {chat_id}: {e}")
-

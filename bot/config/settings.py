@@ -51,6 +51,7 @@ class NewsFeeds(BaseModel):
 class NewsServiceConfig(BaseModel):
     cache_ttl_seconds: int = 3600
     feeds: NewsFeeds = Field(default_factory=NewsFeeds)
+    news_limit_per_source: int = 5
 
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
@@ -58,6 +59,7 @@ class EndpointsConfig(BaseModel):
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
     whattomine_api: Optional[HttpUrl] = None
     minerstat_api: Optional[HttpUrl] = None
+    cryptocompare_news_api_url: Optional[HttpUrl] = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
 
 class ThreatFilterConfig(BaseModel):
     enabled: bool = True

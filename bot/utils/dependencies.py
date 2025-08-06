@@ -76,7 +76,8 @@ class Deps(BaseModel):
             config=settings.ai
         )
         
-        news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
+        news_service = NewsService(redis=redis_pool, http_session=http_session, settings=settings)
+        
         parser_service = ParserService(http_session=http_session, endpoints=settings.endpoints)
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
         event_service = MiningEventService(config=settings.events)
