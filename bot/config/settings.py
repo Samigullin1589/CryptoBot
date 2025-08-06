@@ -21,7 +21,10 @@ load_dotenv()
 class AIConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     provider: str = "gemini"
-    model_name: str = "gemini-1.5-flash-latest"
+    model_name: str = "gemini-1.5-pro-latest"
+    flash_model_name: str = "gemini-1.5-flash-latest"
+    default_temperature: float = 0.5
+    max_retries: int = 5
 
 class ThrottlingConfig(BaseModel):
     rate_limit: float = 0.5
@@ -72,21 +75,16 @@ class CryptoCenterServiceConfig(BaseModel):
 class QuizServiceConfig(BaseModel):
     fallback_questions_path: str = "data/quiz_fallback.json"
 
-# --- Конфигурации для сервисов, которые не были предоставлены, но требуются для сборки ---
 class MiningEventServiceConfig(BaseModel):
-    # Пример: можно добавить сюда настройки для событий
     default_multiplier: float = 1.0
 
 class AchievementServiceConfig(BaseModel):
-    # Пример: можно добавить сюда настройки для достижений
     config_path: str = "data/achievements.json"
 
 class MarketDataServiceConfig(BaseModel):
-    # Пример: можно добавить сюда настройки для рыночных данных
     update_interval_seconds: int = 60
 
 class MiningGameServiceConfig(BaseModel):
-    # Пример: можно добавить сюда настройки для игры
     session_duration_minutes: int = 60
 
 # --- Главная модель настроек ---

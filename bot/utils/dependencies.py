@@ -70,11 +70,12 @@ class Deps(BaseModel):
         # --- Уровень 1: Базовые сервисы без зависимостей от других сервисов ---
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
+        
         ai_content_service = AIContentService(
-            http_session=http_session, 
             api_key=settings.GEMINI_API_KEY.get_secret_value(),
             config=settings.ai
         )
+        
         news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
         parser_service = ParserService(http_session=http_session, endpoints=settings.endpoints)
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
