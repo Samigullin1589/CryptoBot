@@ -1,0 +1,39 @@
+{
+  "questions": [
+    {
+      "question": "Кто является псевдонимным создателем Bitcoin?",
+      "options": ["Виталик Бутерин", "Сатоши Накамото", "Чарли Ли", "Илон Маск"],
+      "correct_option_index": 1
+    },
+    {
+      "question": "Какой алгоритм консенсуса использует Ethereum после обновления 'The Merge'?",
+      "options": ["Proof of Work", "Proof of Stake", "Proof of History", "Delegated Proof of Stake"],
+      "correct_option_index": 1
+    },
+    {
+      "question": "Что такое 'халвинг' в сети Bitcoin?",
+      "options": ["Удвоение комиссии", "Разделение блокчейна", "Уменьшение награды за блок вдвое", "Ускорение создания блока"],
+      "correct_option_index": 2
+    },
+    {
+      "question": "Какая из этих криптовалют была создана как 'шутка'?",
+      "options": ["Litecoin", "Ripple (XRP)", "Cardano (ADA)", "Dogecoin (DOGE)"],
+      "correct_option_index": 3
+    },
+    {
+      "question": "Что означает термин 'DeFi'?",
+      "options": ["Цифровые финансы", "Децентрализованные финансы", "Определенные финансы", "Прямые финансы"],
+      "correct_option_index": 1
+    },
+    {
+      "question": "Какой ASIC-майнер традиционно считается одним из самых энергоэффективных для майнинга Bitcoin?",
+      "options": ["Innosilicon A10 Pro", "Canaan AvalonMiner 1246", "Bitmain Antminer S19 Pro", "Whatsminer M30S++"],
+      "correct_option_index": 2
+    },
+    {
+      "question": "Что такое 'газ' в сети Ethereum?",
+      "options": ["Топливо для майнеров", "Комиссия за выполнение транзакций и смарт-контрактов", "Название криптовалюты", "Скорость сети"],
+      "correct_option_index": 1
+    }
+  ]
+}

@@ -2,10 +2,11 @@
 # Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Сервис для получения рыночных данных, полностью
 # интегрированный в архитектуру с инъекцией зависимостей.
-# ИСПРАВЛЕНИЕ: Сервис полностью переработан для соответствия DI-архитектуре.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'asyncio'.
 # =================================================================================
 
 import logging
+import asyncio # <--- ИСПРАВЛЕНО: Добавлен недостающий импорт
 from typing import List, Optional, Dict, Any
 
 import aiohttp
@@ -58,7 +59,7 @@ class MarketDataService:
         
         logger.info(f"Запрос топ-{self.config.top_n_coins} монет с API: {url}")
         try:
-            async with self.http_session.get(url, params=params) as response:
+            async with self.http_session.get(url, params=params, timeout=20) as response:
                 response.raise_for_status()
                 data = await response.json()
                 logger.info(f"Успешно загружено {len(data)} монет с API.")
@@ -69,4 +70,3 @@ class MarketDataService:
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при загрузке рыночных данных: {e}", exc_info=True)
             return None
-

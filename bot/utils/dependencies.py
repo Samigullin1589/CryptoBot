@@ -1,12 +1,10 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
-# Описание: Самодостаточный DI-контейнер, собирающий все сервисы проекта.
-# ИСПРАВЛЕНИЕ: Инициализация MarketDataService и PriceService приведена
-# в соответствие с их новыми версиями.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ДИНАМИЧЕСКАЯ)
+# Описание: DI-контейнер, настроенный для поддержки динамической системы достижений.
+# ИСПРАВЛЕНИЕ: Инициализация AchievementService обновлена.
 # =================================================================================
 
 from typing import cast
-
 import aiohttp
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -31,14 +29,11 @@ from bot.services.achievement_service import AchievementService
 from bot.services.market_service import AsicMarketService
 from bot.services.mining_game_service import MiningGameService
 
-
 class Deps(BaseModel):
-    """Pydantic-модель, агрегирующая все зависимости приложения для DI."""
     settings: Settings
     http_session: aiohttp.ClientSession
     redis_pool: Redis
     scheduler: AsyncIOScheduler = Field(default_factory=lambda: AsyncIOScheduler(timezone="UTC"))
-
     user_service: UserService
     admin_service: AdminService
     ai_content_service: AIContentService
@@ -61,7 +56,6 @@ class Deps(BaseModel):
 
     @classmethod
     def build(cls, settings: Settings, http_session: aiohttp.ClientSession, redis_pool: Redis, bot: Bot) -> "Deps":
-        """Фабричный метод для сборки контейнера зависимостей."""
         # --- Уровень 1: Базовые сервисы ---
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
@@ -70,41 +64,28 @@ class Deps(BaseModel):
         parser_service = ParserService(http_session=http_session, config=settings.endpoints)
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
         event_service = MiningEventService(config=settings.events)
-        achievement_service = AchievementService(redis=redis_pool, config=settings.achievements)
+        market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data, endpoints=settings.endpoints)
         
-        # ИСПРАВЛЕНО: MarketDataService теперь принимает config и endpoints
-        market_data_service = MarketDataService(
-            redis=redis_pool, 
-            http_session=http_session, 
-            config=settings.market_data,
-            endpoints=settings.endpoints
-        )
+        # ИСПРАВЛЕНО: AchievementService теперь получает MarketDataService
+        achievement_service = AchievementService(redis=redis_pool, config=settings.achievements, market_data_service=market_data_service)
 
-        # --- Уровень 2: Сервисы, зависящие от Уровня 1 ---
+        # --- Уровень 2 ---
         security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
         coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, config=settings.coin_list_service, endpoints=settings.endpoints)
         asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
 
-        # --- Уровень 3: Сервисы, зависящие от Уровня 2 ---
-        # ИСПРАВЛЕНО: PriceService теперь принимает config и endpoints
-        price_service = PriceService(
-            redis=redis_pool, 
-            http_session=http_session, 
-            coin_list_service=coin_list_service, 
-            config=settings.price_service, 
-            endpoints=settings.endpoints
-        )
+        # --- Уровень 3 ---
+        price_service = PriceService(redis=redis_pool, http_session=http_session, coin_list_service=coin_list_service, config=settings.price_service, endpoints=settings.endpoints)
         crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
         market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
 
-        # --- Уровень 4: Сервис-агрегатор (игровой движок) ---
+        # --- Уровень 4 ---
         scheduler_instance = AsyncIOScheduler(timezone="UTC")
         mining_game_service = MiningGameService(
             redis=redis_pool, scheduler=scheduler_instance, settings=settings, user_service=user_service,
             market_service=market_service, event_service=event_service, achievement_service=achievement_service, bot=bot
         )
 
-        # Сборка финального объекта Deps
         return cls(
             settings=settings, http_session=http_session, redis_pool=redis_pool, scheduler=scheduler_instance,
             user_service=user_service, admin_service=admin_service, ai_content_service=ai_content_service,

@@ -1,0 +1,71 @@
+{
+  "achievements": [
+    {
+      "id": "static_first_session",
+      "name": "Первый запуск",
+      "description": "Вы успешно завершили свою первую майнинг-сессию. Добро пожаловать в игру!",
+      "reward_coins": 100,
+      "type": "static",
+      "trigger_event": "session_completed",
+      "trigger_conditions": {
+        "session_completed_count": 1
+      }
+    },
+    {
+      "id": "static_ten_sessions",
+      "name": "Опытный майнер",
+      "description": "Вы завершили 10 майнинг-сессий. Так держать!",
+      "reward_coins": 500,
+      "type": "static",
+      "trigger_event": "session_completed",
+      "trigger_conditions": {
+        "session_completed_count": 10
+      }
+    },
+    {
+      "id": "static_first_asic_buy",
+      "name": "Начинающий инвестор",
+      "description": "Вы приобрели свой первый ASIC на рынке. Удачных вложений!",
+      "reward_coins": 250,
+      "type": "static",
+      "trigger_event": "asic_purchased",
+      "trigger_conditions": {
+        "asic_purchased_count": 1
+      }
+    },
+    {
+      "id": "dynamic_witness_ath",
+      "name": "Свидетель Истории",
+      "description": "На ваших глазах {coin_name} достиг нового исторического максимума (ATH)! Вы стали частью истории.",
+      "reward_coins": 1000,
+      "type": "dynamic",
+      "trigger_event": "market_update",
+      "trigger_conditions": {
+        "metric": "is_ath"
+      }
+    },
+    {
+      "id": "dynamic_top10_entry",
+      "name": "Провидец",
+      "description": "Вы взаимодействовали с {coin_name} до того, как он ворвался в топ-10 по капитализации!",
+      "reward_coins": 2000,
+      "type": "dynamic",
+      "trigger_event": "market_update",
+      "trigger_conditions": {
+        "metric": "entered_top_10"
+      }
+    },
+    {
+      "id": "dynamic_pump_rider",
+      "name": "На гребне волны",
+      "description": "Вы застали невероятный рост {coin_name}, который вырос более чем на 25% за последние 24 часа!",
+      "reward_coins": 750,
+      "type": "dynamic",
+      "trigger_event": "market_update",
+      "trigger_conditions": {
+        "metric": "price_change_24h",
+        "threshold": 25
+      }
+    }
+  ]
+}

@@ -1,11 +1,11 @@
 # =================================================================================
 # Файл: bot/services/user_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Сервис для управления профилями пользователей.
-# ИСПРАВЛЕНИЕ: Конструктор __init__ приведен в полное соответствие
-# с DI-контейнером (dependencies.py).
+# ИСПРАВЛЕНИЕ: Добавлен метод get_all_user_ids для поддержки
+# системы плановых задач и динамических достижений.
 # =================================================================================
 import logging
-from typing import Optional
+from typing import Optional, List
 
 import redis.asyncio as redis
 from aiogram.types import User
@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 class UserService:
     """Сервис для управления данными пользователей в Redis."""
     
-    # ИСПРАВЛЕНО: Конструктор теперь принимает 'redis' и не требует 'settings'.
     def __init__(self, redis: redis.Redis):
         """
         Инициализирует сервис.
@@ -61,8 +60,12 @@ class UserService:
             "language_code": user.language_code or "N/A",
         }
         
-        # Используем hmset для атомарной записи всех полей
-        await self.redis.hset(profile_key, mapping=user_data_to_save)
+        # Используем pipeline для атомарности операций
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.hset(profile_key, mapping=user_data_to_save)
+            # >>>>> ДОБАВЛЕНО: Добавляем пользователя в глобальное множество <<<<<
+            pipe.sadd(self.keys.all_users_set(), user.id)
+            await pipe.execute()
         
         logger.info(f"Профиль для пользователя {user.id} ({user.full_name}) создан/обновлен.")
         
@@ -81,3 +84,11 @@ class UserService:
             return profile
         return await self.create_or_update_user(user)
 
+    # >>>>> НОВЫЙ МЕТОД ДЛЯ ПЛАНИРОВЩИКА <<<<<
+    async def get_all_user_ids(self) -> List[int]:
+        """
+        Возвращает список ID всех пользователей, которые когда-либо взаимодействовали с ботом.
+        Ключевой метод для работы фоновых задач.
+        """
+        user_ids_raw = await self.redis.smembers(self.keys.all_users_set())
+        return [int(user_id) for user_id in user_ids_raw]
