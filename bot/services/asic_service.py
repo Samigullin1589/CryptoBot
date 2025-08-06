@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/services/asic_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - ОКОНЧАТЕЛЬНАЯ v2)
+# Файл: bot/services/asic_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Высокопроизводительный сервис для управления базой ASIC.
-# Использует Redis Hashes и Sorted Sets и делегирует расчеты прибыли.
+# ИСПРАВЛЕНИЕ: Конструктор приведен в полное соответствие с DI-контейнером.
 # ===============================================================
 import asyncio
 import logging
@@ -22,8 +22,10 @@ logger = logging.getLogger(__name__)
 
 class AsicService:
     """Сервис-оркестратор для управления базой данных ASIC-майнеров."""
-    def __init__(self, redis_client: redis.Redis, parser_service: ParserService, config: AsicServiceConfig):
-        self.redis = redis_client
+    
+    # ИСПРАВЛЕНО: Конструктор теперь принимает 'redis'
+    def __init__(self, redis: redis.Redis, parser_service: ParserService, config: AsicServiceConfig):
+        self.redis = redis
         self.parser_service = parser_service
         self.config = config
         self.keys = KeyFactory
@@ -112,37 +114,32 @@ class AsicService:
             return 0
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            await pipe.delete(self.keys.asics_sorted_set())
+            pipe.delete(self.keys.asics_sorted_set()) # Используем await
             sorted_set_data = {}
             for asic in enriched:
                 if asic.profitability is None: continue
                 asic_key = self.keys.asic_hash(normalize_asic_name(asic.name))
-                await pipe.hset(asic_key, mapping=asic.model_dump(mode='json', exclude={'net_profit', 'gross_profit', 'electricity_cost_per_day'}))
+                # Используем model_dump для Pydantic v2
+                pipe.hset(asic_key, mapping=asic.model_dump(mode='json', exclude={'net_profit', 'gross_profit', 'electricity_cost_per_day'}))
                 sorted_set_data[asic_key] = asic.profitability
             if sorted_set_data:
-                await pipe.zadd(self.keys.asics_sorted_set(), mapping=sorted_set_data)
-            await pipe.set(self.keys.asics_last_update(), datetime.now(timezone.utc).isoformat())
+                pipe.zadd(self.keys.asics_sorted_set(), mapping=sorted_set_data)
+            pipe.set(self.keys.asics_last_update(), datetime.now(timezone.utc).isoformat())
             await pipe.execute()
         logger.info(f"Update complete. Cached {len(enriched)} ASICs.")
         return len(enriched)
 
     async def get_top_asics(self, electricity_cost: float, count: int = 50) -> Tuple[List[AsicMiner], Optional[datetime]]:
         """Получает топ ASIC, рассчитывая чистую прибыль для заданной цены э/э."""
-        is_cache_present = await self.redis.exists(self.keys.asics_sorted_set())
-        if not is_cache_present:
-            # Ключ для блокировки операции обновления
-            lock_key = self.keys.asics_sorted_set() 
+        if not await self.redis.exists(self.keys.asics_sorted_set()):
+            lock_key = self.keys.asics_update_lock() 
             try:
-                # Добавляем wait_timeout=60 для предотвращения бесконечного ожидания
                 async with RedisLock(self.redis, lock_key, timeout=300, wait_timeout=60):
-                    # Double-Checked Locking Pattern: проверяем еще раз после получения блокировки
                     if not await self.redis.exists(self.keys.asics_sorted_set()):
                         logger.info("Кэш ASIC отсутствует. Запуск обновления под блокировкой.")
                         await self.update_asic_list_from_sources()
-            # Используем собственное исключение из redis_lock.py
             except LockAcquisitionError: 
                 logger.warning("Не удалось получить блокировку для обновления ASIC (Timeout). Ожидаем завершения текущего обновления.")
-                # Ждем немного и продолжаем, надеясь, что кэш появится
                 await asyncio.sleep(5)
 
         asic_keys = await self.redis.zrevrange(self.keys.asics_sorted_set(), 0, count - 1)
@@ -150,14 +147,15 @@ class AsicService:
 
         async with self.redis.pipeline() as pipe:
             for key in asic_keys:
-                await pipe.hgetall(key)
+                pipe.hgetall(key) # hgetall не требует await внутри pipeline
             results = await pipe.execute()
 
         asics_with_profit = []
         for data in results:
             if not data: continue
+            # Используем model_validate для Pydantic v2
             asic = AsicMiner.model_validate(data)
-            net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability, asic.power or 0, electricity_cost)
+            net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability or 0.0, asic.power or 0, electricity_cost)
             asic.net_profit = net_profit
             asic.electricity_cost_per_day = daily_cost
             asic.gross_profit = gross_profit
@@ -176,7 +174,7 @@ class AsicService:
         if not asic_data: return None
         
         asic = AsicMiner.model_validate(asic_data)
-        net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability, asic.power or 0, electricity_cost)
+        net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability or 0.0, asic.power or 0, electricity_cost)
         asic.net_profit = net_profit
         asic.electricity_cost_per_day = daily_cost
         asic.gross_profit = gross_profit

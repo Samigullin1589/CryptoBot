@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлен эндпоинт для CoinListService.
+# ИСПРАВЛЕНИЕ: Добавлены поля для AsicService.
 # =================================================================================
 
 import json
@@ -54,7 +54,6 @@ class NewsServiceConfig(BaseModel):
     feeds: NewsFeeds = Field(default_factory=NewsFeeds)
     news_limit_per_source: int = 5
 
-# ИСПРАВЛЕНО: Добавлены все необходимые эндпоинты для CoinGecko
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
     coins_list_endpoint: str = "/coins/list"
@@ -71,9 +70,12 @@ class ThreatFilterConfig(BaseModel):
     enabled: bool = True
     toxicity_threshold: float = 0.75
 
+# ИСПРАВЛЕНО: Добавлены пороговые значения для нечеткого поиска
 class AsicServiceConfig(BaseModel):
     update_interval_hours: int = 6
     fallback_file_path: str = "data/fallback_asics.json"
+    merge_score_cutoff: int = 90
+    enrich_score_cutoff: int = 95
 
 class CryptoCenterServiceConfig(BaseModel):
     news_context_limit: int = 20
