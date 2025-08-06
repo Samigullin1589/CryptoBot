@@ -2,9 +2,10 @@
 # Файл: bot/services/parser_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Отказоустойчивый сервис для парсинга данных с внешних
 # источников с встроенной логикой повторных запросов.
-# ИСПРАВЛЕНИЕ: Конструктор и логика приведены в соответствие с DI.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'asyncio'.
 # ===============================================================
 import logging
+import asyncio # <--- ИСПРАВЛЕНО: Добавлен недостающий импорт
 from typing import List, Dict, Any, Optional
 
 import aiohttp
@@ -28,7 +29,6 @@ RETRYABLE_EXCEPTIONS = (
 class ParserService:
     """Специализированный сервис для парсинга данных с внешних источников."""
     
-    # ИСПРАВЛЕНО: Конструктор теперь принимает 'config' для соответствия с DI
     def __init__(self, http_session: aiohttp.ClientSession, config: EndpointsConfig):
         self.session = http_session
         self.config = config
