@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлено поле market_commission_rate для MarketService.
+# ИСПРАВЛЕНИЕ: Добавлены все необходимые поля для MiningGameService.
 # =================================================================================
 
 import json
@@ -96,10 +96,21 @@ class MarketDataServiceConfig(BaseModel):
     top_n_coins: int = 100
     default_vs_currency: str = "usd"
 
-# ИСПРАВЛЕНО: Добавлена комиссия рынка
+class ElectricityTariff(BaseModel):
+    cost_per_kwh: float
+    unlock_price: float
+
+# ИСПРАВЛЕНО: Добавлены все необходимые настройки для игры
 class MiningGameServiceConfig(BaseModel):
     session_duration_minutes: int = 60
-    market_commission_rate: float = 0.05 # 5% комиссия
+    market_commission_rate: float = 0.05
+    min_withdrawal_amount: float = 1000.0
+    default_electricity_tariff: str = "Бытовой"
+    electricity_tariffs: Dict[str, ElectricityTariff] = {
+        "Бытовой": {"cost_per_kwh": 0.1, "unlock_price": 0},
+        "Промышленный": {"cost_per_kwh": 0.07, "unlock_price": 5000},
+        "Зеленый": {"cost_per_kwh": 0.05, "unlock_price": 25000},
+    }
 
 # --- Главная модель настроек ---
 
