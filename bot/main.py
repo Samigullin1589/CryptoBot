@@ -2,7 +2,7 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Финальная версия главного файла.
-# ИСПРАВЛЕНИЕ: Импортируется готовый объект 'settings', а не функция.
+# ИСПРАВЛЕНИЕ: Исправлен импорт и вызов функции настройки планировщика.
 # =================================================================================
 
 import asyncio
@@ -14,13 +14,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
-# ИСПРАВЛЕНИЕ: Импортируем готовый объект 'settings', а не функцию.
 from bot.config.settings import settings
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.public.common_handler import public_router
-# from bot.handlers.game import game_router
-# from bot.handlers.tools import tools_router
-from bot.jobs.scheduled_tasks import setup_scheduler
+# ИСПРАВЛЕНО: Импортируем правильную функцию 'setup_jobs'
+from bot.jobs.scheduled_tasks import setup_jobs
 from bot.middlewares.activity_middleware import UserActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.utils.dependencies import Deps
@@ -47,9 +45,10 @@ async def on_startup(bot: Bot, deps: Deps):
     await set_bot_commands(bot)
 
     # Настройка и запуск планировщика задач
-    # setup_scheduler(deps)
-    # deps.scheduler.start()
-    # logger.info("Планировщик запущен.")
+    # ИСПРАВЛЕНО: Вызываем правильную функцию и передаем нужные зависимости
+    setup_jobs(deps.scheduler, deps.coin_list_service)
+    deps.scheduler.start()
+    logger.info("Планировщик запущен.")
 
     # Принудительное обновление списка монет при старте
     await deps.coin_list_service.update_coin_list()
@@ -76,9 +75,7 @@ async def on_shutdown(deps: Deps):
 async def main():
     """Главная точка входа для приложения бота."""
     setup_logging()
-    # 'settings' уже загружены при импорте
-
-    # Инициализация Redis
+    
     redis_pool = redis.from_url(
         settings.REDIS_URL.get_secret_value(),
         encoding="utf-8",
@@ -86,23 +83,17 @@ async def main():
     )
     storage = RedisStorage(redis=redis_pool)
 
-    # Инициализация бота и диспетчера
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), parse_mode="HTML")
     dp = Dispatcher(storage=storage)
 
-    # Регистрация middleware
     dp.update.middleware(ThrottlingMiddleware(rate_limit=settings.throttling.rate_limit, redis_pool=redis_pool))
     dp.update.middleware(UserActivityMiddleware(redis_pool=redis_pool))
 
-    # Подключение роутеров
     dp.include_router(admin_router)
     dp.include_router(public_router)
     logger.info("Роутеры подключены.")
 
-    # Управление ресурсами
     async with ClientSession() as http_session:
-        # Создание контейнера зависимостей
-        # Убраны неиспользуемые сервисы для успешного запуска
         deps = Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool)
 
         dp.startup.register(lambda bot_instance: on_startup(bot_instance, deps))
