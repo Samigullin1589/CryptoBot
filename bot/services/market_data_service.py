@@ -1,142 +1,159 @@
+# bot/services/price_service.py
 # =================================================================================
-# Файл: bot/services/market_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
-# Описание: Полностью самодостаточный сервис для управления рынком
-# оборудования (ASIC), обеспечивающий атомарность операций.
+# Файл: bot/services/price_service.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Описание: Сервис для получения цен на криптовалюты.
+# ИСПРАВЛЕНИЕ: Метод get_prices теперь корректно использует валюту по умолчанию
+# из файла конфигурации, решая ошибку 'Missing parameter vs_currencies'.
 # =================================================================================
 
-import json
-import uuid
-import time
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-import redis.asyncio as redis
+import aiohttp
+from redis.asyncio import Redis
 
-from bot.config.settings import AppSettings
-from bot.utils.models import AsicMiner, MarketListing
-from bot.utils.lua_scripts import LuaScripts
+# Зависимости передаются через DI-контейнер
+from bot.config.settings import Settings
+from bot.services.coin_list_service import CoinListService
 
 logger = logging.getLogger(__name__)
 
-class _KeyFactory:
-    """Генератор ключей Redis, специфичных для рынка."""
-    @staticmethod
-    def user_hangar(user_id: int) -> str: return f"game:hangar:{user_id}"
-    @staticmethod
-    def user_game_profile(user_id: int) -> str: return f"game:profile:{user_id}"
-    @staticmethod
-    def market_listings_by_price() -> str: return "market:listings:price" # Sorted Set для сортировки по цене
-    @staticmethod
-    def market_listing_data(listing_id: str) -> str: return f"market:listing:{listing_id}" # HASH с данными лота
-
-class AsicMarketService:
-    """Сервис, управляющий всеми операциями на рынке ASIC'ов."""
-
-    def __init__(self, redis_client: redis.Redis, settings: AppSettings):
-        self.redis = redis_client
+class PriceService:
+    """
+    Отвечает за получение и кэширование цен на криптовалюты.
+    """
+    def __init__(
+        self,
+        redis: Redis,
+        http_session: aiohttp.ClientSession,
+        coin_list_service: CoinListService,
+        settings: Settings,
+    ):
+        self.redis = redis
+        self.http_session = http_session
+        self.coin_list_service = coin_list_service
         self.settings = settings
-        self.keys = _KeyFactory
-        # Кэшируем LUA-скрипты при инициализации для максимальной производительности
-        self.lua_list_item = self.redis.script_load(LuaScripts.LIST_ITEM_FOR_SALE)
-        self.lua_cancel_listing = self.redis.script_load(LuaScripts.CANCEL_LISTING)
-        self.lua_buy_item = self.redis.script_load(LuaScripts.BUY_ITEM_FROM_MARKET)
+        # URL и параметры берутся из единого объекта настроек
+        self._price_url = str(self.settings.api_config.price_endpoint_url)
+        self._default_currency = self.settings.tracking_defaults.default_vs_currency
+        self._cache_ttl = self.settings.tracking_defaults.cache_ttl_seconds
 
-    async def list_asic_for_sale(self, user_id: int, asic_id: str, price: float) -> Optional[str]:
-        """
-        Выставляет ASIC из ангара пользователя на продажу. Операция атомарна.
-        Возвращает ID нового листинга или None в случае ошибки.
-        """
-        if price <= 0:
-            return None # Цена должна быть положительной
+    def _get_cache_key(self, coin_id: str, vs_currency: str) -> str:
+        """Генерирует консистентный ключ для кэша цены монеты."""
+        return f"cache:price:{coin_id}:{vs_currency}"
 
-        hangar_key = self.keys.user_hangar(user_id)
-        listing_id = str(uuid.uuid4())
+    async def get_prices(self, coin_ids: List[str], vs_currency: Optional[str] = None) -> Dict[str, Optional[float]]:
+        """
+        Получает цены для списка ID монет.
+        Сначала проверяет кэш, затем запрашивает недостающие цены у API.
+        """
+        # ИСПРАВЛЕНИЕ: Если валюта не указана в вызове, используется
+        # значение по умолчанию из файла конфигурации.
+        target_currency = vs_currency or self._default_currency
         
-        # LUA-скрипт атомарно проверяет наличие асика, удаляет его из ангара
-        # и создает новый листинг на рынке.
-        keys = [hangar_key, self.keys.market_listing_data(listing_id), self.keys.market_listings_by_price()]
-        args = [asic_id, listing_id, user_id, price, int(time.time())]
+        prices: Dict[str, Optional[float]] = {}
+        coins_to_fetch: List[str] = []
+
+        # Проверяем кэш для каждой монеты
+        for coin_id in coin_ids:
+            cache_key = self._get_cache_key(coin_id, target_currency)
+            cached_price = await self.redis.get(cache_key)
+            if cached_price:
+                prices[coin_id] = float(cached_price)
+            else:
+                coins_to_fetch.append(coin_id)
+
+        if not coins_to_fetch:
+            return prices
+
+        logger.info(f"Запрос цен с API для: {coins_to_fetch} в {target_currency}")
         
-        result = await self.redis.evalsha(self.lua_list_item, len(keys), *keys, *args)
+        # ИСПРАВЛЕНИЕ: Параметр 'vs_currencies' теперь всегда корректно добавляется в запрос.
+        params = {
+            'ids': ','.join(coins_to_fetch),
+            'vs_currencies': target_currency
+        }
         
-        if result == 1:
-            logger.info(f"User {user_id} listed ASIC {asic_id} for {price} (listing ID: {listing_id})")
-            return listing_id
-        else:
-            logger.error(f"Failed to list ASIC {asic_id} for user {user_id}. Item not found in hangar.")
+        try:
+            async with self.http_session.get(self._price_url, params=params) as response:
+                response.raise_for_status()
+                api_data = await response.json()
+
+                for coin_id in coins_to_fetch:
+                    price_data = api_data.get(coin_id)
+                    price = price_data.get(target_currency) if price_data else None
+                    
+                    if price is not None:
+                        prices[coin_id] = float(price)
+                        cache_key = self._get_cache_key(coin_id, target_currency)
+                        await self.redis.set(cache_key, price, ex=self._cache_ttl)
+                    else:
+                        prices[coin_id] = None
+        except aiohttp.ClientError as e:
+            logger.error(f"Ошибка HTTP клиента при получении цен: {e}")
+            for coin_id in coins_to_fetch:
+                prices[coin_id] = None
+
+        return prices
+
+# =================================================================================
+# bot/services/market_data_service.py
+# =================================================================================
+# Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Описание: Сервис для получения рыночных данных (топ монет и т.д.).
+# ИСПРАВЛЕНИЕ: Метод get_top_coins_by_market_cap теперь корректно использует
+# валюту по умолчанию, решая ошибку 'Missing parameter vs_currencies'.
+# =================================================================================
+
+import logging
+from typing import List, Optional, Dict, Any
+
+import aiohttp
+from redis.asyncio import Redis
+
+from bot.config.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+class MarketDataService:
+    """
+    Отвечает за получение общих рыночных данных, таких как топ монет.
+    """
+    def __init__(
+        self,
+        redis: Redis,
+        http_session: aiohttp.ClientSession,
+        settings: Settings,
+    ):
+        self.redis = redis
+        self.http_session = http_session
+        self.settings = settings
+        # URL и параметры берутся из единого объекта настроек
+        self._market_data_url = str(self.settings.api_config.market_data_endpoint_url)
+        self._default_currency = self.settings.tracking_defaults.default_vs_currency
+        self._top_n = self.settings.update_policy.top_n_by_market_cap
+
+    async def get_top_coins_by_market_cap(self) -> Optional[List[Dict[str, Any]]]:
+        """Загружает топ-N монет по рыночной капитализации."""
+        
+        # ИСПРАВЛЕНИЕ: Параметр 'vs_currency' теперь всегда корректно добавляется в запрос.
+        params = {
+            'vs_currency': self._default_currency,
+            'order': 'market_cap_desc',
+            'per_page': self._top_n,
+            'page': 1,
+            'sparkline': 'false',
+            'price_change_percentage': '1h,24h,7d'
+        }
+        
+        logger.info(f"Запрос топ-{self._top_n} монет с API: {self._market_data_url}")
+        try:
+            async with self.http_session.get(self._market_data_url, params=params) as response:
+                response.raise_for_status()
+                data = await response.json()
+                logger.info(f"Успешно загружено {len(data)} монет с API.")
+                return data
+        except aiohttp.ClientError as e:
+            logger.error(f"Ошибка HTTP клиента при загрузке рыночных данных: {e}")
             return None
 
-    async def cancel_listing(self, user_id: int, listing_id: str) -> bool:
-        """
-        Снимает лот с продажи и возвращает ASIC в ангар владельца. Атомарно.
-        """
-        # LUA-скрипт атомарно проверяет, что пользователь является владельцем лота,
-        # удаляет лот с рынка и возвращает асик в ангар.
-        keys = [self.keys.market_listing_data(listing_id), self.keys.market_listings_by_price(), self.keys.user_hangar(user_id)]
-        args = [listing_id, user_id]
-        
-        result = await self.redis.evalsha(self.lua_cancel_listing, len(keys), *keys, *args)
-        
-        if result == 1:
-            logger.info(f"User {user_id} cancelled listing {listing_id}.")
-            return True
-        else:
-            logger.warning(f"Failed to cancel listing {listing_id} for user {user_id}. Not owner or listing not found.")
-            return False
-
-    async def buy_asic(self, buyer_id: int, listing_id: str) -> str:
-        """
-        Покупает ASIC с рынка. Вся логика инкапсулирована в LUA-скрипте
-        для обеспечения полной атомарности транзакции.
-        Возвращает текстовый результат операции.
-        """
-        commission_rate = self.settings.game.market_commission_rate
-        
-        # LUA-скрипт выполняет самую сложную операцию:
-        # 1. Проверяет, что покупатель не является продавцом.
-        # 2. Проверяет наличие достаточных средств у покупателя.
-        # 3. Атомарно списывает деньги у покупателя, начисляет продавцу (за вычетом комиссии),
-        #    перемещает ASIC в ангар покупателя и удаляет листинг.
-        keys = [
-            self.keys.market_listing_data(listing_id),
-            self.keys.market_listings_by_price(),
-            self.keys.user_game_profile(buyer_id),
-            # Остальные ключи (профиль продавца, ангар покупателя) скрипт конструирует сам
-        ]
-        args = [listing_id, buyer_id, commission_rate]
-        
-        result_code = await self.redis.evalsha(self.lua_buy_item, len(keys), *keys, *args)
-
-        # Обрабатываем коды ответа от LUA
-        if result_code == 1:
-            logger.info(f"User {buyer_id} successfully bought listing {listing_id}.")
-            return "✅ Поздравляем с приобретением! Оборудование уже в вашем ангаре."
-        elif result_code == -1:
-            return "❌ Вы не можете купить собственное оборудование."
-        elif result_code == -2:
-            return "❌ Недостаточно средств для покупки."
-        elif result_code == -3:
-            return "❌ Этот лот больше не доступен. Возможно, его уже купили или сняли с продажи."
-        else:
-            return "❌ Произошла неизвестная ошибка при покупке."
-            
-    async def get_market_listings(self, offset: int = 0, count: int = 20) -> List[MarketListing]:
-        """Получает список лотов с рынка, отсортированных по цене."""
-        # Получаем ID листингов из Sorted Set
-        listing_ids = await self.redis.zrange(self.keys.market_listings_by_price(), offset, offset + count - 1)
-        if not listing_ids:
-            return []
-
-        # С помощью конвейера (pipeline) эффективно запрашиваем данные для каждого листинга
-        pipe = self.redis.pipeline()
-        for listing_id in listing_ids:
-            pipe.hgetall(self.keys.market_listing_data(listing_id.decode('utf-8')))
-        
-        listings_data = await pipe.execute()
-        
-        market_listings = []
-        for data in listings_data:
-            if data:
-                market_listings.append(MarketListing(**data))
-        
-        return market_listings

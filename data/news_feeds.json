@@ -1,10 +1,66 @@
 {
-  "main_rss_feeds": [
-    "https://forklog.com/feed",
-    "https://beincrypto.ru/feed/"
-  ],
-  "alpha_rss_feeds": [
-    "https://thedefiant.io/feed",
-    "https://bankless.substack.com/feed"
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-06T09:20:00Z",
+  "feeds": [
+    {
+      "id": "forklog",
+      "name": "ForkLog",
+      "url": "https://forklog.com/feed",
+      "language": "ru",
+      "category": "general",
+      "description": "Ведущее русскоязычное издание о криптовалютах и блокчейне.",
+      "enabled": true,
+      "priority": 1
+    },
+    {
+      "id": "beincrypto_ru",
+      "name": "BeInCrypto (RU)",
+      "url": "https://beincrypto.ru/feed/",
+      "language": "ru",
+      "category": "general",
+      "description": "Новости, аналитика и обзоры криптовалютного рынка на русском языке.",
+      "enabled": true,
+      "priority": 1
+    },
+    {
+      "id": "the_defiant",
+      "name": "The Defiant",
+      "url": "https://thedefiant.io/feed",
+      "language": "en",
+      "category": "defi",
+      "description": "Ключевой источник информации о децентрализованных финансах (DeFi).",
+      "enabled": true,
+      "priority": 2
+    },
+    {
+      "id": "bankless",
+      "name": "Bankless",
+      "url": "https://bankless.substack.com/feed",
+      "language": "en",
+      "category": "analytics",
+      "description": "Глубокая аналитика и образовательный контент о будущем финансов и интернета.",
+      "enabled": true,
+      "priority": 2
+    },
+    {
+      "id": "cointelegraph",
+      "name": "Cointelegraph",
+      "url": "https://cointelegraph.com/rss",
+      "language": "en",
+      "category": "general",
+      "description": "Одно из крупнейших мировых изданий о финтехе, блокчейне и биткоине.",
+      "enabled": true,
+      "priority": 1
+    },
+    {
+      "id": "dl_news",
+      "name": "DL News",
+      "url": "https://www.dlnews.com/feed/",
+      "language": "en",
+      "category": "regulation",
+      "description": "Новости, связанные с регулированием криптовалют в разных странах.",
+      "enabled": true,
+      "priority": 3
+    }
   ]
 }

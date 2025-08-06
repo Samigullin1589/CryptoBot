@@ -1,5 +1,72 @@
 {
-  "enable_ai_consultant": true,
-  "enable_crypto_center": true,
-  "enable_mining_game": true
+  "schema_version": "2.1.0",
+  "last_updated_utc": "2025-08-06T09:00:00Z",
+  "update_policy": {
+    "enabled": false,
+    "source_url": null,
+    "refresh_interval_minutes": 5
+  },
+  "global_kill_switch": {
+    "enabled": false,
+    "message": "Бот находится в режиме экстренного технического обслуживания. Основные функции временно отключены."
+  },
+  "features": {
+    "ai_consultant": {
+      "description": "Персональный AI-консультант для ответов на вопросы пользователей.",
+      "status": "enabled",
+      "rollout_percentage": 100,
+      "allowed_user_ids": [],
+      "allowed_user_roles": [
+        "USER",
+        "MODERATOR",
+        "ADMIN"
+      ]
+    },
+    "crypto_center": {
+      "description": "Информационный хаб с рыночными данными и новостями.",
+      "status": "enabled",
+      "rollout_percentage": 100,
+      "allowed_user_ids": [],
+      "allowed_user_roles": [
+        "USER",
+        "MODERATOR",
+        "ADMIN"
+      ]
+    },
+    "mining_game": {
+      "description": "Основной игровой модуль симулятора майнинга.",
+      "status": "enabled",
+      "rollout_percentage": 100,
+      "allowed_user_ids": [],
+      "allowed_user_roles": [
+        "USER",
+        "MODERATOR",
+        "ADMIN"
+      ]
+    },
+    "in_game_market": {
+      "description": "Рынок для торговли ASIC-майнерами между игроками.",
+      "status": "enabled",
+      "rollout_percentage": 100,
+      "dependencies": [
+        "mining_game"
+      ],
+      "allowed_user_ids": [],
+      "allowed_user_roles": [
+        "USER",
+        "MODERATOR",
+        "ADMIN"
+      ]
+    },
+    "premium_analytics": {
+      "description": "Доступ к продвинутой аналитике и сигналам от AI.",
+      "status": "disabled",
+      "rollout_percentage": 0,
+      "allowed_user_ids": [],
+      "allowed_user_roles": [
+        "PREMIUM",
+        "ADMIN"
+      ]
+    }
+  }
 }

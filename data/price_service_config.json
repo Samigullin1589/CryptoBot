@@ -1,4 +1,36 @@
 {
-  "cache_ttl_seconds": 60,
-  "tracked_coins": ["BTC", "ETH", "LTC", "DOGE", "KAS", "XCH", "TON"]
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T22:35:00Z",
+  "update_policy": {
+    "dynamic_tracking_enabled": true,
+    "top_n_by_market_cap": 100,
+    "refresh_interval_minutes": 60
+  },
+  "api_config": {
+    "provider": "coingecko",
+    "price_endpoint_url": "https://api.coingecko.com/api/v3/simple/price",
+    "market_data_endpoint_url": "https://api.coingecko.com/api/v3/coins/markets"
+  },
+  "tracking_defaults": {
+    "default_vs_currency": "usd",
+    "cache_ttl_seconds": 90
+  },
+  "user_features": {
+    "allow_custom_watchlists": true,
+    "max_watchlist_size_per_user": 20
+  },
+  "alert_system": {
+    "enabled": true,
+    "check_interval_seconds": 60,
+    "max_alerts_per_user": 10
+  },
+  "static_tracked_coins": [
+    "BTC",
+    "ETH",
+    "LTC",
+    "DOGE",
+    "KAS",
+    "XCH",
+    "TON"
+  ]
 }

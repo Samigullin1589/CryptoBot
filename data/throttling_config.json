@@ -1,5 +1,72 @@
 {
-  "rate_limit": 0.5,
-  "user_rate_limit": 2,
-  "chat_rate_limit": 5
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-06T09:30:00Z",
+  "remote_config": {
+    "enabled": false,
+    "source_url": null,
+    "refresh_interval_minutes": 15
+  },
+  "global_settings": {
+    "enabled": true,
+    "default_profile": "standard_user",
+    "key_prefix": "throttling"
+  },
+  "whitelists": {
+    "exempt_user_ids": [
+      123456789
+    ]
+  },
+  "throttling_profiles": {
+    "standard_user": {
+      "description": "Стандартные лимиты для обычных пользователей.",
+      "global_rate": {
+        "limit": 2,
+        "period_seconds": 1,
+        "burst": 3
+      },
+      "per_command_limits": {
+        "start": {
+          "limit": 1,
+          "period_seconds": 60
+        },
+        "price": {
+          "limit": 10,
+          "period_seconds": 60,
+          "burst": 3
+        },
+        "mine": {
+          "limit": 1,
+          "period_seconds": 3600
+        }
+      }
+    },
+    "premium_user": {
+      "description": "Повышенные лимиты для премиум-пользователей.",
+      "global_rate": {
+        "limit": 5,
+        "period_seconds": 1,
+        "burst": 5
+      },
+      "per_command_limits": {
+        "price": {
+          "limit": 30,
+          "period_seconds": 60,
+          "burst": 5
+        }
+      }
+    },
+    "admin": {
+      "description": "Отсутствие лимитов для администраторов.",
+      "global_rate": {
+        "limit": 0,
+        "period_seconds": 0
+      }
+    }
+  },
+  "dynamic_adjustment": {
+    "enabled": true,
+    "high_load_threshold_percent": 80,
+    "adjustment_factor": 0.8,
+    "cooldown_minutes": 10
+  }
 }

@@ -1,5 +1,55 @@
 {
-  "news_context_limit": 15,
-  "alpha_cache_ttl_seconds": 7200,
-  "feed_cache_ttl_seconds": 1800
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T23:05:00Z",
+  "service_settings": {
+    "enabled": true,
+    "default_cache_ttl_seconds": 1800,
+    "max_articles_per_feed": 15
+  },
+  "ai_integration": {
+    "summarization_enabled": true,
+    "default_summary_prompt_name": "standard_news_summary"
+  },
+  "news_categories": {
+    "main_news": {
+      "display_name": "⚡ Ключевые новости",
+      "cache_ttl_seconds": 1800,
+      "summarization_config": {
+        "enabled": true,
+        "max_length": "short"
+      },
+      "content_processing": {
+        "remove_ads": true,
+        "extract_key_points": false
+      }
+    },
+    "alpha_insights": {
+      "display_name": "🧠 Аналитика и обзоры",
+      "cache_ttl_seconds": 7200,
+      "summarization_config": {
+        "enabled": true,
+        "max_length": "detailed"
+      },
+      "content_processing": {
+        "remove_ads": true,
+        "extract_key_points": true
+      }
+    },
+    "airdrops_and_events": {
+      "display_name": "🎁 Airdrops и события",
+      "cache_ttl_seconds": 3600,
+      "summarization_config": {
+        "enabled": false
+      },
+      "content_processing": {
+        "remove_ads": false,
+        "extract_key_points": false
+      }
+    }
+  },
+  "health_checks": {
+    "enabled": true,
+    "check_interval_minutes": 120,
+    "max_consecutive_failures": 5
+  }
 }

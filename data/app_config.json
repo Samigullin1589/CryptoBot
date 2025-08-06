@@ -1,13 +1,36 @@
 {
-  "log_level": "INFO",
-  "log_format": "text",
-  "ai_history_limit": 10,
-  "popular_tickers": [
-    "BTC",
-    "ETH",
-    "SOL",
-    "TON",
-    "KAS",
-    "ARB"
-  ]
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T22:50:00Z",
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "rotation": "10 MB",
+    "retention": "7 days",
+    "sink": "stdout"
+  },
+  "ai_context_management": {
+    "default_chat": {
+      "history_message_limit": 10,
+      "history_token_limit": 4096
+    },
+    "fast_summary": {
+      "history_message_limit": 2,
+      "history_token_limit": 1024
+    }
+  },
+  "ui_features": {
+    "popular_tickers": {
+      "update_policy": {
+        "enabled": true,
+        "source_url": "https://api.coingecko.com/api/v3/search/trending",
+        "refresh_interval_minutes": 60
+      },
+      "pinned_tickers": [
+        "BTC",
+        "ETH",
+        "SOL"
+      ],
+      "display_limit": 7
+    }
+  }
 }

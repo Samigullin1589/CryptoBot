@@ -1,13 +1,103 @@
 {
-  "бтк": "BTC",
-  "биткоин": "BTC",
-  "биток": "BTC",
-  "eth": "ETH",
-  "эфир": "ETH",
-  "эфириум": "ETH",
-  "солана": "SOL",
-  "сол": "SOL",
-  "тон": "TON",
-  "каспа": "KAS",
-  "арбитрум": "ARB"
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T22:32:00Z",
+  "update_sources": {
+    "coin_list_url": "https://api.coingecko.com/api/v3/coins/list"
+  },
+  "aliases": {
+    "BTC": {
+      "name": "Bitcoin",
+      "coingecko_id": "bitcoin",
+      "aliases": [
+        "бтк",
+        "биткоин",
+        "биток",
+        "bitcoin"
+      ]
+    },
+    "ETH": {
+      "name": "Ethereum",
+      "coingecko_id": "ethereum",
+      "aliases": [
+        "eth",
+        "эфир",
+        "эфириум",
+        "ethereum"
+      ]
+    },
+    "SOL": {
+      "name": "Solana",
+      "coingecko_id": "solana",
+      "aliases": [
+        "сол",
+        "солана",
+        "solana"
+      ]
+    },
+    "TON": {
+      "name": "Toncoin",
+      "coingecko_id": "the-open-network",
+      "aliases": [
+        "тон",
+        "toncoin",
+        "the open network"
+      ]
+    },
+    "KAS": {
+      "name": "Kaspa",
+      "coingecko_id": "kaspa",
+      "aliases": [
+        "кас",
+        "каспа",
+        "kaspa"
+      ]
+    },
+    "ARB": {
+      "name": "Arbitrum",
+      "coingecko_id": "arbitrum",
+      "aliases": [
+        "арб",
+        "арбитрум",
+        "arbitrum"
+      ]
+    },
+    "USDT": {
+      "name": "Tether",
+      "coingecko_id": "tether",
+      "aliases": [
+        "usdt",
+        "тезер",
+        "юсдт"
+      ]
+    },
+    "XRP": {
+      "name": "XRP",
+      "coingecko_id": "ripple",
+      "aliases": [
+        "xrp",
+        "рипл",
+        "ripple"
+      ]
+    },
+    "DOGE": {
+      "name": "Dogecoin",
+      "coingecko_id": "dogecoin",
+      "aliases": [
+        "doge",
+        "доги",
+        "догикоин",
+        "dogecoin"
+      ]
+    },
+    "ADA": {
+      "name": "Cardano",
+      "coingecko_id": "cardano",
+      "aliases": [
+        "ada",
+        "ада",
+        "кардано",
+        "cardano"
+      ]
+    }
+  }
 }

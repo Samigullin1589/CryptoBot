@@ -1,4 +1,39 @@
 {
-  "merge_score_cutoff": 90,
-  "enrich_score_cutoff": 85
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T22:55:00Z",
+  "service_settings": {
+    "enabled": true,
+    "active_profile": "balanced",
+    "cache_ttl_seconds": 3600
+  },
+  "preprocessing_steps": [
+    "to_lowercase",
+    "remove_punctuation",
+    "normalize_whitespace",
+    "remove_stopwords"
+  ],
+  "matching_profiles": {
+    "strict": {
+      "description": "Высокая точность, минимум ложных срабатываний. Используется для критических операций.",
+      "merge_score_cutoff": 95,
+      "enrich_score_cutoff": 90
+    },
+    "balanced": {
+      "description": "Сбалансированный подход для большинства пользовательских запросов.",
+      "merge_score_cutoff": 90,
+      "enrich_score_cutoff": 85
+    },
+    "loose": {
+      "description": "Максимальный охват, допускает больше ошибок. Полезно для поиска.",
+      "merge_score_cutoff": 80,
+      "enrich_score_cutoff": 75
+    }
+  },
+  "dynamic_adjustment": {
+    "enabled": false,
+    "feedback_loop_enabled": true,
+    "adjustment_step": 1,
+    "min_confidence_for_success": 98,
+    "max_adjustments_per_hour": 5
+  }
 }

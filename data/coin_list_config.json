@@ -1,5 +1,32 @@
 {
-  "update_interval_hours": 24,
-  "fallback_file_path": "data/fallback_coins.json",
-  "search_score_cutoff": 85
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T23:00:00Z",
+  "update_policy": {
+    "enabled": true,
+    "source_url": "https://api.coingecko.com/api/v3/coins/list",
+    "update_interval_hours": 24,
+    "request_timeout_seconds": 30
+  },
+  "data_enrichment": {
+    "enabled": true,
+    "fields_to_store": [
+      "id",
+      "symbol",
+      "name"
+    ]
+  },
+  "search_strategy": {
+    "primary_method": "exact_match_on_symbol",
+    "fallback_method": "fuzzy_match_on_name",
+    "fuzzy_score_cutoff": 85
+  },
+  "fallback_options": {
+    "use_fallback_on_api_failure": true,
+    "fallback_file_path": "data/fallback_coins.json"
+  },
+  "health_checks": {
+    "enabled": true,
+    "check_interval_minutes": 60,
+    "max_consecutive_failures": 3
+  }
 }

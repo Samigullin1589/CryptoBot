@@ -1,6 +1,74 @@
 {
-  "urls": {
-    "coinmarketcap_new_listings": "https://coinmarketcap.com/new/",
-    "whattomine_asics": "https://whattomine.com/asics"
-  }
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-06T09:15:00Z",
+  "global_settings": {
+    "default_user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "default_request_timeout_seconds": 30,
+    "default_cache_ttl_seconds": 3600
+  },
+  "parsing_tasks": [
+    {
+      "task_id": "scrape_whattomine_asics",
+      "description": "Парсит список актуальных ASIC-майнеров с сайта WhatToMine.",
+      "enabled": true,
+      "source_type": "html_scrape",
+      "url": "https://whattomine.com/asics",
+      "refresh_interval_hours": 6,
+      "parser_config": {
+        "table_selector": "table.table-hover > tbody > tr",
+        "data_schema": {
+          "name": {
+            "selector": "td:nth-child(2) > a",
+            "type": "text"
+          },
+          "hashrate": {
+            "selector": "td:nth-child(3)",
+            "type": "text",
+            "regex_extract": "(\\d+\\.?\\d*)"
+          },
+          "power": {
+            "selector": "td:nth-child(4)",
+            "type": "text",
+            "regex_extract": "(\\d+)"
+          }
+        }
+      }
+    },
+    {
+      "task_id": "scrape_coinmarketcap_new",
+      "description": "Парсит список недавно добавленных монет с CoinMarketCap (менее надежный метод).",
+      "enabled": true,
+      "source_type": "html_scrape",
+      "url": "https://coinmarketcap.com/new/",
+      "refresh_interval_hours": 1,
+      "parser_config": {
+        "table_selector": "div.cmc-body-wrapper table > tbody > tr",
+        "data_schema": {
+          "name": {
+            "selector": "td:nth-child(3) p.coin-item-symbol",
+            "type": "text"
+          },
+          "chain": {
+            "selector": "td:nth-child(5) p",
+            "type": "text"
+          },
+          "added_date": {
+            "selector": "td:nth-child(6)",
+            "type": "text"
+          }
+        }
+      }
+    },
+    {
+      "task_id": "fetch_coingecko_new_coins_api",
+      "description": "Получает список недавно добавленных монет через официальное API CoinGecko (рекомендуемый, надежный метод).",
+      "enabled": true,
+      "source_type": "api",
+      "url": "https://api.coingecko.com/api/v3/coins/list/new",
+      "refresh_interval_hours": 1,
+      "parser_config": {
+        "data_path": ""
+      }
+    }
+  ]
 }

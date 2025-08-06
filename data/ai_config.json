@@ -1,8 +1,76 @@
 {
-  "default_model_name": "gemini-1.5-pro-latest",
-  "flash_model_name": "gemini-1.5-flash-latest",
-  "max_retries": 3,
-  "initial_retry_delay": 1.5,
-  "request_timeout": 90,
-  "default_temperature": 0.6
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T22:45:00Z",
+  "providers": {
+    "gemini": {
+      "api_key_env": "GEMINI_API_KEY",
+      "base_url": "https://generativelanguage.googleapis.com/"
+    },
+    "openai": {
+      "api_key_env": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1/"
+    }
+  },
+  "client_config": {
+    "max_retries": 3,
+    "initial_retry_delay_seconds": 1.5,
+    "request_timeout_seconds": 90
+  },
+  "task_routing": {
+    "default_chat": {
+      "description": "Основная модель для общения с пользователями и ответов на общие вопросы.",
+      "primary": {
+        "provider": "gemini",
+        "model_name": "gemini-1.5-pro-latest"
+      },
+      "fallback": {
+        "provider": "gemini",
+        "model_name": "gemini-1.5-flash-latest"
+      },
+      "generation_config": {
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_output_tokens": 2048
+      },
+      "safety_settings": {
+        "HARM_CATEGORY_HARASSMENT": "BLOCK_MEDIUM_AND_ABOVE",
+        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_MEDIUM_AND_ABOVE",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_MEDIUM_AND_ABOVE",
+        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_MEDIUM_AND_ABOVE"
+      }
+    },
+    "fast_summary": {
+      "description": "Быстрая и дешевая модель для 요약 новостей или другого контента.",
+      "primary": {
+        "provider": "gemini",
+        "model_name": "gemini-1.5-flash-latest"
+      },
+      "generation_config": {
+        "temperature": 0.2,
+        "max_output_tokens": 512
+      },
+      "safety_settings": {
+        "HARM_CATEGORY_HARASSMENT": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_ONLY_HIGH",
+        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_ONLY_HIGH"
+      }
+    },
+    "content_analysis": {
+      "description": "Модель для анализа контента на предмет спама, токсичности и угроз.",
+      "primary": {
+        "provider": "gemini",
+        "model_name": "gemini-1.5-flash-latest"
+      },
+      "generation_config": {
+        "temperature": 0.0
+      },
+      "safety_settings": {
+        "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+        "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+        "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE"
+      }
+    }
+  }
 }

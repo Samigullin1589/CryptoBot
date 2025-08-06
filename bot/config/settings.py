@@ -1,9 +1,8 @@
 # bot/config/settings.py
 # =================================================================================
-# Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ЗАПУСК)
 # Описание: Финальная, самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлены значения по умолчанию для недостающих полей в
-# JSON-конфигурациях, что делает запуск отказоустойчивым.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая конфигурация ThreatFilterConfig.
 # =================================================================================
 
 import json
@@ -24,36 +23,34 @@ load_dotenv()
 
 class AIConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
-    provider: str = "gemini"
-    model_name: str = Field(..., alias="default_model_name")
+    provider: str = Field(default="gemini")
+    model_name: str = Field(default="gemini-1.5-flash-latest", alias="default_model_name")
 
 class ThrottlingConfig(BaseModel):
-    rate_limit: float = 0.5
-    key_prefix: str = "throttling"
+    rate_limit: float = Field(default=0.5)
+    key_prefix: str = Field(default="throttling")
 
 class FeatureFlags(BaseModel):
-    maintenance_mode: bool = False
-    enable_game: bool = True
-    enable_threat_protection: bool = True
+    maintenance_mode: bool = Field(default=False)
+    enable_game: bool = Field(default=True)
+    enable_threat_protection: bool = Field(default=True)
 
 class PriceServiceConfig(BaseModel):
-    cache_ttl_seconds: int = 300
-    top_n_coins: int = 100
+    cache_ttl_seconds: int = Field(default=300)
+    top_n_coins: int = Field(default=100)
 
 class CoinListServiceConfig(BaseModel):
-    # ИСПРАВЛЕНИЕ: Добавлены значения по умолчанию
-    update_interval_hours: int = 24
-    fallback_file_path: str = "data/fallback_coins.json"
-    search_score_cutoff: int = 85
+    update_interval_hours: int = Field(default=24)
+    fallback_file_path: str = Field(default="data/fallback_coins.json")
+    search_score_cutoff: int = Field(default=85)
 
 class NewsFeeds(BaseModel):
-    main_rss_feeds: List[HttpUrl]
-    alpha_rss_feeds: List[HttpUrl]
+    main_rss_feeds: List[HttpUrl] = Field(default=[])
+    alpha_rss_feeds: List[HttpUrl] = Field(default=[])
 
 class NewsServiceConfig(BaseModel):
-    # ИСПРАВЛЕНИЕ: Добавлено значение по умолчанию
     cache_ttl_seconds: int = Field(default=3600, alias="subscription_ttl_seconds")
-    feeds: NewsFeeds
+    feeds: NewsFeeds = Field(default_factory=NewsFeeds)
 
 class EndpointsConfig(BaseModel):
     coingecko_api_base: Optional[HttpUrl] = None
@@ -65,6 +62,12 @@ class EndpointsConfig(BaseModel):
     mempool_space_difficulty: Optional[HttpUrl] = None
     whattomine_api: Optional[HttpUrl] = None
     minerstat_api: Optional[HttpUrl] = None
+
+# ИСПРАВЛЕНО: Добавлена недостающая модель конфигурации
+class ThreatFilterConfig(BaseModel):
+    """Конфигурация для фильтра угроз."""
+    enabled: bool = Field(default=True)
+    thresholds: Dict[str, float] = Field(default_factory=dict)
 
 # --- Главная модель настроек ---
 
@@ -83,6 +86,7 @@ class Settings(BaseSettings):
     NEWS_CHAT_ID: Optional[int] = None
     OPENAI_API_KEY: Optional[SecretStr] = None
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
+    PERSPECTIVE_API_KEY: Optional[SecretStr] = None # Для ThreatFilter
 
     # 2. Поля из JSON-файлов
     log_level: str = "INFO"
@@ -93,13 +97,11 @@ class Settings(BaseSettings):
     coin_list_service: CoinListServiceConfig
     news_service: NewsServiceConfig
     ai: AIConfig
+    threat_filter: ThreatFilterConfig # ИСПРАВЛЕНО: Добавлено поле
 
     @field_validator('ADMIN_USER_IDS', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
-        """
-        Преобразует строку '1,2,3' в список чисел [1, 2, 3].
-        """
         if isinstance(v, str):
             return [int(item.strip()) for item in v.split(',') if item.strip()]
         if isinstance(v, list):
@@ -136,6 +138,7 @@ def load_settings_from_files() -> Settings:
         "app": _load_json_file(base_dir / "app_config.json"),
         "news_service": _load_json_file(base_dir / "news_service_config.json"),
         "news_feeds": _load_json_file(base_dir / "news_feeds.json"),
+        "threat_filter": _load_json_file(base_dir / "threat_filter_config.json"), # ИСПРАВЛЕНО: Добавлена загрузка
     }
 
     # 2. Объединяем связанные конфиги
@@ -152,6 +155,7 @@ def load_settings_from_files() -> Settings:
         "coin_list_service": json_files["coin_list_service"],
         "news_service": json_files["news_service"],
         "ai": json_files["ai"],
+        "threat_filter": json_files["threat_filter"], # ИСПРАВЛЕНО: Добавлено в финальный словарь
     }
 
     try:

@@ -1,19 +1,59 @@
 {
-  "mining_duration_seconds": 3600,
-  "min_withdrawal_amount": 1000.0,
-  "market_commission_rate": 0.05,
-  "default_electricity_tariff": "Стандартный",
+  "schema_version": "2.1.0",
+  "last_updated_utc": "2025-08-06T09:10:00Z",
+  "remote_balance_config": {
+    "enabled": false,
+    "source_url": null,
+    "refresh_interval_minutes": 60
+  },
+  "real_world_data_integration": {
+    "enabled": true,
+    "btc_difficulty_source_url": "https://mempool.space/api/v1/difficulty-adjustment",
+    "electricity_price_source_url": null
+  },
+  "game_economy": {
+    "primary_currency": "GAME_COIN",
+    "premium_currency": "CRYSTAL",
+    "min_withdrawal_amount": 1000.0,
+    "market_commission_rate": 0.05
+  },
+  "player_progression": {
+    "xp_per_session": 100,
+    "xp_per_asic_sold": 50,
+    "level_up_formula": "1000 * (level ^ 1.5)",
+    "level_up_rewards": {
+      "CRYSTAL": 10
+    }
+  },
+  "mining_session": {
+    "default_duration_seconds": 3600,
+    "profit_formula": "(asic_hashrate * network_difficulty_modifier) - electricity_cost"
+  },
+  "equipment": {
+    "wear_and_tear_per_session": 0.01,
+    "repair_cost_per_point": 1.5,
+    "max_wear_level": 0.8
+  },
+  "new_player_defaults": {
+    "starting_balance_game_coin": 500,
+    "starting_balance_crystal": 0,
+    "starting_asic_id": "starter_asic_v1",
+    "default_electricity_tariff": "Стандартный"
+  },
   "electricity_tariffs": {
     "Стандартный": {
-      "cost_per_hour": 0.1,
+      "cost_per_kwh": 0.1,
+      "unlock_level": 1,
       "unlock_price": 0
     },
     "Льготный": {
-      "cost_per_hour": 0.07,
+      "cost_per_kwh": 0.07,
+      "unlock_level": 5,
       "unlock_price": 5000
     },
     "Промышленный": {
-      "cost_per_hour": 0.04,
+      "cost_per_kwh": 0.04,
+      "unlock_level": 15,
       "unlock_price": 25000
     }
   }

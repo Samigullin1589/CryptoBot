@@ -1,18 +1,79 @@
 {
-  "version": "1.0.0",
-  "spam_keywords": [
-    "порно", "проститутки", "интим", "наркотики", "закладки", "кладмен",
-    "ставки на спорт", "казино", "раскрутка счета", "договорные матчи",
-    "заработок в интернете", "легкие деньги", "обналичка", "дропы"
-  ],
-  "external_link_patterns": [
-    "t.me/joinchat",
-    "t.me/+",
-    "http://",
-    "https://"
-  ],
-  "settings": {
-    "block_all_external_links": true,
-    "block_forwards_from_channels": true
+  "schema_version": "2.1.0",
+  "last_updated_utc": "2025-08-05T22:30:00Z",
+  "update_sources": {
+    "keywords_url": "https://raw.githubusercontent.com/LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/master/ru",
+    "domains_url": "https://raw.githubusercontent.com/mitchellkrogza/The-Big-List-of-Hacked-Malware-Web-Sites/master/hacked-domains.list"
+  },
+  "moderation_rules": {
+    "block_forwards_from_channels": true,
+    "block_all_external_links": false,
+    "link_scanner_enabled": true,
+    "toxicity_check_enabled": true
+  },
+  "whitelists": {
+    "allowed_domains": [
+      "my-crypto-project.com",
+      "youtube.com",
+      "github.com",
+      "twitter.com",
+      "t.me"
+    ],
+    "allowed_usernames": [
+      "trusted_partner_bot",
+      "your_news_channel"
+    ]
+  },
+  "blacklists": {
+    "blocked_domains": [
+      "scam-casino.io",
+      "fake-crypto-giveaway.net"
+    ],
+    "spam_patterns": [
+      {
+        "category": "gambling",
+        "description": "Упоминания казино, ставок и азартных игр",
+        "pattern": "(казино|ставки на спорт|букмекер|\\b1xbet\\b|\\bmostbet\\b)",
+        "severity": "high",
+        "action": "delete"
+      },
+      {
+        "category": "adult",
+        "description": "Ключевые слова контента для взрослых",
+        "pattern": "(порно|проститутк[а-я]+|интим|\\bxxx\\b)",
+        "severity": "critical",
+        "action": "delete_and_ban"
+      },
+      {
+        "category": "scam",
+        "description": "Ключевые слова, связанные с финансовым мошенничеством",
+        "pattern": "(раскрутка счета|договорн[а-я]+ матч[а-я]*|легкие деньги|обналичка|дроп[ыа-я]*)",
+        "severity": "high",
+        "action": "delete_and_warn"
+      },
+      {
+        "category": "drugs",
+        "description": "Ключевые слова, связанные с запрещенными веществами",
+        "pattern": "(наркотик[а-я]*|закладк[а-я]+|кладмен|мефедрон|соли)",
+        "severity": "critical",
+        "action": "delete_and_ban"
+      }
+    ]
+  },
+  "link_analysis": {
+    "suspicious_tld": [
+      ".xyz",
+      ".club",
+      ".top",
+      ".loan",
+      ".work"
+    ],
+    "disallowed_protocols": [
+      "tg://"
+    ],
+    "blocked_link_patterns": [
+      "t.me/joinchat",
+      "t.me/+"
+    ]
   }
 }

@@ -1,5 +1,91 @@
 {
-  "whattomine_api": "https://whattomine.com/asic.json?gpus_boost=true",
-  "asicminervalue_api": "https://www.asicminervalue.com/api/v1/miners",
-  "minerstat_hardware_api": "https://api.minerstat.com/v2/hardware"
+  "schema_version": "2.2.0",
+  "last_updated_utc": "2025-08-05T23:20:00Z",
+  "global_client_config": {
+    "default_request_timeout_seconds": 30,
+    "default_max_retries": 3
+  },
+  "api_tasks": {
+    "get_asic_profitability": {
+      "description": "Получение данных о доходности ASIC-майнеров.",
+      "primary": { "provider": "whattomine", "endpoint_id": "asic_profitability" },
+      "fallback": { "provider": "asicminervalue", "endpoint_id": "all_miners" }
+    },
+    "get_market_prices": {
+      "description": "Получение рыночных цен на криптовалюты.",
+      "primary": { "provider": "coingecko", "endpoint_id": "simple_price" }
+    },
+    "get_market_sentiment": {
+      "description": "Получение индекса страха и жадности.",
+      "primary": { "provider": "alternative_me", "endpoint_id": "fear_and_greed" }
+    },
+    "get_network_stats": {
+      "description": "Получение статистики сети Bitcoin (включая халвинг).",
+      "primary": { "provider": "blockchair", "endpoint_id": "btc_stats" }
+    },
+    "get_btc_fees": {
+      "description": "Получение рекомендованных комиссий в сети Bitcoin.",
+      "primary": { "provider": "mempool_space", "endpoint_id": "recommended_fees" },
+      "fallback": { "provider": "blockchair", "endpoint_id": "btc_stats" }
+    }
+  },
+  "api_providers": {
+    "whattomine": {
+      "display_name": "WhatToMine",
+      "health_check_url": "https://whattomine.com/",
+      "endpoints": {
+        "asic_profitability": { "url": "https://whattomine.com/coins.json", "rate_limit_per_minute": 10 }
+      }
+    },
+    "asicminervalue": {
+      "display_name": "ASIC Miner Value",
+      "health_check_url": "https://www.asicminervalue.com/",
+      "endpoints": {
+        "all_miners": { "url": "https://www.asicminervalue.com/miners", "rate_limit_per_minute": 5 }
+      }
+    },
+    "minerstat": {
+      "display_name": "MinerStat",
+      "api_key_env": "MINERSTAT_API_KEY",
+      "base_url": "https://api.minerstat.com/v2",
+      "health_check_url": "https://api.minerstat.com/v2/coins",
+      "endpoints": {
+        "hardware_list": { "url": "/hardware", "rate_limit_per_minute": 15 }
+      }
+    },
+    "coingecko": {
+      "display_name": "CoinGecko",
+      "base_url": "https://api.coingecko.com/api/v3",
+      "health_check_url": "https://api.coingecko.com/api/v3/ping",
+      "endpoints": {
+        "ping": { "url": "/ping" },
+        "simple_price": { "url": "/simple/price" },
+        "coins_list": { "url": "/coins/list" },
+        "markets": { "url": "/coins/markets" }
+      }
+    },
+    "alternative_me": {
+      "display_name": "Alternative.me",
+      "health_check_url": "https://api.alternative.me/fng/",
+      "endpoints": {
+        "fear_and_greed": { "url": "https://api.alternative.me/fng/?limit=1", "rate_limit_per_minute": 30 }
+      }
+    },
+    "blockchair": {
+      "display_name": "Blockchair",
+      "base_url": "https://api.blockchair.com/bitcoin",
+      "health_check_url": "https://api.blockchair.com/bitcoin/stats",
+      "endpoints": {
+        "btc_stats": { "url": "/stats", "rate_limit_per_minute": 2 }
+      }
+    },
+    "mempool_space": {
+      "display_name": "mempool.space",
+      "base_url": "https://mempool.space/api/v1",
+      "health_check_url": "https://mempool.space/api/v1/fees/recommended",
+      "endpoints": {
+        "recommended_fees": { "url": "/fees/recommended", "rate_limit_per_minute": 20 }
+      }
+    }
+  }
 }

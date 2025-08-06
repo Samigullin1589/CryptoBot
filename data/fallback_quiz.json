@@ -1,52 +1,111 @@
-[
-  {
-    "question": "Какой алгоритм консенсуса использует Bitcoin?",
-    "options": [
-      "Proof of Stake",
-      "Proof of Work",
-      "Delegated Proof of Stake",
-      "Proof of Authority"
-    ],
-    "correct_option_index": 1
+{
+  "schema_version": "2.2.0",
+  "last_updated_utc": "2025-08-06T08:50:00Z",
+  "update_sources": {
+    "enabled": false,
+    "source_url": null,
+    "refresh_interval_hours": 72
   },
-  {
-    "question": "Кто является анонимным создателем Bitcoin?",
-    "options": [
-      "Виталик Бутерин",
-      "Чанпэн Чжао",
-      "Сатоши Накамото",
-      "Гэвин Вуд"
-    ],
-    "correct_option_index": 2
+  "quiz_settings": {
+    "questions_per_session": 5,
+    "time_limit_seconds_per_question": 30,
+    "correct_answer_streak_bonus": 1.2
   },
-  {
-    "question": "Что такое 'халвинг' в сети Bitcoin?",
-    "options": [
-      "Удвоение комиссии за транзакцию",
-      "Разделение блокчейна на две цепи",
-      "Уменьшение награды за майнинг блока вдвое",
-      "Проверка половины всех узлов сети"
-    ],
-    "correct_option_index": 2
+  "daily_challenge": {
+    "enabled": true,
+    "questions_count": 3,
+    "reward_multiplier": 2.0
   },
-  {
-    "question": "Какая из этих криптовалют известна как 'цифровое серебро' по аналогии с 'цифровым золотом' Bitcoin?",
-    "options": [
-      "Ethereum",
-      "Ripple (XRP)",
-      "Dogecoin",
-      "Litecoin"
-    ],
-    "correct_option_index": 3
-  },
-  {
-    "question": "Что из перечисленного НЕ является основной характеристикой блокчейна?",
-    "options": [
-      "Децентрализация",
-      "Неизменяемость",
-      "Централизованное управление",
-      "Прозрачность"
-    ],
-    "correct_option_index": 2
-  }
-]
+  "question_pool": [
+    {
+      "id": "BTC_CONSENSUS",
+      "category": "Основы Bitcoin",
+      "difficulty": "easy",
+      "question": "Какой алгоритм консенсуса использует Bitcoin?",
+      "options": [
+        "Proof of Stake",
+        "Proof of Work",
+        "Delegated Proof of Stake",
+        "Proof of Authority"
+      ],
+      "correct_option_index": 1,
+      "explanation": "Bitcoin использует Proof-of-Work (Доказательство работы), где майнеры соревнуются в решении сложных математических задач для добавления новых блоков в блокчейн.",
+      "reward_coins": 10
+    },
+    {
+      "id": "BTC_CREATOR",
+      "category": "История Криптовалют",
+      "difficulty": "easy",
+      "question": "Кто является анонимным создателем Bitcoin?",
+      "options": [
+        "Виталик Бутерин",
+        "Чанпэн Чжао",
+        "Сатоши Накамото",
+        "Гэвин Вуд"
+      ],
+      "correct_option_index": 2,
+      "explanation": "Сатоши Накамото — это псевдоним человека или группы людей, которые разработали Bitcoin и создали первую базу данных, использующую технологию блокчейн.",
+      "reward_coins": 10
+    },
+    {
+      "id": "BTC_HALVING",
+      "category": "Основы Bitcoin",
+      "difficulty": "medium",
+      "question": "Что такое 'халвинг' в сети Bitcoin?",
+      "options": [
+        "Удвоение комиссии за транзакцию",
+        "Разделение блокчейна на две цепи",
+        "Уменьшение награды за майнинг блока вдвое",
+        "Проверка половины всех узлов сети"
+      ],
+      "correct_option_index": 2,
+      "explanation": "Халвинг — это запрограммированное событие, происходящее примерно каждые 4 года, которое уменьшает вдвое награду, получаемую майнерами за создание нового блока. Это делается для контроля над эмиссией биткоинов.",
+      "reward_coins": 20
+    },
+    {
+      "id": "LTC_NICKNAME",
+      "category": "Altcoins",
+      "difficulty": "medium",
+      "question": "Какая из этих криптовалют известна как 'цифровое серебро' по аналогии с 'цифровым золотом' Bitcoin?",
+      "options": [
+        "Ethereum",
+        "Ripple (XRP)",
+        "Dogecoin",
+        "Litecoin"
+      ],
+      "correct_option_index": 3,
+      "explanation": "Litecoin часто называют 'цифровым серебром', так как он был создан как более легкая и быстрая альтернатива Bitcoin, подобно тому как серебро является более доступным драгоценным металлом по сравнению с золотом.",
+      "reward_coins": 20
+    },
+    {
+      "id": "BLOCKCHAIN_NOT_A_FEATURE",
+      "category": "Технология",
+      "difficulty": "easy",
+      "question": "Что из перечисленного НЕ является основной характеристикой блокчейна?",
+      "options": [
+        "Децентрализация",
+        "Неизменяемость",
+        "Централизованное управление",
+        "Прозрачность"
+      ],
+      "correct_option_index": 2,
+      "explanation": "Блокчейн по своей сути является децентрализованной технологией. Централизованное управление противоречит его основным принципам.",
+      "reward_coins": 10
+    },
+    {
+      "id": "ETH_SMART_CONTRACTS",
+      "category": "Технология",
+      "difficulty": "medium",
+      "question": "Какая криптовалюта первой представила концепцию 'смарт-контрактов'?",
+      "options": [
+        "Bitcoin",
+        "Litecoin",
+        "Monero",
+        "Ethereum"
+      ],
+      "correct_option_index": 3,
+      "explanation": "Ethereum был создан Виталиком Бутериным именно для того, чтобы расширить возможности блокчейна за пределы простых транзакций, внедрив смарт-контракты — самоисполняющиеся программы.",
+      "reward_coins": 25
+    }
+  ]
+}

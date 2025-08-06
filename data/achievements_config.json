@@ -1,58 +1,93 @@
 {
-  "achievements": [
+  "schema_version": "2.0.0",
+  "last_updated_utc": "2025-08-05T22:40:00Z",
+  "achievement_templates": [
     {
-      "id": "first_session",
-      "name": "Первопроходец",
-      "description": "Завершить свою первую майнинг-сессию.",
-      "reward_coins": 50,
+      "template_id": "sessions_completed",
+      "category": "Майнинг",
+      "base_name": "Майнер",
+      "base_description": "Завершить {count} майнинг-сессий.",
       "trigger_event": "SESSION_END",
-      "trigger_conditions": {
-        "sessions_completed": 1
-      }
+      "trigger_key": "sessions_completed",
+      "tiers": [
+        { "count": 1, "name": "Первопроходец", "reward_coins": 50, "rarity": "common", "icon_emoji": "⛏️" },
+        { "count": 10, "name": "Ветеран Майнинга", "reward_coins": 250, "rarity": "common", "icon_emoji": "🛠️" },
+        { "count": 50, "name": "Мастер Шахты", "reward_coins": 1000, "rarity": "rare", "icon_emoji": "⚙️" },
+        { "count": 100, "name": "Легенда Террикона", "reward_coins": 5000, "rarity": "epic", "icon_emoji": "💎" }
+      ]
     },
     {
-      "id": "ten_sessions",
-      "name": "Ветеран Майнинга",
-      "description": "Завершить 10 майнинг-сессий.",
-      "reward_coins": 250,
-      "trigger_event": "SESSION_END",
-      "trigger_conditions": {
-        "sessions_completed": 10
-      }
-    },
-    {
-      "id": "first_sale",
-      "name": "Предприниматель",
-      "description": "Успешно продать свой первый ASIC на рынке.",
-      "reward_coins": 100,
+      "template_id": "asics_sold",
+      "category": "Рынок",
+      "base_name": "Торговец",
+      "base_description": "Продать {count} ASIC на рынке.",
       "trigger_event": "ASIC_SOLD",
-      "trigger_conditions": {
-        "sales_completed": 1
-      }
-    },
+      "trigger_key": "sales_completed",
+      "tiers": [
+        { "count": 1, "name": "Предприниматель", "reward_coins": 100, "rarity": "common", "icon_emoji": "📈" },
+        { "count": 10, "name": "Опытный дилер", "reward_coins": 500, "rarity": "rare", "icon_emoji": "💰" },
+        { "count": 50, "name": "Рыночный магнат", "reward_coins": 2500, "rarity": "epic", "icon_emoji": "👑" }
+      ]
+    }
+  ],
+  "unique_achievements": [
     {
       "id": "event_survivor",
+      "category": "Майнинг",
       "name": "Везунчик",
       "description": "Пережить случайное игровое событие (положительное или отрицательное).",
       "reward_coins": 75,
-      "trigger_event": "SESSION_END_WITH_EVENT"
+      "rarity": "common",
+      "icon_emoji": "🍀",
+      "trigger_event": "SESSION_END_WITH_EVENT",
+      "hidden": false
     },
     {
       "id": "tariff_mogul",
+      "category": "Исследование",
       "name": "Энергетический магнат",
       "description": "Купить самый дорогой тариф на электроэнергию.",
       "reward_coins": 500,
+      "rarity": "epic",
+      "icon_emoji": "🔌",
       "trigger_event": "TARIFF_BOUGHT",
       "trigger_conditions": {
         "tariff_name": "Промышленный"
-      }
+      },
+      "hidden": false
     },
     {
       "id": "airdrop_hunter",
+      "category": "Исследование",
       "name": "Охотник за сокровищами",
       "description": "Выполнить все задачи в одном из Airdrop-проектов.",
       "reward_coins": 150,
-      "trigger_event": "AIRDROP_COMPLETED"
+      "rarity": "rare",
+      "icon_emoji": "🎁",
+      "trigger_event": "AIRDROP_COMPLETED",
+      "hidden": false
+    },
+    {
+      "id": "secret_asic",
+      "category": "Исследование",
+      "name": "Тайный прототип",
+      "description": "Найти и приобрести секретный, не анонсированный ASIC.",
+      "reward_coins": 1000,
+      "rarity": "legendary",
+      "icon_emoji": "🤫",
+      "trigger_event": "SECRET_ASIC_BOUGHT",
+      "hidden": true
+    }
+  ],
+  "meta_achievements": [
+    {
+      "id": "master_miner",
+      "name": "Мастер Майнинга",
+      "description": "Получить все достижения в категории 'Майнинг'.",
+      "reward_coins": 10000,
+      "rarity": "legendary",
+      "icon_emoji": "🏆",
+      "required_category": "Майнинг"
     }
   ]
 }
