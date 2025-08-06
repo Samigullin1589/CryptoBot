@@ -2,11 +2,11 @@
 # =================================================================================
 # Файл: bot/utils/ui_helpers.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
 # Описание: Вспомогательные функции для работы с интерфейсом пользователя.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая функция edit_or_send_message.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая функция get_message_and_chat_id.
 # =================================================================================
 
 import logging
-from typing import Union
+from typing import Union, Tuple
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
@@ -61,4 +61,14 @@ async def edit_or_send_message(
             reply_markup=keyboard,
             **kwargs
         )
+
+async def get_message_and_chat_id(update: Union[CallbackQuery, Message]) -> Tuple[Message, int]:
+    """
+    Извлекает объекты сообщения и ID чата из CallbackQuery или Message.
+    Автоматически отвечает на CallbackQuery, чтобы убрать "часики".
+    """
+    if isinstance(update, CallbackQuery):
+        await update.answer()
+        return update.message, update.message.chat.id
+    return update, update.chat.id
 
