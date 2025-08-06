@@ -1,107 +1,147 @@
-# =================================================================================
-# Файл: bot/services/price_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Сервис для получения цен на криптовалюты, полностью
-# интегрированный в архитектуру с инъекцией зависимостей.
-# ИСПРАВЛЕНИЕ: Сервис полностью переработан для соответствия DI-архитектуре.
-# =================================================================================
-
+# ===============================================================
+# Файл: bot/services/parser_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Отказоустойчивый сервис для парсинга данных с внешних
+# источников с встроенной логикой повторных запросов.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'asyncio'.
+# ===============================================================
 import logging
-from typing import Dict, List, Optional
+import asyncio # <--- ИСПРАВЛЕНО: Добавлен недостающий импорт
+from typing import List, Dict, Any, Optional
 
 import aiohttp
 import backoff
-from redis.asyncio import Redis
+from bs4 import BeautifulSoup
 
-from bot.config.settings import PriceServiceConfig, EndpointsConfig
-from bot.services.coin_list_service import CoinListService
+from bot.config.settings import EndpointsConfig
+from bot.utils.models import AsicMiner
+from bot.utils.text_utils import parse_power, normalize_asic_name
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_EXCEPTIONS = (aiohttp.ClientError, TimeoutError, asyncio.TimeoutError)
+# Определяем ошибки, при которых стоит повторять запрос
+RETRYABLE_EXCEPTIONS = (
+    aiohttp.ClientError,
+    aiohttp.ClientResponseError,
+    TimeoutError,
+    asyncio.TimeoutError
+)
 
-class PriceService:
-    """
-    Отвечает за получение и кэширование цен на криптовалюты.
-    """
-    def __init__(
-        self,
-        redis: Redis,
-        http_session: aiohttp.ClientSession,
-        coin_list_service: CoinListService,
-        config: PriceServiceConfig,
-        endpoints: EndpointsConfig,
-    ):
-        """
-        Инициализирует сервис цен.
-
-        :param redis: Асинхронный клиент Redis.
-        :param http_session: Клиентская сессия aiohttp.
-        :param coin_list_service: Сервис для работы со списком монет.
-        :param config: Конфигурация для сервиса цен.
-        :param endpoints: Конфигурация с URL-адресами API.
-        """
-        self.redis = redis
-        self.http_session = http_session
-        self.coin_list_service = coin_list_service
+class ParserService:
+    """Специализированный сервис для парсинга данных с внешних источников."""
+    
+    def __init__(self, http_session: aiohttp.ClientSession, config: EndpointsConfig):
+        self.session = http_session
         self.config = config
-        self.endpoints = endpoints
 
-    def _get_cache_key(self, coin_id: str, vs_currency: str) -> str:
-        """Генерирует консистентный ключ для кэша цены монеты."""
-        return f"cache:price:{coin_id}:{vs_currency}"
+    @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=3, on_giveup=lambda details: logger.error(
+        f"HTTP request failed after {details['tries']} tries. Giving up. Error: {details.get('exception')}"
+    ))
+    async def _fetch(self, url: str, response_type: str = 'json') -> Optional[Any]:
+        """Выполняет HTTP-запрос с логикой повторных попыток."""
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        async with self.session.get(url, headers=headers, timeout=15) as response:
+            response.raise_for_status()
+            if response_type == 'json':
+                return await response.json()
+            return await response.text()
 
-    @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=3)
-    async def get_prices(self, coin_ids: List[str], vs_currency: Optional[str] = None) -> Dict[str, Optional[float]]:
-        """
-        Получает цены для списка ID монет.
-        Сначала проверяет кэш, затем запрашивает недостающие цены у API.
-        """
-        target_currency = vs_currency or self.config.default_vs_currency
+    async def fetch_from_whattomine(self) -> List[AsicMiner]:
+        """Получает и парсит данные с API WhatToMine."""
+        if not self.config.whattomine_api:
+            logger.warning("URL для WhatToMine не задан в конфигурации. Пропуск.")
+            return []
         
-        prices: Dict[str, Optional[float]] = {}
-        coins_to_fetch: List[str] = []
-
-        for coin_id in coin_ids:
-            cache_key = self._get_cache_key(coin_id, target_currency)
-            cached_price = await self.redis.get(cache_key)
-            if cached_price:
-                prices[coin_id] = float(cached_price)
-            else:
-                coins_to_fetch.append(coin_id)
-
-        if not coins_to_fetch:
-            return prices
-
-        logger.info(f"Запрос цен с API для: {coins_to_fetch} в {target_currency}")
-        
-        url = f"{self.endpoints.coingecko_api_base}{self.endpoints.simple_price_endpoint}"
-        params = {
-            'ids': ','.join(coins_to_fetch),
-            'vs_currencies': target_currency
-        }
-        
+        logger.info("Парсер: Запрашиваю данные с WhatToMine API...")
         try:
-            async with self.http_session.get(url, params=params) as response:
-                response.raise_for_status()
-                api_data = await response.json()
+            data = await self._fetch(str(self.config.whattomine_api))
+            if not data or "asics" not in data:
+                logger.warning("Парсер: Не получены валидные данные от WhatToMine.")
+                return []
 
-                for coin_id in coins_to_fetch:
-                    price_data = api_data.get(coin_id)
-                    price = price_data.get(target_currency.lower()) if price_data else None
-                    
-                    if price is not None:
-                        prices[coin_id] = float(price)
-                        cache_key = self._get_cache_key(coin_id, target_currency)
-                        await self.redis.set(cache_key, price, ex=self.config.cache_ttl_seconds)
-                    else:
-                        prices[coin_id] = None
-        except aiohttp.ClientError as e:
-            logger.error(f"Ошибка HTTP клиента при получении цен: {e}")
-            for coin_id in coins_to_fetch:
-                prices[coin_id] = None
+            asics = []
+            for asic_id, details in data["asics"].items():
+                try:
+                    asics.append(AsicMiner(
+                        id=asic_id,
+                        name=details.get("name", asic_id),
+                        profitability=float(details.get("profitability", 0)),
+                        algorithm=details.get("algorithm"),
+                        power=parse_power(str(details.get("power", 0))),
+                        hashrate=str(details.get("hashrate", "N/A"))
+                    ))
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning(f"Парсер: Ошибка обработки записи WhatToMine '{asic_id}': {e}. Пропускаю.")
+                    continue
+            logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с WhatToMine.")
+            return asics
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка при получении цен: {e}", exc_info=True)
-            for coin_id in coins_to_fetch:
-                prices[coin_id] = None
+            logger.error(f"Парсер: Критическая ошибка при работе с WhatToMine: {e}", exc_info=True)
+            return []
 
-        return prices
+    async def fetch_from_asicminervalue(self) -> List[AsicMiner]:
+        """Получает и парсит данные со страницы AsicMinerValue."""
+        if not self.config.asicminervalue_url:
+            logger.warning("URL для AsicMinerValue не задан в конфигурации. Пропуск.")
+            return []
+            
+        logger.info("Парсер: Запрашиваю данные с AsicMinerValue...")
+        try:
+            html_content = await self._fetch(str(self.config.asicminervalue_url), response_type='text')
+            if not html_content: return []
+
+            soup = BeautifulSoup(html_content, 'lxml')
+            table_body = soup.select_one('table#miners tbody')
+            if not table_body:
+                logger.warning("Парсер: Не найдена таблица #miners в HTML от AsicMinerValue.")
+                return []
+
+            asics = []
+            for row in table_body.find_all('tr', attrs={'data-name': True}):
+                try:
+                    cols = row.find_all('td')
+                    if len(cols) < 6: continue
+                    
+                    name_tag = cols[1].find('a')
+                    if not name_tag: continue
+                    
+                    name = name_tag.text.strip()
+                    profit_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()
+                    power_text = cols[4].text.strip()
+                    
+                    asics.append(AsicMiner(
+                        id=normalize_asic_name(name),
+                        name=name,
+                        profitability=float(profit_text),
+                        power=parse_power(power_text),
+                        hashrate=cols[2].text.strip(),
+                        algorithm="Unknown"
+                    ))
+                except (AttributeError, ValueError, IndexError, TypeError) as e:
+                    logger.warning(f"Парсер: Ошибка обработки строки AsicMinerValue: {e}. Пропускаю.")
+                    continue
+            logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с AsicMinerValue.")
+            return asics
+        except Exception as e:
+            logger.error(f"Парсер: Критическая ошибка при работе с AsicMinerValue: {e}", exc_info=True)
+            return []
+
+    async def fetch_minerstat_hardware_specs(self) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Получает полный справочник спецификаций оборудования с MinerStat."""
+        if not self.config.minerstat_api:
+            logger.warning("URL для MinerStat не задан в конфигурации. Пропуск.")
+            return None
+            
+        logger.info("Парсер: Запрашиваю справочник спецификаций с MinerStat API...")
+        try:
+            hardware_data = await self._fetch(f"{self.config.minerstat_api}/hardware")
+            if not hardware_data or not isinstance(hardware_data, list):
+                logger.error("Парсер: Не удалось получить или неверный формат от MinerStat hardware API.")
+                return None
+            
+            return {
+                normalize_asic_name(hw['name']): {"power": hw.get('power_consumption'), "algorithm": hw.get('algorithm')}
+                for hw in hardware_data if 'name' in hw and hw.get('type') == 'ASIC'
+            }
+        except Exception as e:
+            logger.error(f"Парсер: Критическая ошибка при работе с MinerStat hardware API: {e}", exc_info=True)
+            return None
