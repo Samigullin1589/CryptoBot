@@ -43,7 +43,7 @@ async def on_startup(bot: Bot, deps: Deps):
     logger.info("Запуск процедур on_startup...")
     await set_bot_commands(bot)
 
-    setup_jobs(deps.scheduler, deps.bot, deps)
+    setup_jobs(deps.scheduler, deps)
     deps.scheduler.start()
     logger.info("Планировщик задач запущен.")
 
