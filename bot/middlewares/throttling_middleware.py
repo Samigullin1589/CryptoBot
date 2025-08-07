@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/middlewares/throttling_middleware.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/middlewares/throttling_middleware.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Middleware для защиты от флуда, адаптированный для aiogram 3+.
-# ИСПРАВЛЕНИЕ: Логика полностью переписана для корректной работы
-# с объектом Update и извлечения пользователя/чата из data.
+# ИСПРАВЛЕНИЕ: LUA-скрипт переведен на миллисекунды (PEX) для поддержки
+# дробных значений rate_limit.
 # =================================================================================
 from typing import Callable, Dict, Any, Awaitable, Optional
 
@@ -12,31 +12,24 @@ from aiogram.types import Update, User
 
 from bot.config.settings import settings
 
-# LUA-скрипт для атомарной проверки и установки лимитов
+# ИСПРАВЛЕНО: LUA-скрипт теперь использует PEX для работы с миллисекундами
 THROTTLE_LUA_SCRIPT = """
-    -- KEYS[1]: ключ для пользователя (e.g., throttle_user:12345)
-    -- KEYS[2]: ключ для чата (e.g., throttle_chat:54321)
-    -- ARGV[1]: лимит для пользователя (в секундах)
-    -- ARGV[2]: лимит для чата (в секундах)
-    -- ARGV[3]: общий лимит (в секундах)
+    -- KEYS[1]: ключ для пользователя
+    -- KEYS[2]: ключ для чата
+    -- ARGV[1]: лимит для пользователя (в миллисекундах)
+    -- ARGV[2]: лимит для чата (в миллисекундах)
 
     local user_key = KEYS[1]
     local chat_key = KEYS[2]
-    local user_limit = tonumber(ARGV[1])
-    local chat_limit = tonumber(ARGV[2])
-    local global_limit = tonumber(ARGV[3])
+    local user_limit_ms = tonumber(ARGV[1])
+    local chat_limit_ms = tonumber(ARGV[2])
 
-    if redis.call('SET', user_key, 1, 'EX', user_limit, 'NX') == nil then
+    if redis.call('SET', user_key, 1, 'PX', user_limit_ms, 'NX') == nil then
         return 1
     end
 
-    if redis.call('SET', chat_key, 1, 'EX', chat_limit, 'NX') == nil then
+    if redis.call('SET', chat_key, 1, 'PX', chat_limit_ms, 'NX') == nil then
         return 1
-    end
-    
-    if global_limit ~= user_limit and global_limit ~= chat_limit then
-        redis.call('EXPIRE', user_key, global_limit)
-        redis.call('EXPIRE', chat_key, global_limit)
     end
 
     return 0
@@ -48,9 +41,9 @@ class ThrottlingMiddleware(BaseMiddleware):
     """
     def __init__(self, storage: RedisStorage):
         self.storage = storage
-        self.rate_limit = settings.throttling.rate_limit
-        self.user_rate_limit = settings.throttling.user_rate_limit
-        self.chat_rate_limit = settings.throttling.chat_rate_limit
+        # Переводим лимиты из секунд в миллисекунды при инициализации
+        self.user_rate_limit_ms = int(settings.throttling.user_rate_limit * 1000)
+        self.chat_rate_limit_ms = int(settings.throttling.chat_rate_limit * 1000)
         self.script_sha: Optional[str] = None
 
     async def __call__(
@@ -59,28 +52,25 @@ class ThrottlingMiddleware(BaseMiddleware):
         event: Update,
         data: Dict[str, Any],
     ) -> Any:
-        # ИСПРАВЛЕНО: Правильный способ получить пользователя и чат в aiogram 3+
         user: Optional[User] = data.get("event_from_user")
         chat = data.get("event_chat")
 
-        # Если в событии нет пользователя (например, системное обновление), пропускаем
         if not user:
             return await handler(event, data)
 
-        # Если нет чата (например, inline-запрос), используем ID пользователя как ID чата
         chat_id = chat.id if chat else user.id
 
         if self.script_sha is None:
             self.script_sha = await self.storage.redis.script_load(THROTTLE_LUA_SCRIPT)
 
+        # ИСПРАВЛЕНО: Передаем лимиты в миллисекундах
         is_throttled = await self.storage.redis.evalsha(
             self.script_sha,
             2,
             f"throttle_user:{user.id}",
             f"throttle_chat:{chat_id}",
-            self.user_rate_limit,
-            self.chat_rate_limit,
-            self.rate_limit
+            self.user_rate_limit_ms,
+            self.chat_rate_limit_ms
         )
 
         if is_throttled:
