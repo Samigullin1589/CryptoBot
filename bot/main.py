@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Финальная, отказоустойчивая точка входа в приложение с корректной
-# обработкой запуска и остановки для предотвращения утечек ресурсов.
-# ИСПРАВЛЕНИЕ: Устранена ошибка передачи зависимостей в on_startup/on_shutdown.
+# Описание: Финальная, отказоустойчивая точка входа в приложение.
+# ИСПРАВЛЕНИЕ: Добавлено удаление вебхука для решения проблемы
+# TelegramConflictError на хостингах.
 # =================================================================================
 
 import asyncio
@@ -76,17 +76,10 @@ async def main():
     """Главная точка входа для приложения бота."""
     setup_logging(level=settings.log_level)
     
-    redis_pool = redis.from_url(
-        str(settings.REDIS_URL),
-        encoding="utf-8",
-        decode_responses=True
-    )
+    redis_pool = redis.from_url(str(settings.REDIS_URL), encoding="utf-8", decode_responses=True)
     storage = RedisStorage(redis=redis_pool)
 
-    bot = Bot(
-        token=settings.BOT_TOKEN.get_secret_value(),
-        default=DefaultBotProperties(parse_mode="HTML")
-    )
+    bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=storage)
 
     dp.include_router(admin_router)
@@ -94,12 +87,7 @@ async def main():
     logger.info("Роутеры успешно подключены.")
 
     async with ClientSession() as http_session:
-        deps = Deps.build(
-            settings=settings, 
-            http_session=http_session, 
-            redis_pool=redis_pool,
-            bot=bot
-        )
+        deps = Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool, bot=bot)
 
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
         if hasattr(deps, 'user_service'):
@@ -109,10 +97,11 @@ async def main():
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
 
+        # ИСПРАВЛЕНО: Удаляем вебхук и все ожидающие обновления перед запуском.
+        # Это решает проблему 'TelegramConflictError' на хостингах.
+        await bot.delete_webhook(drop_pending_updates=True)
+
         logger.info("Запуск процесса опроса Telegram...")
-        
-        # ИСПРАВЛЕНО: Передаем весь объект 'deps' целиком, а не распаковываем его.
-        # Это позволяет aiogram корректно внедрять его в on_startup и on_shutdown.
         await dp.start_polling(bot, deps=deps)
 
 
