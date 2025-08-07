@@ -2,7 +2,7 @@
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Финальная, отказоустойчивая точка входа в приложение с корректной
 # обработкой запуска и остановки для предотвращения утечек ресурсов.
-# ИСПРАВЛЕНИЕ: Устранены все ошибки и предупреждения при завершении работы.
+# ИСПРАВЛЕНИЕ: Устранена ошибка передачи зависимостей в on_startup/on_shutdown.
 # =================================================================================
 
 import asyncio
@@ -66,12 +66,8 @@ async def on_shutdown(deps: Deps):
         logger.info("Планировщик задач остановлен.")
 
     if deps.redis_pool:
-        # ИСПРАВЛЕНО: Используем aclose() для корректного закрытия
         await deps.redis_pool.aclose()
         logger.info("Соединение с Redis закрыто.")
-
-    # ИСПРАВЛЕНО: Ручное закрытие http_session убрано.
-    # Этим теперь полностью управляет 'async with ClientSession()' в main.
     
     logger.info("Бот успешно остановлен.")
 
@@ -97,7 +93,6 @@ async def main():
     dp.include_router(public_router)
     logger.info("Роутеры успешно подключены.")
 
-    # ИСПРАВЛЕНО: 'async with' гарантирует закрытие сессии при выходе из блока
     async with ClientSession() as http_session:
         deps = Deps.build(
             settings=settings, 
@@ -111,13 +106,14 @@ async def main():
              dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
         logger.info("Middleware успешно зарегистрированы.")
         
-        # ИСПРАВЛЕНО: Прямая регистрация функций для устранения RuntimeWarning
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
 
         logger.info("Запуск процесса опроса Telegram...")
-        # Передаем все зависимости в хэндлеры и хуки через workflow_data
-        await dp.start_polling(bot, **deps.model_dump())
+        
+        # ИСПРАВЛЕНО: Передаем весь объект 'deps' целиком, а не распаковываем его.
+        # Это позволяет aiogram корректно внедрять его в on_startup и on_shutdown.
+        await dp.start_polling(bot, deps=deps)
 
 
 if __name__ == "__main__":
