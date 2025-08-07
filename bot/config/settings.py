@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: ThrottlingConfig приведена в соответствие с финальной версией middleware.
+# ИСПРАВЛЕНИЕ: Добавлен параметр history_max_size для AI-консультанта.
 # =================================================================================
 
 import json
@@ -25,11 +25,11 @@ class AIConfig(BaseModel):
     flash_model_name: str = "gemini-1.5-flash-latest"
     default_temperature: float = 0.5
     max_retries: int = 5
+    history_max_size: int = 10 # "Память" AI - 10 пар вопрос-ответ
 
-# ИСПРАВЛЕНО: Добавлены лимиты для пользователя и чата, убран общий rate_limit
 class ThrottlingConfig(BaseModel):
-    user_rate_limit: float = 2.0 # Лимит для одного пользователя (2 секунды)
-    chat_rate_limit: float = 1.0 # Лимит для одного чата (1 секунда)
+    user_rate_limit: float = 2.0
+    chat_rate_limit: float = 1.0
     key_prefix: str = "throttling"
 
 class FeatureFlags(BaseModel):
