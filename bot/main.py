@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Финальная, отказоустойчивая точка входа в приложение.
-# ИСПРАВЛЕНИЕ: Инициализация Bot обновлена для aiogram 3.7.0+.
-# Восстановлена передача 'bot' в DI-контейнер.
+# Описание: Финальная, отказоустойчивая точка входа в приложение с корректной
+# обработкой запуска и остановки для предотвращения утечек ресурсов.
+# ИСПРАВЛЕНИЕ: Устранены все ошибки и предупреждения при завершении работы.
 # =================================================================================
 
 import asyncio
@@ -15,7 +15,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
-# Импортируем единый экземпляр настроек
 from bot.config.settings import settings
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.public.common_handler import public_router
@@ -44,7 +43,7 @@ async def on_startup(bot: Bot, deps: Deps):
     logger.info("Запуск процедур on_startup...")
     await set_bot_commands(bot)
 
-    setup_jobs(deps.scheduler, deps)
+    setup_jobs(deps.scheduler, deps.bot, deps)
     deps.scheduler.start()
     logger.info("Планировщик задач запущен.")
 
@@ -56,10 +55,9 @@ async def on_startup(bot: Bot, deps: Deps):
 
 
 async def on_shutdown(deps: Deps):
-    """Выполняет действия при остановке бота."""
+    """Выполняет действия при остановке бота, гарантируя чистое закрытие ресурсов."""
     logger.info("Запуск процедур on_shutdown...")
     
-    # Проверяем наличие сервиса перед вызовом
     if hasattr(deps, 'admin_service') and deps.admin_service:
         await deps.admin_service.notify_admins("❗️ Бот останавливается!")
 
@@ -68,12 +66,13 @@ async def on_shutdown(deps: Deps):
         logger.info("Планировщик задач остановлен.")
 
     if deps.redis_pool:
-        await deps.redis_pool.close()
+        # ИСПРАВЛЕНО: Используем aclose() для корректного закрытия
+        await deps.redis_pool.aclose()
         logger.info("Соединение с Redis закрыто.")
 
-    if deps.http_session and not deps.http_session.closed:
-        await deps.http_session.close()
-        logger.info("Сессия AIOHTTP закрыта.")
+    # ИСПРАВЛЕНО: Ручное закрытие http_session убрано.
+    # Этим теперь полностью управляет 'async with ClientSession()' в main.
+    
     logger.info("Бот успешно остановлен.")
 
 
@@ -88,7 +87,6 @@ async def main():
     )
     storage = RedisStorage(redis=redis_pool)
 
-    # ИСПРАВЛЕНО: Инициализация Bot для aiogram 3.7.0+
     bot = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
         default=DefaultBotProperties(parse_mode="HTML")
@@ -99,8 +97,8 @@ async def main():
     dp.include_router(public_router)
     logger.info("Роутеры успешно подключены.")
 
+    # ИСПРАВЛЕНО: 'async with' гарантирует закрытие сессии при выходе из блока
     async with ClientSession() as http_session:
-        # ИСПРАВЛЕНО: Восстановлена передача 'bot' в DI-контейнер
         deps = Deps.build(
             settings=settings, 
             http_session=http_session, 
@@ -108,21 +106,18 @@ async def main():
             bot=bot
         )
 
-        # ИСПРАВЛЕНО: Восстановлена регистрация ActivityMiddleware
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
         if hasattr(deps, 'user_service'):
              dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
         logger.info("Middleware успешно зарегистрированы.")
         
-        # Лямбда-функции для передачи аргументов в хуки
-        dp.startup.register(lambda: on_startup(bot, deps))
-        dp.shutdown.register(lambda: on_shutdown(deps))
+        # ИСПРАВЛЕНО: Прямая регистрация функций для устранения RuntimeWarning
+        dp.startup.register(on_startup)
+        dp.shutdown.register(on_shutdown)
 
         logger.info("Запуск процесса опроса Telegram...")
-        try:
-            await dp.start_polling(bot, **deps.model_dump())
-        finally:
-            await on_shutdown(deps)
+        # Передаем все зависимости в хэндлеры и хуки через workflow_data
+        await dp.start_polling(bot, **deps.model_dump())
 
 
 if __name__ == "__main__":
