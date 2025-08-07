@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/services/user_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Сервис для управления профилями и историей диалогов.
-# ИСПРАВЛЕНИЕ: Заглушки заменены на полноценную реализацию хранения
-# истории диалогов в Redis с автоматической обрезкой.
+# ИСПРАВЛЕНИЕ: Удалены устаревшие вызовы .decode() для совместимости
+# с современным клиентом Redis (decode_responses=True).
 # =================================================================================
 import logging
 import json
@@ -31,12 +31,12 @@ class UserService:
         user_data = await self.redis.hgetall(profile_key)
         if not user_data:
             return None
-        return UserProfile(**{k.decode('utf-8'): v.decode('utf-8') for k, v in user_data.items()})
+        # ИСПРАВЛЕНО: .decode() больше не нужен, так как Redis уже возвращает строки
+        return UserProfile(**user_data)
 
     async def register_user(self, user_id: int, full_name: str, username: Optional[str]) -> bool:
         """Регистрирует нового пользователя. Возвращает True, если пользователь новый."""
         profile_key = self.keys.user_profile(user_id)
-        # HSETNX возвращает 1, если поле было установлено (т.е. ключ не существовал)
         if await self.redis.hsetnx(profile_key, "user_id", user_id) == 0:
             return False
         
@@ -85,7 +85,6 @@ class UserService:
     async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict]:
         """
         Получает историю переписки для AI-консультанта из Redis.
-        Возвращает список словарей в формате Google AI SDK.
         """
         history_key = self.keys.conversation_history(user_id, chat_id)
         raw_history = await self.redis.lrange(history_key, 0, self.history_max_size * 2 - 1)
@@ -96,7 +95,6 @@ class UserService:
     async def add_to_conversation_history(self, user_id: int, chat_id: int, user_text: str, ai_answer: str):
         """
         Добавляет пару "вопрос-ответ" в историю переписки в Redis.
-        Автоматически обрезает историю до максимального размера.
         """
         history_key = self.keys.conversation_history(user_id, chat_id)
         
