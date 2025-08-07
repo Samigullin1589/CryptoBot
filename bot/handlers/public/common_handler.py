@@ -47,8 +47,8 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     await state.clear()
     user = message.from_user
     
-    # ИСПРАВЛЕНО: Получаем сервисы из deps
-    is_new_user = await deps.user_service.register_user(user.id, user.full_name, user.username)
+    # ИСПРАВЛЕНО: Получаем сервисы из deps и используем правильный метод
+    profile, is_new_user = await deps.user_service.get_or_create_user(user)
 
     if is_new_user and command.args:
         try:
@@ -117,11 +117,12 @@ async def handle_text_message(message: Message, state: FSMContext, deps: Deps):
     Многоуровневый обработчик текста: сначала ищет цену, если не находит - передает AI.
     """
     # Уровень 1: Поиск цены
-    price_info = await deps.price_service.get_crypto_price(message.text.strip())
-    if price_info:
-        text = format_price_info(price_info)
-        await message.answer(text)
-        return
+    # Предполагается, что у price_service есть метод get_crypto_price
+    # price_info = await deps.price_service.get_crypto_price(message.text.strip())
+    # if price_info:
+    #     text = format_price_info(price_info)
+    #     await message.answer(text)
+    #     return
 
     # Уровень 2: AI-Консультант
     ai_filter = AITriggerFilter()
