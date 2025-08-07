@@ -1,8 +1,7 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Финальная, отказоустойчивая точка входа в приложение.
-# ИСПРАВЛЕНИЕ: Добавлено удаление вебхука для решения проблемы
-# TelegramConflictError на хостингах.
+# ИСПРАВЛЕНИЕ: Добавлена регистрация нового роутера для обработки цен.
 # =================================================================================
 
 import asyncio
@@ -18,6 +17,9 @@ from aiogram.types import BotCommand, BotCommandScopeDefault
 from bot.config.settings import settings
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.public.common_handler import public_router
+# ИСПРАВЛЕНО: Импортируем новые роутеры
+from bot.handlers.public.menu_handlers import router as menu_router
+from bot.handlers.public.price_handler import router as price_router
 from bot.jobs.scheduled_tasks import setup_jobs
 from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
@@ -26,8 +28,8 @@ from bot.utils.logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
 
+# ... (функции on_startup, on_shutdown, set_bot_commands без изменений) ...
 async def set_bot_commands(bot: Bot):
-    """Устанавливает команды, видимые пользователям в меню Telegram."""
     commands = [
         BotCommand(command="start", description="🚀 Перезапустить бота"),
         BotCommand(command="price", description="📈 Узнать курс криптовалюты"),
@@ -37,38 +39,27 @@ async def set_bot_commands(bot: Bot):
     await bot.set_my_commands(commands, BotCommandScopeDefault())
     logger.info("Команды бота успешно установлены.")
 
-
 async def on_startup(bot: Bot, deps: Deps):
-    """Выполняет действия при старте бота."""
     logger.info("Запуск процедур on_startup...")
     await set_bot_commands(bot)
-
     setup_jobs(deps.scheduler, deps)
     deps.scheduler.start()
     logger.info("Планировщик задач запущен.")
-
     await deps.coin_list_service.update_coin_list()
     logger.info("Первоначальные данные успешно загружены.")
-    
     if deps.admin_service:
         await deps.admin_service.notify_admins("✅ Бот успешно запущен!")
 
-
 async def on_shutdown(deps: Deps):
-    """Выполняет действия при остановке бота, гарантируя чистое закрытие ресурсов."""
     logger.info("Запуск процедур on_shutdown...")
-    
     if hasattr(deps, 'admin_service') and deps.admin_service:
         await deps.admin_service.notify_admins("❗️ Бот останавливается!")
-
     if deps.scheduler and deps.scheduler.running:
         deps.scheduler.shutdown(wait=False)
         logger.info("Планировщик задач остановлен.")
-
     if deps.redis_pool:
         await deps.redis_pool.aclose()
         logger.info("Соединение с Redis закрыто.")
-    
     logger.info("Бот успешно остановлен.")
 
 
@@ -82,8 +73,11 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=storage)
 
+    # ИСПРАВЛЕНО: Подключаем все роутеры
     dp.include_router(admin_router)
     dp.include_router(public_router)
+    dp.include_router(menu_router)
+    dp.include_router(price_router) # <--- НОВЫЙ РОУТЕР
     logger.info("Роутеры успешно подключены.")
 
     async with ClientSession() as http_session:
@@ -97,8 +91,6 @@ async def main():
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
 
-        # ИСПРАВЛЕНО: Удаляем вебхук и все ожидающие обновления перед запуском.
-        # Это решает проблему 'TelegramConflictError' на хостингах.
         await bot.delete_webhook(drop_pending_updates=True)
 
         logger.info("Запуск процесса опроса Telegram...")

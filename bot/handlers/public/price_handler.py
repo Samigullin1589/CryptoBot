@@ -1,25 +1,23 @@
-# ===============================================================
-# Файл: bot/handlers/public/price_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# =================================================================================
+# Файл: bot/handlers/public/price_handler.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Обрабатывает все взаимодействия, связанные с получением
-# цен на криптовалюты. Управляет сценарием FSM для запроса
-# тикера у пользователя.
-# ===============================================================
+# цен на криптовалюты, с использованием FSM и инъекции зависимостей.
+# ИСПРАВЛЕНИЕ: Логика полностью переписана для соответствия DI и
+# устранения "зависания" кнопок.
+# =================================================================================
 import logging
-from typing import Union
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
+from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
 from bot.keyboards.info_keyboards import get_price_keyboard
-from bot.services.price_service import PriceService
-# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса (в единственном числе) ---
 from bot.states.info_states import PriceInquiryState
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+from bot.utils.dependencies import Deps
 from bot.utils.formatters import format_price_info
 from bot.utils.ui_helpers import show_main_menu_from_callback
 
-# Инициализация роутера
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
@@ -32,57 +30,63 @@ async def handle_price_menu(call: CallbackQuery, state: FSMContext):
     Запускает сценарий FSM.
     """
     await state.clear()
-    text = "Курс какой монеты вас интересует?"
+    text = "Курс какой монеты вас интересует? Выберите из популярных или отправьте тикер/название."
     await call.message.edit_text(text, reply_markup=get_price_keyboard())
-    # --- ИСПРАВЛЕНИЕ: Используем правильное имя класса ---
     await state.set_state(PriceInquiryState.waiting_for_ticker)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+    await call.answer() # <-- Отвечаем на callback, чтобы убрать "часики"
 
 @router.callback_query(F.data.startswith("price:"))
-async def handle_price_button_callback(call: CallbackQuery, state: FSMContext, price_service: PriceService):
+async def handle_price_button_callback(call: CallbackQuery, state: FSMContext, deps: Deps):
     """
     Обрабатывает нажатие на кнопку с конкретной монетой (BTC, ETH и т.д.).
     """
-    await state.clear() # Сценарий завершен, так как тикер получен
-    query = call.data.split(':')[1]
+    await state.clear()
+    coin_id = call.data.split(':')[1]
     
-    await call.message.edit_text(f"⏳ Получаю курс для {query.upper()}...")
+    await call.answer(f"⏳ Получаю курс для {coin_id.upper()}...")
     
-    price_info = await price_service.get_crypto_price(query)
-    if price_info:
-        response_text = format_price_info(price_info)
-        await call.message.edit_text(response_text, reply_markup=get_main_menu_keyboard())
+    # Используем новые сервисы
+    coin = await deps.coin_list_service.find_coin_by_query(coin_id)
+    prices = await deps.price_service.get_prices([coin.id]) if coin else {}
+    price_value = prices.get(coin.id)
+    
+    if coin and price_value is not None:
+        response_text = format_price_info(coin, {"price": price_value})
+        await call.message.edit_text(response_text, reply_markup=get_back_to_main_menu_keyboard())
     else:
         await call.message.edit_text(
-            f"❌ К сожалению, не удалось найти информацию по тикеру '{query}'.",
-            reply_markup=get_main_menu_keyboard()
+            f"❌ К сожалению, не удалось найти информацию по '{coin_id}'.",
+            reply_markup=get_back_to_main_menu_keyboard()
         )
 
-# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса ---
 @router.message(PriceInquiryState.waiting_for_ticker)
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-async def process_ticker_input_from_user(message: Message, state: FSMContext, price_service: PriceService):
+async def process_ticker_input_from_user(message: Message, state: FSMContext, deps: Deps):
     """
-    Обрабатывает текстовый ввод тикера от пользователя,
-    находясь в состоянии waiting_for_ticker.
+    Обрабатывает текстовый ввод тикера от пользователя.
     """
-    await state.clear() # Сценарий завершен
-    temp_msg = await message.answer("⏳ Получаю курс...")
+    await state.clear()
+    temp_msg = await message.answer("⏳ Ищу монету и получаю курс...")
+    query = message.text.strip()
     
-    price_info = await price_service.get_crypto_price(message.text)
-    if price_info:
-        response_text = format_price_info(price_info)
-        await temp_msg.edit_text(response_text, reply_markup=get_main_menu_keyboard())
-    else:
-        await temp_msg.edit_text(
-            f"❌ К сожалению, не удалось найти информацию по тикеру '{message.text}'.",
-            reply_markup=get_main_menu_keyboard()
-        )
+    coin = await deps.coin_list_service.find_coin_by_query(query)
+    if not coin:
+        await temp_msg.edit_text(f"❌ Не удалось найти монету по запросу '{query}'. Попробуйте еще раз.", reply_markup=get_back_to_main_menu_keyboard())
+        return
 
-@router.callback_query(PriceInquiryState.waiting_for_ticker, F.data == "nav:back_to_main")
-async def cancel_price_inquiry(call: CallbackQuery, state: FSMContext):
+    prices = await deps.price_service.get_prices([coin.id])
+    price_value = prices.get(coin.id)
+
+    if price_value is not None:
+        response_text = format_price_info(coin, {"price": price_value})
+        await temp_msg.edit_text(response_text, reply_markup=get_back_to_main_menu_keyboard())
+    else:
+        await temp_msg.edit_text(f"❌ Не удалось найти информацию по '{query}'.", reply_markup=get_back_to_main_menu_keyboard())
+
+@router.callback_query(F.data == "back_to_main_menu")
+async def handle_back_to_main_menu(call: CallbackQuery, state: FSMContext):
     """
-    Обрабатывает отмену сценария запроса цены и возвращает в главное меню.
+    Обрабатывает отмену любого сценария и возвращает в главное меню.
     """
     await state.clear()
     await show_main_menu_from_callback(call)
+    await call.answer()

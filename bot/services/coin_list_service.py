@@ -1,17 +1,17 @@
 # =================================================================================
 # Файл: bot/services/coin_list_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Сервис для управления списком криптовалют.
-# ИСПРАВЛЕНИЕ: Добавлен 'from __future__ import annotations' для решения
-# проблемы циклического импорта.
+# ИСПРАВЛЕНИЕ: Добавлен интеллектуальный нечеткий поиск монет по запросу.
 # =================================================================================
 
-from __future__ import annotations # <--- ИСПРАВЛЕНО
+from __future__ import annotations
 import json
 import logging
 from typing import List, Dict, Any, Optional
 
 import aiohttp
 from redis.asyncio import Redis
+from rapidfuzz import process, fuzz
 
 from bot.config.settings import CoinListServiceConfig, EndpointsConfig
 from bot.utils.models import Coin
@@ -38,7 +38,6 @@ class CoinListService:
         self._coin_list_url = f"{endpoints.coingecko_api_base}{endpoints.coins_list_endpoint}"
 
     async def _fetch_from_api(self) -> Optional[List[Dict[str, Any]]]:
-        """Загружает сырой список монет с API CoinGecko."""
         logger.info(f"Загрузка свежего списка монет с API: {self._coin_list_url}")
         try:
             async with self.http_session.get(self._coin_list_url) as response:
@@ -46,34 +45,24 @@ class CoinListService:
                 data = await response.json()
                 logger.info(f"Успешно загружено {len(data)} монет с API.")
                 return data
-        except aiohttp.ClientError as e:
-            logger.error(f"Ошибка HTTP клиента при загрузке списка монет: {e}")
-        except json.JSONDecodeError as e:
-            logger.error(f"Не удалось декодировать JSON ответ от API списка монет: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке списка монет: {e}")
+            return None
 
     async def _load_fallback_data(self) -> List[Dict[str, Any]]:
-        """Загружает список монет из локального резервного файла."""
         logger.warning(f"Попытка загрузить список монет из резервного файла: {self.config.fallback_file_path}")
         try:
             with open(self.config.fallback_file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             logger.info(f"Успешно загружено {len(data)} монет из резервного файла.")
             return data
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.error(f"Не удалось загрузить или разобрать резервный файл списка монет: {e}")
+        except Exception as e:
+            logger.error(f"Не удалось загрузить резервный файл списка монет: {e}")
             return []
 
     async def update_coin_list(self) -> None:
-        """
-        Обновляет список монет в кэше Redis.
-        """
         logger.info("Запуск планового обновления списка монет.")
-        coin_data = await self._fetch_from_api()
-
-        if coin_data is None:
-            logger.warning("Загрузка с API не удалась, попытка загрузки из резервного файла.")
-            coin_data = await self._load_fallback_data()
+        coin_data = await self._fetch_from_api() or await self._load_fallback_data()
 
         if coin_data:
             try:
@@ -87,23 +76,34 @@ class CoinListService:
             logger.error("Не удалось обновить список монет ни с API, ни из резервного файла.")
 
     async def get_all_coins(self) -> List[Coin]:
-        """
-        Получает список всех монет из кэша.
-        """
         cached_data = await self.redis.get(self._COIN_LIST_CACHE_KEY)
         if cached_data:
-            try:
-                coins_data = json.loads(cached_data)
-                return [Coin.model_validate(c) for c in coins_data]
-            except (json.JSONDecodeError, TypeError) as e:
-                logger.error(f"Ошибка декодирования кэшированного списка монет: {e}. Запускаю обновление.")
+            return [Coin.model_validate(c) for c in json.loads(cached_data)]
 
-        logger.warning("Кэш списка монет пуст или невалиден. Запускаю немедленное обновление.")
+        logger.warning("Кэш списка монет пуст. Запускаю немедленное обновление.")
         await self.update_coin_list()
-
         cached_data_after_update = await self.redis.get(self._COIN_LIST_CACHE_KEY)
         if cached_data_after_update:
             return [Coin.model_validate(c) for c in json.loads(cached_data_after_update)]
-
-        logger.error("Не удалось получить список монет даже после попытки обновления.")
         return []
+
+    async def find_coin_by_query(self, query: str) -> Optional[Coin]:
+        """Ищет наиболее подходящую монету по текстовому запросу (тикер или название)."""
+        query = query.lower().strip()
+        all_coins = await self.get_all_coins()
+        if not all_coins: return None
+
+        # 1. Сначала ищем точное совпадение по символу
+        for coin in all_coins:
+            if coin.symbol.lower() == query:
+                return coin
+
+        # 2. Если точного совпадения нет, используем нечеткий поиск по имени
+        choices = {coin.name: coin.id for coin in all_coins}
+        best_match = process.extractOne(query, choices.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.search_score_cutoff)
+        
+        if not best_match: return None
+            
+        found_name = best_match[0]
+        found_coin_id = choices[found_name]
+        return next((c for c in all_coins if c.id == found_coin_id), None)
