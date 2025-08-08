@@ -1,8 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Обрабатывает общие команды и текстовый ввод.
-# ИСПРАВЛЕНИЕ: Все обработчики переписаны для корректного приема
-# единого контейнера зависимостей 'deps'.
+# ИСПРАВЛЕНИЕ: Роутер переименован в 'router' для совместимости с main.py.
 # =================================================================================
 import logging
 from typing import Union, Dict, Any
@@ -21,7 +20,8 @@ from bot.utils.formatters import format_price_info
 from bot.utils.text_utils import sanitize_html
 from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS, get_referral_success_text
 
-public_router = Router(name=__name__)
+# ИСПРАВЛЕНО: Роутер переименован для единообразия
+router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
 # Кастомный фильтр для определения, когда нужно вызывать AI
@@ -38,8 +38,7 @@ class AITriggerFilter(BaseFilter):
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
 
-@public_router.message(CommandStart())
-# ИСПРАВЛЕНО: Принимаем единый объект deps
+@router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, deps: Deps):
     """
     Обработчик /start. Регистрирует пользователя и запускает онбординг.
@@ -47,7 +46,6 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     await state.clear()
     user = message.from_user
     
-    # ИСПРАВЛЕНО: Получаем сервисы из deps и используем правильный метод
     profile, is_new_user = await deps.user_service.get_or_create_user(user)
 
     if is_new_user and command.args:
@@ -80,13 +78,13 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
         )
     await state.set_state(CommonStates.main_menu)
 
-@public_router.message(Command("help"))
+@router.message(Command("help"))
 async def handle_help(message: Message):
     """Отправляет справочное сообщение по команде /help."""
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
 # --- УПРАВЛЕНИЕ ОНБОРДИНГОМ ЧЕРЕЗ FSM ---
-@public_router.callback_query(F.data.startswith("onboarding:"))
+@router.callback_query(F.data.startswith("onboarding:"))
 async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
     action = call.data.split(":")[1]
 
@@ -110,14 +108,12 @@ async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
 
 # --- ОБРАБОТКА ПРОИЗВОЛЬНОГО ТЕКСТА ---
 
-@public_router.message(F.text, ~F.text.startswith('/'))
-# ИСПРАВЛЕНО: Принимаем единый объект deps
+@router.message(F.text, ~F.text.startswith('/'))
 async def handle_text_message(message: Message, state: FSMContext, deps: Deps):
     """
     Многоуровневый обработчик текста: сначала ищет цену, если не находит - передает AI.
     """
-    # Уровень 1: Поиск цены
-    # Предполагается, что у price_service есть метод get_crypto_price
+    # Уровень 1: Поиск цены (закомментировано, так как эта логика в price_handler)
     # price_info = await deps.price_service.get_crypto_price(message.text.strip())
     # if price_info:
     #     text = format_price_info(price_info)
