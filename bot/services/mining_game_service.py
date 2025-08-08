@@ -57,6 +57,7 @@ class MiningGameService:
         logger.info("LUA-скрипты для MiningGameService успешно загружены.")
 
     async def get_user_game_profile(self, user_id: int) -> Dict[str, any]:
+        """Получает игровой профиль пользователя, создавая его при необходимости."""
         profile_key = self.keys.user_game_profile(user_id)
         if await self.redis.hsetnx(profile_key, "balance", "0.0"):
             default_tariff = self.settings.game.default_electricity_tariff
@@ -78,11 +79,13 @@ class MiningGameService:
         }
 
     async def get_user_asics(self, user_id: int) -> List[AsicMiner]:
+        """Получает список ASIC'ов в ангаре пользователя."""
         hangar_key = self.keys.user_hangar(user_id)
         asics_json = await self.redis.hvals(hangar_key)
         return [AsicMiner.model_validate_json(asic_str) for asic_str in asics_json]
 
     async def start_session(self, user_id: int, asic_id: str) -> str:
+        """Запускает майнинг-сессию для указанного ASIC."""
         if await self.redis.exists(self.keys.active_session(user_id)):
             return "❌ У вас уже есть активная сессия майнинга!"
         
@@ -111,6 +114,7 @@ class MiningGameService:
                 f"Она автоматически завершится через <b>{session_duration / 3600:.0f} часов</b>.")
 
     async def end_session(self, user_id: int) -> Optional[MiningSessionResult]:
+        """Завершает майнинг-сессию, вызывается планировщиком."""
         logger.info(f"Ending mining session for user {user_id}")
         event = self.events.get_random_event()
         
@@ -138,6 +142,7 @@ class MiningGameService:
         return result
 
     async def get_farm_and_stats_info(self, user_id: int) -> Tuple[str, str]:
+        """Возвращает текстовое описание фермы и статистики игрока."""
         session_data = await self.redis.hgetall(self.keys.active_session(user_id))
 
         if session_data:
@@ -163,6 +168,7 @@ class MiningGameService:
         return farm_info, stats_info
 
     async def process_withdrawal(self, user_id: int, user_profile: UserProfile) -> Tuple[str, bool]:
+        """Обрабатывает заявку на вывод средств."""
         profile_key = self.keys.user_game_profile(user_id)
         profile = await self.get_user_game_profile(user_id)
         balance = profile['balance']
@@ -186,6 +192,7 @@ class MiningGameService:
         return "✅ Ваша заявка на вывод принята! Администратор скоро свяжется с вами для уточнения деталей.", True
 
     async def get_electricity_menu(self, user_id: int) -> Tuple[str, InlineKeyboardMarkup]:
+        """Возвращает текст и клавиатуру для меню управления тарифами."""
         profile = await self.get_user_game_profile(user_id)
         current_tariff_name = profile['current_tariff']
         owned_tariffs = profile['owned_tariffs']
@@ -195,6 +202,7 @@ class MiningGameService:
         return text, keyboard
 
     async def select_tariff(self, user_id: int, tariff_name: str) -> str:
+        """Выбирает активный тариф для пользователя."""
         profile = await self.get_user_game_profile(user_id)
         if tariff_name in profile['owned_tariffs']:
             await self.redis.hset(self.keys.user_game_profile(user_id), "current_tariff", tariff_name)
@@ -203,6 +211,7 @@ class MiningGameService:
         return "❌ У вас нет доступа к этому тарифу."
 
     async def buy_tariff(self, user_id: int, tariff_name: str) -> str:
+        """Обрабатывает покупку нового тарифа."""
         profile_key = self.keys.user_game_profile(user_id)
         profile = await self.get_user_game_profile(user_id)
         if tariff_name in profile['owned_tariffs']:
@@ -239,6 +248,7 @@ class MiningGameService:
         return f"🎉 Поздравляем! Вы приобрели тариф '{tariff_name}'."
 
     async def get_current_electricity_price(self, tariff_name: str) -> float:
+        """Получает текущую цену на электроэнергию для тарифа."""
         price = await self.redis.hget(self.keys.electricity_market(), tariff_name)
         return float(price) if price else self.settings.game.electricity_tariffs[tariff_name].cost_per_kwh
         

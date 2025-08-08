@@ -1,12 +1,14 @@
 # =================================================================================
-# Файл: bot/keyboards/game_keyboards.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
+# Файл: bot/keyboards/game_keyboards.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Клавиатуры для раздела "Виртуальный Майнинг".
+# ИСПРАВЛЕНИЕ: Добавлены все недостающие клавиатуры.
 # =================================================================================
-from typing import List
+from typing import List, Dict
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup
 
 from bot.utils.models import AsicMiner
+from bot.config.settings import ElectricityTariff
 
 ASICS_PER_PAGE = 5
 
@@ -51,4 +53,22 @@ def get_hangar_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMark
         builder.row(*nav_buttons)
 
     builder.row(builder.button(text="⬅️ Назад в меню игры", callback_data="nav:mining_game"))
+    return builder.as_markup()
+
+def get_electricity_menu_keyboard(
+    all_tariffs: Dict[str, ElectricityTariff],
+    owned_tariffs: List[str],
+    current_tariff: str
+) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для управления тарифами на электроэнергию."""
+    builder = InlineKeyboardBuilder()
+    for name, tariff in all_tariffs.items():
+        if name in owned_tariffs:
+            status = " (Выбран)" if name == current_tariff else " (Доступен)"
+            builder.button(text=f"✅ {name}{status}", callback_data=f"game_tariff_select:{name}")
+        else:
+            builder.button(text=f"🛒 {name} ({tariff.unlock_price} монет)", callback_data=f"game_tariff_buy:{name}")
+    
+    builder.button(text="⬅️ Назад в меню игры", callback_data="nav:mining_game")
+    builder.adjust(1)
     return builder.as_markup()
