@@ -1,7 +1,8 @@
 # =================================================================================
 # Файл: bot/services/mining_game_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Главный сервис-оркестратор для игровой механики майнинга.
-# ИСПРАВЛЕНИЕ: Восстановлены все методы без сокращений и заглушек.
+# ИСПРАВЛЕНИЕ: Реализован паттерн асинхронной инициализации,
+# убрана заглушка для таблицы лидеров, исправлены ошибки декодирования.
 # =================================================================================
 
 import time
@@ -21,14 +22,13 @@ from bot.services.market_service import AsicMarketService
 from bot.services.event_service import MiningEventService
 from bot.services.achievement_service import AchievementService
 from bot.utils.models import MiningSessionResult, AsicMiner, UserProfile
-from bot.keyboards.mining_keyboards import get_electricity_menu_keyboard
+from bot.keyboards.game_keyboards import get_game_main_menu_keyboard, get_electricity_menu_keyboard
 from bot.utils.lua_scripts import LuaScripts
 from bot.utils.keys import KeyFactory
 
 logger = logging.getLogger(__name__)
 
 class MiningGameService:
-    # ИСПРАВЛЕНО: Конструктор теперь принимает 'redis' и корректные типы
     def __init__(self,
                  redis: redis.Redis,
                  scheduler: AsyncIOScheduler,
@@ -47,69 +47,84 @@ class MiningGameService:
         self.achievements = achievement_service
         self.bot = bot
         self.keys = KeyFactory
-        self.lua_start_session = self.redis.script_load(LuaScripts.START_MINING_SESSION)
-        self.lua_end_session = self.redis.script_load(LuaScripts.END_MINING_SESSION)
+        self.lua_start_session = None
+        self.lua_end_session = None
+
+    async def setup(self):
+        """Асинхронно загружает LUA-скрипты после создания объекта."""
+        self.lua_start_session = await self.redis.script_load(LuaScripts.START_MINING_SESSION)
+        self.lua_end_session = await self.redis.script_load(LuaScripts.END_MINING_SESSION)
+        logger.info("LUA-скрипты для MiningGameService успешно загружены.")
 
     async def get_user_game_profile(self, user_id: int) -> Dict[str, any]:
         profile_key = self.keys.user_game_profile(user_id)
-        if await self.redis.hsetnx(profile_key, "balance", 0.0):
+        if await self.redis.hsetnx(profile_key, "balance", "0.0"):
             default_tariff = self.settings.game.default_electricity_tariff
             await self.redis.hmset(profile_key, {
-                "total_earned": 0.0,
+                "total_earned": "0.0",
                 "current_tariff": default_tariff,
                 "owned_tariffs": default_tariff,
             })
         profile_data = await self.redis.hgetall(profile_key)
+        
+        balance = float(profile_data.get("balance", 0.0))
+        await self.redis.zadd(self.keys.game_leaderboard(), {str(user_id): balance})
+
         return {
-            "balance": float(profile_data.get(b"balance", 0.0)),
-            "total_earned": float(profile_data.get(b"total_earned", 0.0)),
-            "current_tariff": profile_data.get(b"current_tariff").decode('utf-8'),
-            "owned_tariffs": profile_data.get(b"owned_tariffs", b"").decode('utf-8').split(',')
+            "balance": balance,
+            "total_earned": float(profile_data.get("total_earned", 0.0)),
+            "current_tariff": profile_data.get("current_tariff"),
+            "owned_tariffs": profile_data.get("owned_tariffs", "").split(',')
         }
+
+    async def get_user_asics(self, user_id: int) -> List[AsicMiner]:
+        hangar_key = self.keys.user_hangar(user_id)
+        asics_json = await self.redis.hvals(hangar_key)
+        return [AsicMiner.model_validate_json(asic_str) for asic_str in asics_json]
 
     async def start_session(self, user_id: int, asic_id: str) -> str:
         if await self.redis.exists(self.keys.active_session(user_id)):
             return "❌ У вас уже есть активная сессия майнинга!"
+        
         hangar_key = self.keys.user_hangar(user_id)
         asic_data_json = await self.redis.hget(hangar_key, asic_id)
         if not asic_data_json:
             return "❌ У вас нет такого оборудования в ангаре."
+            
         asic = AsicMiner.model_validate_json(asic_data_json)
         profile = await self.get_user_game_profile(user_id)
-        current_tariff_cost = await self.get_current_electricity_price(profile['current_tariff'])
+        current_tariff_cost = self.settings.game.electricity_tariffs[profile['current_tariff']].cost_per_kwh
         session_duration = self.settings.game.session_duration_minutes * 60
         end_time = datetime.now(timezone.utc) + timedelta(seconds=session_duration)
+        
         keys = [self.keys.active_session(user_id), hangar_key, self.keys.global_stats()]
         args = [asic_id, asic.name, asic.power or 0, asic.profitability or 0, int(time.time()), end_time.isoformat(), profile['current_tariff'], current_tariff_cost]
+        
         if await self.redis.evalsha(self.lua_start_session, len(keys), *keys, *args) == 0:
             return "❌ Не удалось запустить сессию. Возможно, асик уже используется."
         
-        # Используем полный путь для apscheduler
         from bot.jobs.game_tasks import scheduled_end_session
         self.scheduler.add_job(scheduled_end_session, trigger='date', run_date=end_time, args=[user_id, self], id=f"end_session_for_{user_id}", replace_existing=True)
         
         logger.info(f"User {user_id} started session with ASIC ID {asic_id}. Ends at {end_time}.")
         return (f"✅ Сессия майнинга на <b>{asic.name}</b> запущена!\n\n"
-                f"Она автоматически завершится через <b>{session_duration / 3600:.0f} часов</b>. "
-                "Я пришлю уведомление с результатами и возможными событиями.")
+                f"Она автоматически завершится через <b>{session_duration / 3600:.0f} часов</b>.")
 
     async def end_session(self, user_id: int) -> Optional[MiningSessionResult]:
         logger.info(f"Ending mining session for user {user_id}")
         event = self.events.get_random_event()
-        session_key = self.keys.active_session(user_id)
-        profile_key = self.keys.user_game_profile(user_id)
-        hangar_key = self.keys.user_hangar(user_id)
-        keys = [session_key, profile_key, hangar_key, self.keys.global_stats()]
+        
+        keys = [self.keys.active_session(user_id), self.keys.user_game_profile(user_id), self.keys.user_hangar(user_id), self.keys.global_stats()]
         args = [
-            int(time.time()),
-            self.settings.game.session_duration_minutes * 60,
-            event.profit_multiplier if event else 1.0,
-            event.cost_multiplier if event else 1.0
+            int(time.time()), self.settings.game.session_duration_minutes * 60,
+            event.profit_multiplier if event else 1.0, event.cost_multiplier if event else 1.0
         ]
+        
         result_json = await self.redis.evalsha(self.lua_end_session, len(keys), *keys, *args)
         if not result_json:
             logger.warning(f"No active session found for user {user_id} during scheduled end.")
             return None
+            
         result_data = json.loads(result_json)
         result = MiningSessionResult(**result_data['result'])
         if event:
@@ -123,8 +138,7 @@ class MiningGameService:
         return result
 
     async def get_farm_and_stats_info(self, user_id: int) -> Tuple[str, str]:
-        session_data_raw = await self.redis.hgetall(self.keys.active_session(user_id))
-        session_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in session_data_raw.items()}
+        session_data = await self.redis.hgetall(self.keys.active_session(user_id))
 
         if session_data:
             end_time = datetime.fromisoformat(session_data['end_time_iso'])
@@ -135,8 +149,7 @@ class MiningGameService:
         else:
             farm_info = "🏠 <b>Ваша ферма пуста</b>\n\nОборудование простаивает в ангаре."
 
-        user_asics_json = await self.redis.hvals(self.keys.user_hangar(user_id))
-        user_asics = [AsicMiner.model_validate_json(asic_json) for asic_json in user_asics_json]
+        user_asics = await self.get_user_asics(user_id)
         if user_asics:
             farm_info += "\n\n🛠 <b>Ваш ангар (доступно):</b>\n" + "\n".join([f"• {asic.name}" for asic in user_asics])
         else:
@@ -230,9 +243,6 @@ class MiningGameService:
         return float(price) if price else self.settings.game.electricity_tariffs[tariff_name].cost_per_kwh
         
     async def get_leaderboard(self, top_n: int = 10) -> Dict[int, float]:
-        """Возвращает топ-N игроков по балансу."""
-        # Этот метод должен быть реализован с использованием Sorted Set в Redis
-        # для эффективности. Для примера, вернем заглушку.
-        # В реальном проекте здесь будет ZREVRANGE с ключа 'game:leaderboard'
-        logger.warning("Метод get_leaderboard использует заглушку. Для продакшена нужна реализация на Sorted Sets.")
-        return {12345: 15000.50, 67890: 12345.67, 11111: 9876.54}
+        """Возвращает топ-N игроков по балансу из Redis Sorted Set."""
+        leaderboard_raw = await self.redis.zrevrange(self.keys.game_leaderboard(), 0, top_n - 1, withscores=True)
+        return {int(user_id): score for user_id, score in leaderboard_raw}

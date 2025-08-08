@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/services/user_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/services/user_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Сервис для управления профилями и историей диалогов.
-# ИСПРАВЛЕНИЕ: Заглушки заменены на полноценную реализацию хранения
-# истории диалогов в Redis с автоматической обрезкой.
+# ИСПРАВЛЕНИЕ: Восстановлены все методы и добавлен get_user_profiles_bulk.
 # =================================================================================
 import logging
 import json
@@ -36,16 +35,13 @@ class UserService:
     async def register_user(self, user_id: int, full_name: str, username: Optional[str]) -> bool:
         """Регистрирует нового пользователя. Возвращает True, если пользователь новый."""
         profile_key = self.keys.user_profile(user_id)
-        # HSETNX возвращает 1, если поле было установлено (т.е. ключ не существовал)
         if await self.redis.hsetnx(profile_key, "user_id", user_id) == 0:
-            # Пользователь уже существует, просто обновим данные на всякий случай
             await self.redis.hset(profile_key, mapping={
                 "username": username or "N/A",
                 "full_name": full_name,
             })
             return False
         
-        # Пользователь новый, создаем полный профиль
         user_data_to_save = {
             "username": username or "N/A",
             "full_name": full_name,
@@ -83,32 +79,37 @@ class UserService:
 
     async def process_referral(self, new_user_id: int, referrer_id: int) -> bool:
         logger.info(f"Пользователь {new_user_id} пришел по ссылке от {referrer_id}")
-        # Пример: await self.redis.hincrbyfloat(self.keys.user_game_profile(referrer_id), "balance", 50.0)
         return True
 
-    # --- РЕАЛИЗАЦИЯ ИСТОРИИ ДИАЛОГОВ ---
-
     async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict]:
-        """
-        Получает историю переписки для AI-консультанта из Redis.
-        """
         history_key = self.keys.conversation_history(user_id, chat_id)
         raw_history = await self.redis.lrange(history_key, 0, self.history_max_size * 2 - 1)
-        
         history = [json.loads(msg) for msg in reversed(raw_history)]
         return history
 
     async def add_to_conversation_history(self, user_id: int, chat_id: int, user_text: str, ai_answer: str):
-        """
-        Добавляет пару "вопрос-ответ" в историю переписки в Redis.
-        """
         history_key = self.keys.conversation_history(user_id, chat_id)
-        
         user_message = {"role": "user", "parts": [{"text": user_text}]}
         model_message = {"role": "model", "parts": [{"text": ai_answer}]}
-        
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.lpush(history_key, json.dumps(model_message, ensure_ascii=False))
             pipe.lpush(history_key, json.dumps(user_message, ensure_ascii=False))
             pipe.ltrim(history_key, 0, self.history_max_size * 2 - 1)
             await pipe.execute()
+
+    async def get_user_profiles_bulk(self, user_ids: List[int]) -> Dict[int, UserProfile]:
+        """Массово получает профили пользователей одним запросом."""
+        if not user_ids:
+            return {}
+        
+        pipe = self.redis.pipeline()
+        for user_id in user_ids:
+            pipe.hgetall(self.keys.user_profile(user_id))
+        
+        results = await pipe.execute()
+        
+        profiles = {}
+        for user_id, user_data in zip(user_ids, results):
+            if user_data:
+                profiles[user_id] = UserProfile(**user_data)
+        return profiles

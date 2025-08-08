@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/keys.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/utils/keys.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Централизованная фабрика для генерации всех ключей Redis.
-# Этот подход устраняет дублирование и обеспечивает консистентность.
+# ИСПРАВЛЕНИЕ: Восстановлены все ключи и добавлен ключ для таблицы лидеров.
 # =================================================================================
 
 class KeyFactory:
@@ -46,6 +46,10 @@ class KeyFactory:
     @staticmethod
     def game_stats() -> str:
         return "game:stats"
+        
+    @staticmethod
+    def game_leaderboard() -> str:
+        return "game:leaderboard"
 
     # --- Рынок ---
     @staticmethod
