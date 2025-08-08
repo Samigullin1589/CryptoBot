@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Финальная, отказоустойчивая точка входа в приложение.
-# ИСПРАВЛЕНИЕ: Добавлено удаление вебхука для решения проблемы
-# TelegramConflictError на хостингах.
+# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
+# Описание: Финальная, отказоустойчивая точка входа в приложение,
+# поддерживающая асинхронную инициализацию всех зависимостей.
 # =================================================================================
 
 import asyncio
@@ -35,8 +34,6 @@ async def set_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="🚀 Перезапустить бота"),
         BotCommand(command="price", description="📈 Узнать курс криптовалюты"),
-        BotCommand(command="market", description="📊 Обзор рынка"),
-        BotCommand(command="news", description="📰 Последние новости"),
     ]
     await bot.set_my_commands(commands, BotCommandScopeDefault())
     logger.info("Команды бота успешно установлены.")
@@ -46,14 +43,11 @@ async def on_startup(bot: Bot, deps: Deps):
     """Выполняет действия при старте бота."""
     logger.info("Запуск процедур on_startup...")
     await set_bot_commands(bot)
-
     setup_jobs(deps.scheduler, deps)
     deps.scheduler.start()
     logger.info("Планировщик задач запущен.")
-
     await deps.coin_list_service.update_coin_list()
     logger.info("Первоначальные данные успешно загружены.")
-    
     if deps.admin_service:
         await deps.admin_service.notify_admins("✅ Бот успешно запущен!")
 
@@ -61,18 +55,12 @@ async def on_startup(bot: Bot, deps: Deps):
 async def on_shutdown(deps: Deps):
     """Выполняет действия при остановке бота, гарантируя чистое закрытие ресурсов."""
     logger.info("Запуск процедур on_shutdown...")
-    
     if hasattr(deps, 'admin_service') and deps.admin_service:
         await deps.admin_service.notify_admins("❗️ Бот останавливается!")
-
     if deps.scheduler and deps.scheduler.running:
         deps.scheduler.shutdown(wait=False)
-        logger.info("Планировщик задач остановлен.")
-
     if deps.redis_pool:
         await deps.redis_pool.aclose()
-        logger.info("Соединение с Redis закрыто.")
-    
     logger.info("Бот успешно остановлен.")
 
 
@@ -110,8 +98,6 @@ async def main():
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
 
-        # ИСПРАВЛЕНО: Удаляем вебхук и все ожидающие обновления перед запуском.
-        # Это решает проблему 'TelegramConflictError' на хостингах.
         await bot.delete_webhook(drop_pending_updates=True)
 
         logger.info("Запуск процесса опроса Telegram...")
