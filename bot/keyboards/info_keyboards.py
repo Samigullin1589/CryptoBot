@@ -1,32 +1,24 @@
-# ===============================================================
-# Файл: bot/keyboards/info_keyboards.py (НОВЫЙ ФАЙЛ)
-# Описание: Функции для создания инлайн-клавиатур для
-# информационных разделов (курсы, викторина).
-# ===============================================================
+# =================================================================================
+# Файл: bot/keyboards/info_keyboards.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Клавиатуры для информационных разделов, таких как курсы валют.
+# ИСПРАВЛЕНИЕ: Удалена зависимость от несуществующей конфигурации 'settings.mining'.
+# =================================================================================
+
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup
 
-from bot.config.settings import settings # Для доступа к списку популярных тикеров
-
 def get_price_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для меню запроса курса."""
+    """Создает клавиатуру для меню запроса цен."""
     builder = InlineKeyboardBuilder()
     
-    # Добавляем кнопки для популярных тикеров из настроек
-    for ticker in settings.mining.popular_tickers:
-        builder.button(text=ticker, callback_data=f"price:{ticker}")
+    # Кнопки для популярных монет определены прямо здесь для простоты и надежности
+    builder.button(text="BTC", callback_data="price:bitcoin")
+    builder.button(text="ETH", callback_data="price:ethereum")
+    builder.button(text="SOL", callback_data="price:solana")
+    builder.button(text="BNB", callback_data="price:binancecoin")
     
-    builder.button(text="Другая монета...", callback_data="price:other")
+    # Кнопка для возврата в главное меню
     builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
     
-    # Адаптивная раскладка: по 3 популярных тикера в ряд
-    builder.adjust(3, 3, 1, 1) 
-    return builder.as_markup()
-
-def get_quiz_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для викторины (для кнопки 'Следующий вопрос')."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔄 Следующий вопрос", callback_data="menu_quiz")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_main_menu")
-    builder.adjust(1)
+    builder.adjust(4, 1) # 4 кнопки монет в ряд, 1 кнопка назад
     return builder.as_markup()

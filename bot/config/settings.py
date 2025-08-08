@@ -1,7 +1,6 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлен параметр history_max_size для AI-консультанта.
 # =================================================================================
 
 import json
@@ -25,7 +24,7 @@ class AIConfig(BaseModel):
     flash_model_name: str = "gemini-1.5-flash-latest"
     default_temperature: float = 0.5
     max_retries: int = 5
-    history_max_size: int = 10 # "Память" AI - 10 пар вопрос-ответ
+    history_max_size: int = 10
 
 class ThrottlingConfig(BaseModel):
     user_rate_limit: float = 2.0
@@ -112,8 +111,6 @@ class MiningGameServiceConfig(BaseModel):
         "Промышленный": {"cost_per_kwh": 0.07, "unlock_price": 5000},
         "Зеленый": {"cost_per_kwh": 0.05, "unlock_price": 25000},
     }
-
-# --- Главная модель настроек ---
 
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
