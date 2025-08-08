@@ -1,6 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
+# ИСПРАВЛЕНИЕ: Восстановлены все определения моделей без сокращений.
 # =================================================================================
 
 import json
@@ -57,6 +58,7 @@ class NewsServiceConfig(BaseModel):
 
 class EndpointsConfig(BaseModel):
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
+    coingecko_api_pro_base: HttpUrl = "https://pro-api.coingecko.com/api/v3"
     coins_list_endpoint: str = "/coins/list"
     coins_markets_endpoint: str = "/coins/markets"
     simple_price_endpoint: str = "/simple/price"
@@ -112,11 +114,14 @@ class MiningGameServiceConfig(BaseModel):
         "Зеленый": {"cost_per_kwh": 0.05, "unlock_price": 25000},
     }
 
+# --- Главная модель настроек ---
+
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
     ADMIN_USER_IDS: Any
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
+    COINGECKO_API_KEY: Optional[SecretStr] = None
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
     OPENAI_API_KEY: Optional[SecretStr] = None
