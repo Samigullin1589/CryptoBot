@@ -1,8 +1,7 @@
-# bot/utils/ui_helpers.py
 # =================================================================================
-# Файл: bot/utils/ui_helpers.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
+# Файл: bot/utils/ui_helpers.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Вспомогательные функции для работы с интерфейсом пользователя.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая функция get_message_and_chat_id.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая функция show_main_menu_from_callback.
 # =================================================================================
 
 import logging
@@ -10,6 +9,9 @@ from typing import Union, Tuple
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup
+
+# Импортируем клавиатуру главного меню
+from bot.keyboards.keyboards import get_main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -21,19 +23,8 @@ async def edit_or_send_message(
 ) -> Message:
     """
     Универсальная функция для отправки или редактирования сообщения.
-
-    Пытается отредактировать существующее сообщение. Если это невозможно
-    (например, это не callback-запрос или сообщение не изменилось),
-    отправляет новое сообщение.
-
-    :param event: Объект CallbackQuery или Message.
-    :param text: Текст сообщения.
-    :param keyboard: Клавиатура для сообщения.
-    :param kwargs: Дополнительные параметры для send_message или edit_text.
-    :return: Отправленное или отредактированное сообщение.
     """
     if isinstance(event, CallbackQuery):
-        # Если это CallbackQuery, всегда есть message для редактирования
         try:
             return await event.message.edit_text(
                 text=text,
@@ -41,34 +32,38 @@ async def edit_or_send_message(
                 **kwargs
             )
         except TelegramBadRequest as e:
-            # Эта ошибка возникает, если текст и клавиатура не изменились.
-            # В этом случае мы просто отвечаем на callback, чтобы убрать "часики".
             if "message is not modified" in e.message:
                 await event.answer()
                 return event.message
-            # Если ошибка другая, логируем и отправляем новое сообщение
             logger.error(f"Ошибка при редактировании сообщения: {e}")
-            # Отправляем новое сообщение, так как редактирование не удалось
             return await event.message.answer(
                 text=text,
                 reply_markup=keyboard,
                 **kwargs
             )
     elif isinstance(event, Message):
-        # Если это обычное сообщение, просто отправляем ответ
         return await event.answer(
             text=text,
             reply_markup=keyboard,
             **kwargs
         )
 
+# ИСПРАВЛЕНО: Добавлена недостающая функция
+async def show_main_menu_from_callback(call: CallbackQuery):
+    """
+    Редактирует сообщение из CallbackQuery, отображая главное меню.
+    """
+    text = "👋 Выберите одну из опций в меню ниже."
+    keyboard = get_main_menu_keyboard()
+    await edit_or_send_message(call, text, keyboard)
+    await call.answer()
+
+
 async def get_message_and_chat_id(update: Union[CallbackQuery, Message]) -> Tuple[Message, int]:
     """
     Извлекает объекты сообщения и ID чата из CallbackQuery или Message.
-    Автоматически отвечает на CallbackQuery, чтобы убрать "часики".
     """
     if isinstance(update, CallbackQuery):
         await update.answer()
         return update.message, update.message.chat.id
     return update, update.chat.id
-
