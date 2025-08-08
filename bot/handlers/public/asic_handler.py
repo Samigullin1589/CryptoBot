@@ -1,8 +1,8 @@
-# ===============================================================
-# Файл: bot/handlers/public/asic_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ОКОНЧАТЕЛЬНАЯ)
-# Описание: "Тонкий" хэндлер для раздела ASIC. Делегирует всю
-# логику сервисам и управляет FSM для калькулятора.
-# ===============================================================
+# =================================================================================
+# Файл: bot/handlers/public/asic_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Полнофункциональный обработчик для раздела ASIC,
+# интегрированный в DI-архитектуру.
+# =================================================================================
 import logging
 from datetime import datetime, timezone
 from typing import Union
@@ -11,8 +11,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from bot.services.asic_service import AsicService
-from bot.services.user_service import UserService
+from bot.utils.dependencies import Deps
 from bot.states.asic_states import AsicExplorerStates
 from bot.keyboards.asic_keyboards import get_top_asics_keyboard, get_asic_passport_keyboard
 from bot.utils.formatters import format_asic_passport
@@ -22,18 +21,16 @@ router = Router(name="asic_handler")
 
 # --- ОСНОВНЫЕ ОБРАБОТЧИКИ ---
 
-async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, asic_service: AsicService, user_service: UserService):
+async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
     """Отображает страницу с топом ASIC-майнеров, используя FSM для хранения страницы."""
     user_id = update.from_user.id
     fsm_data = await state.get_data()
     page = fsm_data.get("page", 1)
 
-    # Получаем персональную цену э/э
-    user_profile = await user_service.get_or_create_user(user_id, update.from_user.full_name, update.from_user.username)
+    user_profile, _ = await deps.user_service.get_or_create_user(update.from_user)
     electricity_cost = user_profile.electricity_cost
     
-    # Сервис сам рассчитывает чистую прибыль
-    top_miners, last_update_time = await asic_service.get_top_asics(electricity_cost)
+    top_miners, last_update_time = await deps.asic_service.get_top_asics(electricity_cost)
 
     if not top_miners:
         error_text = "😕 Не удалось получить данные о майнерах. База данных пуста или источники недоступны. Попробуйте позже."
@@ -55,23 +52,23 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
 
 @router.message(F.text == "⚙️ Топ ASIC")
 @router.callback_query(F.data == "nav:asics")
-async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, asic_service: AsicService, user_service: UserService):
+async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
     """Входная точка для просмотра топа ASIC."""
     await state.set_state(AsicExplorerStates.showing_top)
     await state.update_data(page=1)
     if isinstance(update, CallbackQuery): await update.answer()
-    await show_top_asics_page(update, state, asic_service, user_service)
+    await show_top_asics_page(update, state, deps)
 
 @router.callback_query(F.data.startswith("asic_page:"), AsicExplorerStates.showing_top)
-async def top_asics_paginator(call: CallbackQuery, state: FSMContext, asic_service: AsicService, user_service: UserService):
+async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):
     """Обрабатывает пагинацию в меню топа ASIC."""
     page = int(call.data.split(":")[1])
     await state.update_data(page=page)
     await call.answer()
-    await show_top_asics_page(call, state, asic_service, user_service)
+    await show_top_asics_page(call, state, deps)
 
 @router.callback_query(F.data.startswith("asic_passport:"), AsicExplorerStates.showing_top)
-async def asic_passport_handler(call: CallbackQuery, state: FSMContext, asic_service: AsicService, user_service: UserService):
+async def asic_passport_handler(call: CallbackQuery, state: FSMContext, deps: Deps):
     """Отображает паспорт ASIC-майнера."""
     await call.answer()
     normalized_name = call.data.split(":", 1)[1]
@@ -79,8 +76,8 @@ async def asic_passport_handler(call: CallbackQuery, state: FSMContext, asic_ser
     fsm_data = await state.get_data()
     page = fsm_data.get("page", 1)
 
-    user_profile = await user_service.get_user_profile(call.from_user.id)
-    asic = await asic_service.find_asic_by_normalized_name(normalized_name, user_profile.electricity_cost)
+    user_profile, _ = await deps.user_service.get_or_create_user(call.from_user)
+    asic = await deps.asic_service.find_asic_by_normalized_name(normalized_name, user_profile.electricity_cost)
     
     if not asic:
         await call.answer("😕 Модель не найдена в базе.", show_alert=True)
@@ -105,7 +102,7 @@ async def prompt_for_electricity_cost(call: CallbackQuery, state: FSMContext):
     )
 
 @router.message(AsicExplorerStates.prompt_electricity_cost)
-async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService, user_service: UserService):
+async def process_electricity_cost(message: Message, state: FSMContext, deps: Deps):
     """Обрабатывает введенную стоимость и обновляет список."""
     try:
         cost_str = message.text.replace(',', '.').strip()
@@ -116,9 +113,8 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
         await message.reply("❌ <b>Ошибка.</b> Введите корректное число, например: <code>0.05</code>")
         return
 
-    await user_service.set_user_electricity_cost(message.from_user.id, cost)
+    await deps.user_service.set_user_electricity_cost(message.from_user.id, cost)
     await message.answer(f"✅ Ваша цена электроэнергии <b>${cost:.4f}/кВт·ч</b> сохранена! Пересчитываю топ...")
     
     await state.set_state(AsicExplorerStates.showing_top)
-    # Используем message как update, чтобы отправить новое сообщение со списком
-    await show_top_asics_page(message, state, asic_service, user_service)
+    await show_top_asics_page(message, state, deps)

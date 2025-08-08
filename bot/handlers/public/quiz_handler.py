@@ -1,61 +1,51 @@
-# ===============================================================
-# Файл: bot/handlers/public/quiz_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
-# Описание: Обработчик для крипто-викторины с разделенной логикой.
-# ===============================================================
+# =================================================================================
+# Файл: bot/handlers/public/quiz_handler.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
+# Описание: Обрабатывает раздел "Викторина".
+# =================================================================================
 import logging
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.exceptions import TelegramBadRequest
+from bot.utils.dependencies import Deps
+from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
 
-from bot.services.quiz_service import QuizService
-from bot.keyboards.quiz_keyboards import get_quiz_keyboard
-
+router = Router(name=__name__)
 logger = logging.getLogger(__name__)
-router = Router(name="quiz_handler")
-
-async def _send_quiz_poll(message: Message, quiz_service: QuizService):
-    """
-    Общая функция для генерации и отправки вопроса викторины.
-    """
-    temp_message = await message.answer("⏳ Генерирую интересный вопрос...")
-
-    question_data = await quiz_service.get_random_question()
-    
-    await temp_message.delete()
-    
-    if not question_data:
-        await message.answer(
-            "😔 Не удалось сгенерировать вопрос. Попробуйте, пожалуйста, позже.",
-            reply_markup=get_quiz_keyboard()
-        )
-        return
-
-    question, options, correct_option_id = question_data
-    
-    await message.answer_poll(
-        question=question, 
-        options=options, 
-        type='quiz',
-        correct_option_id=correct_option_id, 
-        is_anonymous=False,
-        reply_markup=get_quiz_keyboard()
-    )
 
 @router.callback_query(F.data == "nav:quiz")
-async def handle_quiz_callback(call: CallbackQuery, quiz_service: QuizService):
-    """Обрабатывает запуск викторины по нажатию на инлайн-кнопку."""
-    # Удаляем предыдущее сообщение с опросом для чистоты интерфейса
-    try:
-        await call.message.delete()
-    except TelegramBadRequest as e:
-        logger.warning(f"Could not delete quiz message: {e}")
+async def handle_quiz_start(call: CallbackQuery, deps: Deps):
+    await call.answer("Генерирую вопрос...")
+    question_data = await deps.quiz_service.get_random_question()
 
-    # call.message здесь - это сообщение, к которому была привязана кнопка
-    await _send_quiz_poll(call.message, quiz_service)
+    if not question_data:
+        await call.message.edit_text("🧠 Не удалось сгенерировать вопрос для викторины. Попробуйте позже.", reply_markup=get_back_to_main_menu_keyboard())
+        return
 
+    question, options, correct_index = question_data
+    
+    builder = InlineKeyboardBuilder()
+    for i, option_text in enumerate(options):
+        # В callback_data передаем 1, если ответ верный, и 0, если нет
+        is_correct = 1 if i == correct_index else 0
+        builder.button(text=option_text, callback_data=f"quiz_answer:{is_correct}")
+    
+    builder.adjust(1) # Каждая кнопка в новом ряду
+    
+    await call.message.edit_text(f"🧠 <b>Вопрос викторины:</b>\n\n{question}", reply_markup=builder.as_markup())
 
-@router.message(F.text == "🧠 Викторина")
-async def handle_quiz_message(message: Message, quiz_service: QuizService):
-    """Обрабатывает запуск викторины по текстовой команде из меню."""
-    await _send_quiz_poll(message, quiz_service)
+@router.callback_query(F.data.startswith("quiz_answer:"))
+async def handle_quiz_answer(call: CallbackQuery):
+    is_correct = int(call.data.split(":")[1])
+    
+    next_keyboard = InlineKeyboardBuilder()
+    next_keyboard.button(text="🔄 Следующий вопрос", callback_data="nav:quiz")
+    next_keyboard.button(text="🏠 Главное меню", callback_data="back_to_main_menu")
+    next_keyboard.adjust(1)
+
+    if is_correct:
+        await call.message.edit_text(f"{call.message.text}\n\n✅ <b>Правильно!</b>", reply_markup=next_keyboard.as_markup())
+    else:
+        await call.message.edit_text(f"{call.message.text}\n\n❌ <b>Неверно!</b> Попробуйте еще раз.", reply_markup=next_keyboard.as_markup())
+    
+    await call.answer()
