@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ИСПРАВЛЕНИЕ: Восстановлены все определения моделей без сокращений.
+# Включает все необходимые модели для полной сборки проекта.
 # =================================================================================
 
 import json
@@ -64,6 +64,7 @@ class EndpointsConfig(BaseModel):
     simple_price_endpoint: str = "/simple/price"
     blockchain_info_hashrate: HttpUrl = "https://api.blockchain.info/q/hashrate"
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
+    fear_and_greed_api: HttpUrl = "https://api.alternative.me/fng/"
     whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
     asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
     minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
