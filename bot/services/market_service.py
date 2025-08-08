@@ -1,7 +1,8 @@
 # =================================================================================
 # Файл: bot/services/market_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Сервис, управляющий рынком ASIC-майнеров.
-# ИСПРАВЛЕНИЕ: Конструктор приведен в полное соответствие с DI-контейнером.
+# ИСПРАВЛЕНИЕ: Реализован паттерн асинхронной инициализации для
+# корректной и "чистой" загрузки LUA-скриптов.
 # =================================================================================
 
 import json
@@ -22,7 +23,6 @@ from bot.utils.keys import KeyFactory
 logger = logging.getLogger(__name__)
 
 class AsicMarketService:
-    # ИСПРАВЛЕНО: Конструктор теперь принимает 'redis'
     def __init__(self,
                  redis: redis.Redis,
                  settings: Settings,
@@ -33,9 +33,16 @@ class AsicMarketService:
         self.achievements = achievement_service
         self.bot = bot
         self.keys = KeyFactory
-        self.lua_list_item = self.redis.script_load(LuaScripts.LIST_ITEM_FOR_SALE)
-        self.lua_cancel_listing = self.redis.script_load(LuaScripts.CANCEL_LISTING)
-        self.lua_buy_item = self.redis.script_load(LuaScripts.BUY_ITEM_FROM_MARKET)
+        self.lua_list_item = None
+        self.lua_cancel_listing = None
+        self.lua_buy_item = None
+
+    async def setup(self):
+        """Асинхронно загружает LUA-скрипты после создания объекта."""
+        self.lua_list_item = await self.redis.script_load(LuaScripts.LIST_ITEM_FOR_SALE)
+        self.lua_cancel_listing = await self.redis.script_load(LuaScripts.CANCEL_LISTING)
+        self.lua_buy_item = await self.redis.script_load(LuaScripts.BUY_ITEM_FROM_MARKET)
+        logger.info("LUA-скрипты для AsicMarketService успешно загружены.")
 
     async def list_asic_for_sale(self, user_id: int, asic_id: str, price: float) -> Optional[str]:
         if price <= 0:
@@ -72,15 +79,15 @@ class AsicMarketService:
     async def buy_asic(self, buyer_id: int, listing_id: str) -> str:
         commission_rate = self.settings.game.market_commission_rate
         
-        seller_id_bytes = await self.redis.hget(self.keys.market_listing_data(listing_id), "seller_id")
-        seller_id = int(seller_id_bytes) if seller_id_bytes else None
+        seller_id_str = await self.redis.hget(self.keys.market_listing_data(listing_id), "seller_id")
+        seller_id = int(seller_id_str) if seller_id_str else None
 
         keys = [
             self.keys.market_listing_data(listing_id),
             self.keys.market_listings_by_price(),
             self.keys.user_game_profile(buyer_id),
-            self.keys.user_hangar(buyer_id), # Ключ ангара покупателя
-            self.keys.user_game_profile(seller_id) if seller_id else "nil" # Ключ профиля продавца
+            self.keys.user_hangar(buyer_id),
+            self.keys.user_game_profile(seller_id) if seller_id else "nil"
         ]
         args = [listing_id, buyer_id, seller_id or 0, commission_rate]
         
@@ -89,7 +96,6 @@ class AsicMarketService:
         if result_code == 1:
             logger.info(f"User {buyer_id} successfully bought listing {listing_id}.")
             if seller_id:
-                # Используем process_static_event для событий, инициированных пользователем
                 unlocked_ach = await self.achievements.process_static_event(seller_id, "asic_sold")
                 if unlocked_ach:
                     try:
@@ -118,14 +124,13 @@ class AsicMarketService:
 
         pipe = self.redis.pipeline()
         for listing_id in listing_ids:
-            pipe.hgetall(self.keys.market_listing_data(listing_id.decode('utf-8')))
+            pipe.hgetall(self.keys.market_listing_data(listing_id))
         
         listings_data = await pipe.execute()
         
         market_listings = []
         for data in listings_data:
             if data:
-                str_data = {k.decode('utf-8'): v.decode('utf-8') for k, v in data.items()}
-                market_listings.append(MarketListing(**str_data))
+                market_listings.append(MarketListing(**data))
         
         return market_listings
