@@ -1,15 +1,18 @@
 # =================================================================================
-# Файл: bot/services/coin_list_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/services/coin_list_service.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
 # Описание: Сервис для управления списком криптовалют.
-# ИСПРАВЛЕНИЕ: Добавлен интеллектуальный нечеткий поиск монет по запросу.
+# ИСПРАВЛЕНИЕ: Добавлен механизм повторных запросов (backoff) для
+# борьбы с ошибкой 429 (Too Many Requests) от API.
 # =================================================================================
 
 from __future__ import annotations
 import json
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 
 import aiohttp
+import backoff
 from redis.asyncio import Redis
 from rapidfuzz import process, fuzz
 
@@ -18,10 +21,10 @@ from bot.utils.models import Coin
 
 logger = logging.getLogger(__name__)
 
+# Определяем ошибки, при которых стоит повторять запрос
+RETRYABLE_EXCEPTIONS = (aiohttp.ClientError, asyncio.TimeoutError)
+
 class CoinListService:
-    """
-    Управляет получением, кэшированием и предоставлением списка криптовалют.
-    """
     _COIN_LIST_CACHE_KEY = "cache:coin_list"
 
     def __init__(
@@ -37,17 +40,17 @@ class CoinListService:
         self.endpoints = endpoints
         self._coin_list_url = f"{endpoints.coingecko_api_base}{endpoints.coins_list_endpoint}"
 
+    # ИСПРАВЛЕНО: Добавлен декоратор backoff для автоматических ретраев
+    @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=5, logger=logger)
     async def _fetch_from_api(self) -> Optional[List[Dict[str, Any]]]:
+        """Загружает сырой список монет с API CoinGecko с ретраями."""
         logger.info(f"Загрузка свежего списка монет с API: {self._coin_list_url}")
-        try:
-            async with self.http_session.get(self._coin_list_url) as response:
-                response.raise_for_status()
-                data = await response.json()
-                logger.info(f"Успешно загружено {len(data)} монет с API.")
-                return data
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке списка монет: {e}")
-            return None
+        async with self.http_session.get(self._coin_list_url, timeout=15) as response:
+            # Вызовет исключение для кодов 4xx/5xx, которое перехватит backoff
+            response.raise_for_status()
+            data = await response.json()
+            logger.info(f"Успешно загружено {len(data)} монет с API.")
+            return data
 
     async def _load_fallback_data(self) -> List[Dict[str, Any]]:
         logger.warning(f"Попытка загрузить список монет из резервного файла: {self.config.fallback_file_path}")
@@ -62,7 +65,14 @@ class CoinListService:
 
     async def update_coin_list(self) -> None:
         logger.info("Запуск планового обновления списка монет.")
-        coin_data = await self._fetch_from_api() or await self._load_fallback_data()
+        try:
+            coin_data = await self._fetch_from_api()
+        except Exception as e:
+            logger.error(f"Загрузка с API не удалась после всех попыток: {e}")
+            coin_data = None
+
+        if coin_data is None:
+            coin_data = await self._load_fallback_data()
 
         if coin_data:
             try:
@@ -93,12 +103,10 @@ class CoinListService:
         all_coins = await self.get_all_coins()
         if not all_coins: return None
 
-        # 1. Сначала ищем точное совпадение по символу
         for coin in all_coins:
             if coin.symbol.lower() == query:
                 return coin
 
-        # 2. Если точного совпадения нет, используем нечеткий поиск по имени
         choices = {coin.name: coin.id for coin in all_coins}
         best_match = process.extractOne(query, choices.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.search_score_cutoff)
         
