@@ -62,6 +62,7 @@ class EndpointsConfig(BaseModel):
     coins_list_endpoint: str = "/coins/list"
     coins_markets_endpoint: str = "/coins/markets"
     simple_price_endpoint: str = "/simple/price"
+    cryptocompare_price_api: HttpUrl = "https://min-api.cryptocompare.com/data/pricemulti"
     blockchain_info_hashrate: HttpUrl = "https://api.blockchain.info/q/hashrate"
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
     fear_and_greed_api: HttpUrl = "https://api.alternative.me/fng/"
