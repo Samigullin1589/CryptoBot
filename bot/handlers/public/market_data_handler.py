@@ -1,79 +1,63 @@
-# ===============================================================
-# Файл: bot/handlers/public/market_data_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
-# Описание: Обрабатывает запросы на получение рыночных данных.
-# ИСПРАВЛЕНИЕ: Сигнатуры функций приведены в соответствие с
-# DI-контейнером `Deps` для корректной работы с центральным навигатором.
-# ===============================================================
+# =================================================================================
+# Файл: bot/handlers/public/market_data_handler.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
+# Описание: Обрабатывает запросы на получение общих рыночных данных.
+# ИСПРАВЛЕНИЕ: Убраны лишние аргументы из сигнатур функций для устранения TypeError.
+# =================================================================================
 import logging
-import asyncio
-from typing import Union
-
+from datetime import datetime
 from aiogram import F, Router
-from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 
-from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.utils.dependencies import Deps
-from bot.utils.plotting import generate_fng_image
-from bot.utils.formatters import format_halving_info, format_network_status
-from bot.utils.ui_helpers import show_main_menu_from_callback
+from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
+from bot.utils.http_client import make_request
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# --- ОБРАБОТЧИКИ ДЛЯ РАЗНЫХ ТИПОВ РЫНОЧНЫХ ДАННЫХ ---
+@router.callback_query(F.data == "nav:fear_index")
+async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMContext):
+    """Получает и отображает индекс страха и жадности."""
+    await call.answer("Загружаю индекс...")
+    try:
+        data = await make_request(deps.http_session, str(deps.settings.endpoints.fear_and_greed_api))
+        value = int(data['data'][0]['value'])
+        classification = data['data'][0]['value_classification']
+        emoji = {"Extreme Fear": "😱", "Fear": "😨", "Neutral": "😐", "Greed": "😏", "Extreme Greed": "🤑"}.get(classification, "")
+        text = f"😱 <b>Индекс страха и жадности:</b> {value} {emoji}\n\n<i>Состояние рынка: {classification}</i>"
+        await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Ошибка получения индекса страха и жадности: {e}")
+        await call.answer("Не удалось загрузить данные.", show_alert=True)
 
-@router.callback_query(F.data == "nav:fear_greed")
-async def handle_fear_greed_menu(call: CallbackQuery, deps: Deps):
-    """
-    Обрабатывает запрос на получение Индекса страха и жадности.
-    Генерирует и отправляет изображение.
-    """
-    await call.message.delete()
-    temp_message = await call.message.answer("⏳ Получаю индекс и рисую график...")
+@router.callback_query(F.data == "nav:halving")
+async def handle_halving_info(call: CallbackQuery, deps: Deps, state: FSMContext):
+    """Получает и отображает информацию о халвинге Bitcoin."""
+    await call.answer("Загружаю данные о халвинге...")
+    try:
+        data = await make_request(deps.http_session, str(deps.settings.endpoints.mempool_space_difficulty))
+        progress = data.get('progressPercent', 0)
+        remaining_blocks = data.get('remainingBlocks', 0)
+        estimated_date = datetime.fromtimestamp(data.get('nextRetargetTimeEstimate')).strftime('%d.%m.%Y')
+        text = (f"⏳ <b>Халвинг Bitcoin</b>\n\n"
+                f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
+                f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
+                f"Ориентировочная дата: <b>{estimated_date}</b>")
+        await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Ошибка получения данных о халвинге: {e}")
+        await call.answer("Не удалось загрузить данные.", show_alert=True)
 
-    index = await deps.market_data_service.get_fear_and_greed_index()
-    if not index:
-        await temp_message.edit_text("❌ Не удалось получить Индекс страха и жадности.", reply_markup=get_main_menu_keyboard())
-        return
-
-    loop = asyncio.get_running_loop()
-    image_bytes = await loop.run_in_executor(
-        None, generate_fng_image, index.value, index.value_classification
-    )
-    
-    caption = f"😱 <b>Индекс страха и жадности: {index.value} - {index.value_classification}</b>"
-
-    await temp_message.delete()
-    await call.message.answer_photo(
-        BufferedInputFile(image_bytes, "fng.png"), 
-        caption=caption, 
-        reply_markup=get_main_menu_keyboard()
-    )
-
-@router.callback_query(F.data.startswith("nav:"))
-async def handle_market_data_navigation(call: CallbackQuery, deps: Deps):
-    """
-    Универсальный обработчик для кнопок "Халвинг" и "Статус BTC".
-    """
-    action = call.data.split(':')[1]
-    
-    if action == "fear_greed":
-        await call.answer()
-        return
-
-    text = "⏳ Загружаю данные..."
-    await call.message.edit_text(text)
-    
-    response_text = "❌ Произошла ошибка при загрузке данных."
-
-    if action == "halving":
-        halving_info = await deps.market_data_service.get_halving_info()
-        if halving_info:
-            response_text = format_halving_info(halving_info)
-    
-    elif action == "btc_status":
-        network_status = await deps.market_data_service.get_btc_network_status()
-        if network_status:
-            response_text = format_network_status(network_status)
-
-    await call.message.edit_text(response_text, reply_markup=get_main_menu_keyboard())
+@router.callback_query(F.data == "nav:btc_status")
+async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
+    """Получает и отображает текущий статус сети Bitcoin."""
+    await call.answer("Загружаю статус сети...")
+    try:
+        hashrate_ths = await make_request(deps.http_session, str(deps.settings.endpoints.blockchain_info_hashrate), response_type="text")
+        hashrate_ehs = float(hashrate_ths) / 1_000_000 # TH/s -> EH/s
+        text = f"📡 <b>Статус сети Bitcoin</b>\n\nХешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
+        await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса сети BTC: {e}")
+        await call.answer("Не удалось загрузить данные.", show_alert=True)

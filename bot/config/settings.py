@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С CRYPTOCOMPARE)
+# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С РАБОЧИМИ RSS И РЕЗЕРВНЫМ API)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Интегрирован CryptoCompare как резервный API-провайдер.
+# ИСПРАВЛЕНИЕ: Обновлены RSS-ленты, добавлен CryptoCompare как резервный API.
 # =================================================================================
 
 import logging
@@ -47,10 +47,11 @@ class CoinListServiceConfig(BaseModel):
     search_score_cutoff: int = 85
 
 class NewsFeeds(BaseModel):
+    # ИСПРАВЛЕНО: Заменены неработающие RSS-ссылки на актуальные
     main_rss_feeds: List[HttpUrl] = [
         "https://forklog.com/feed",
-        "https://bits.media/rss/",
-        "https://www.rbc.ru/crypto/feed/v1/main"
+        "https://getblock.net/news/rss/", # Замена для Bits.media
+        "https://www.rbc.ru/crypto/feed"   # Замена для РБК
     ]
     alpha_rss_feeds: List[HttpUrl] = []
 
@@ -60,17 +61,17 @@ class NewsServiceConfig(BaseModel):
     news_limit_per_source: int = 5
 
 class EndpointsConfig(BaseModel):
-    # CoinGecko
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
     coingecko_api_pro_base: HttpUrl = "https://pro-api.coingecko.com/api/v3"
-    # CryptoCompare (НОВЫЙ ПРОВАЙДЕР)
     cryptocompare_api_base: HttpUrl = "https://min-api.cryptocompare.com"
     cryptocompare_price_endpoint: str = "/data/pricemulti"
-    # Общие
     coins_list_endpoint: str = "/coins/list"
     coins_markets_endpoint: str = "/coins/markets"
     simple_price_endpoint: str = "/simple/price"
     fear_and_greed_api: HttpUrl = "https://api.alternative.me/fng/"
+    mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
+    blockchain_info_hashrate: HttpUrl = "https://blockchain.info/q/hashrate"
+
 
 class ThreatFilterConfig(BaseModel):
     enabled: bool = True
@@ -102,7 +103,7 @@ class MarketDataServiceConfig(BaseModel):
     top_n_coins: int = 100
     default_vs_currency: str = "usd"
     primary_provider: str = "coingecko"
-    fallback_provider: str = "cryptocompare" # <-- ИЗМЕНЕНО
+    fallback_provider: str = "cryptocompare"
 
 class ElectricityTariff(BaseModel):
     cost_per_kwh: float
@@ -128,7 +129,7 @@ class Settings(BaseSettings):
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     COINGECKO_API_KEY: Optional[SecretStr] = None
-    CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None # <-- ДОБАВЛЕНО
+    CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
     
