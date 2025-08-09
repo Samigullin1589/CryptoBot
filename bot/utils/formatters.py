@@ -1,12 +1,15 @@
 # =================================================================================
 # Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ОБЪЕДИНЕННАЯ)
 # Описание: Вспомогательные функции для форматирования данных в текст.
-# Содержит всю необходимую логику для всех разделов бота.
+# ИСПРАВЛЕНИЕ: Добавлены недостающие функции format_halving_info и format_network_status
+# для устранения ImportError и обеспечения полной функциональности.
 # =================================================================================
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
 from bot.utils.models import AsicMiner, NewsArticle, Coin
+
+# --- Форматтеры для раздела ASIC ---
 
 def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str:
     """Форматирует список ASIC-майнеров для вывода в сообщении."""
@@ -26,33 +29,6 @@ def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str
     
     footer = f"\n\n📄 Страница {page + 1} из {total_pages}"
     return header + "\n".join(body) + footer
-
-def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -> str:
-    """Форматирует список новостей для вывода в сообщении."""
-    if not articles:
-        return "Нет доступных новостей."
-
-    header = "📰 <b>Последние новости из мира криптовалют</b>\n\n"
-    body = []
-    for article in articles:
-        dt_object = datetime.fromtimestamp(article.timestamp, tz=timezone.utc)
-        time_str = dt_object.strftime('%d.%m.%Y %H:%M')
-        body.append(
-            f"▪️ <a href='{article.url}'>{article.title}</a>\n"
-            f"  <I>({article.source} - {time_str})</I>"
-        )
-    
-    footer = f"\n\n📄 Страница {page + 1} из {total_pages}"
-    return header + "\n".join(body) + footer
-
-def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
-    """Форматирует информацию о цене монеты."""
-    price = price_data.get('price')
-    price_str = f"{price:,.4f}".rstrip('0').rstrip('.') if price else "N/A"
-    return (
-        f"💹 <b>Курс {coin.name} ({coin.symbol.upper()})</b>\n\n"
-        f"<b>Цена:</b> ${price_str}"
-    )
 
 def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
     """Формирует текстовый паспорт для ASIC с расчетом чистой прибыли."""
@@ -79,4 +55,64 @@ def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
         f"📋 <b>Паспорт устройства: {asic.name}</b>\n\n"
         f"<b><u>Экономика:</u></b>\n{profit_text}\n\n"
         f"<b><u>Тех. характеристики:</u></b>\n{specs_text}\n"
+    )
+
+# --- Форматтеры для раздела новостей ---
+
+def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -> str:
+    """Форматирует список новостей для вывода в сообщении."""
+    if not articles:
+        return "Нет доступных новостей."
+
+    header = "📰 <b>Последние новости из мира криптовалют</b>\n\n"
+    body = []
+    for article in articles:
+        dt_object = datetime.fromtimestamp(article.timestamp, tz=timezone.utc)
+        time_str = dt_object.strftime('%d.%m.%Y %H:%M')
+        body.append(
+            f"▪️ <a href='{article.url}'>{article.title}</a>\n"
+            f"  <I>({article.source} - {time_str})</I>"
+        )
+    
+    footer = f"\n\n📄 Страница {page + 1} из {total_pages}"
+    return header + "\n".join(body) + footer
+
+# --- Форматтеры для раздела курсов ---
+
+def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
+    """Форматирует информацию о цене монеты."""
+    price = price_data.get('price')
+    price_str = f"{price:,.4f}".rstrip('0').rstrip('.') if price else "N/A"
+    return (
+        f"💹 <b>Курс {coin.name} ({coin.symbol.upper()})</b>\n\n"
+        f"<b>Цена:</b> ${price_str}"
+    )
+
+# --- НЕДОСТАЮЩИЕ ФОРМАТТЕРЫ ДЛЯ РЫНОЧНЫХ ДАННЫХ ---
+
+def format_halving_info(halving_data: Dict[str, Any]) -> str:
+    """
+    Форматирует информацию о халвинге Bitcoin.
+    """
+    progress = halving_data.get('progressPercent', 0)
+    remaining_blocks = halving_data.get('remainingBlocks', 0)
+    # Предполагаем, что сервис вернет уже отформатированную дату
+    estimated_date = halving_data.get('estimated_date', 'неизвестно')
+    
+    return (
+        f"⏳ <b>Халвинг Bitcoin</b>\n\n"
+        f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
+        f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
+        f"Ориентировочная дата: <b>{estimated_date}</b>"
+    )
+
+def format_network_status(network_data: Dict[str, Any]) -> str:
+    """
+    Форматирует информацию о статусе сети Bitcoin.
+    """
+    hashrate_ehs = network_data.get('hashrate_ehs', 0.0)
+    
+    return (
+        f"📡 <b>Статус сети Bitcoin</b>\n\n"
+        f"Хешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
     )
