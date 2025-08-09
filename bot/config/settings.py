@@ -118,9 +118,9 @@ class MiningGameServiceConfig(BaseModel):
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
     
-    # ИСПРАВЛЕНО: Используем alias для чтения переменной ADMIN_USER_IDS из Render
-    # в поле `admin_ids` нашего класса. Это решает критическую ошибку.
-    admin_ids: List[int] = Field(alias="ADMIN_USER_IDS")
+    # ИСПРАВЛЕНО: Тип изменен на Any, чтобы Pydantic не пытался парсить его как JSON.
+    # Валидатор ниже преобразует строку в List[int].
+    admin_ids: Any = Field(alias="ADMIN_USER_IDS")
     
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
@@ -148,12 +148,12 @@ class Settings(BaseSettings):
     @field_validator('admin_ids', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
+        if isinstance(v, list):
+            return v
         if isinstance(v, str):
             if not v: return []
             return [int(item.strip()) for item in v.split(',') if item.strip()]
-        if isinstance(v, list):
-            return v
-        raise ValueError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком чисел.")
+        raise TypeError("ADMIN_USER_IDS должен быть строкой с ID через запятую.")
 
     model_config = SettingsConfigDict(
         env_file='.env', 
