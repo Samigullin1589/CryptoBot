@@ -1,8 +1,8 @@
 # ===============================================================
-# Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
 # Описание: "Тонкий" обработчик для "Калькулятора доходности".
-# Управляет сложным сценарием FSM и делегирует всю логику
-# вычислений в сервисы.
+# ИСПРАВЛЕНИЕ: Сигнатуры функций приведены в соответствие с
+# DI-контейнером `Deps` для корректной работы с центральным навигатором.
 # ===============================================================
 import logging
 from typing import Union
@@ -11,16 +11,14 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from bot.services.asic_service import AsicService
-from bot.services.admin_service import AdminService
 from bot.services.mining_service import MiningService
 from bot.services.market_data_service import MarketDataService
-# --- ИСПРАВЛЕНИЕ: Используем правильное имя класса состояний ---
 from bot.states.mining_states import CalculatorStates
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 from bot.keyboards.mining_keyboards import (
     get_calculator_cancel_keyboard, get_currency_selection_keyboard,
     get_asic_selection_keyboard
 )
+from bot.utils.dependencies import Deps
 from bot.utils.models import AsicMiner
 from bot.utils.formatters import format_calculation_result
 
@@ -31,10 +29,11 @@ logger = logging.getLogger(__name__)
 
 @calculator_router.callback_query(F.data == "nav:calculator")
 @calculator_router.message(F.text == "⛏️ Калькулятор")
-async def start_profit_calculator(update: Union[Message, CallbackQuery], state: FSMContext, admin_service: AdminService):
+async def start_profit_calculator(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
     """Запускает сценарий калькулятора доходности."""
     await state.clear()
-    await admin_service.track_action("nav:calculator")
+    # ИСПРАВЛЕНО: Используем deps.admin_service вместо прямого импорта
+    await deps.admin_service.track_action(update.from_user.id, "nav:calculator")
     
     text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
     keyboard = get_currency_selection_keyboard()
@@ -44,7 +43,7 @@ async def start_profit_calculator(update: Union[Message, CallbackQuery], state: 
     
     await state.set_state(CalculatorStates.waiting_for_currency)
 
-@calculator_router.callback_query(CalculatorStates, F.data == "calc_action:cancel")
+@calculator_router.callback_query(F.data == "calc_action:cancel", CalculatorStates)
 async def cancel_calculator(call: CallbackQuery, state: FSMContext):
     """Отменяет сценарий калькулятора."""
     await state.clear()
@@ -53,7 +52,7 @@ async def cancel_calculator(call: CallbackQuery, state: FSMContext):
 
 # --- Шаги сценария FSM ---
 
-@calculator_router.callback_query(CalculatorStates.waiting_for_currency, F.data.startswith("calc_currency:"))
+@calculator_router.callback_query(F.data.startswith("calc_currency:"), CalculatorStates.waiting_for_currency)
 async def process_currency_selection(call: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор валюты."""
     currency = call.data.split(":")[1]
@@ -69,7 +68,7 @@ async def process_currency_selection(call: CallbackQuery, state: FSMContext):
     await state.set_state(CalculatorStates.waiting_for_electricity_cost)
 
 @calculator_router.message(CalculatorStates.waiting_for_electricity_cost)
-async def process_electricity_cost(message: Message, state: FSMContext, asic_service: AsicService, market_data_service: MarketDataService):
+async def process_electricity_cost(message: Message, state: FSMContext, deps: Deps):
     """Обрабатывает ввод стоимости электроэнергии."""
     try:
         cost = float(message.text.replace(',', '.').strip())
@@ -84,14 +83,14 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
     cost_usd = cost
     if user_data.get("currency") == "rub":
         await msg.edit_text("⏳ Получаю актуальный курс USD/RUB...")
-        rate_usd_rub = await market_data_service.get_usd_rub_rate()
+        rate_usd_rub = await deps.market_data_service.get_usd_rub_rate()
         if not rate_usd_rub:
             await msg.edit_text("❌ Не удалось получить курс валют. Попробуйте позже.", reply_markup=get_calculator_cancel_keyboard())
             return
         cost_usd = cost / rate_usd_rub
     
     await msg.edit_text("⏳ Загружаю список оборудования...")
-    all_asics, _ = await asic_service.get_top_asics(count=1000)
+    all_asics, _ = await deps.asic_service.get_top_asics(0.05, count=1000) # Используем стандартную цену для получения полного списка
     
     if not all_asics:
         await msg.edit_text("❌ Ошибка: не удалось загрузить список ASIC.", reply_markup=get_calculator_cancel_keyboard())
@@ -106,7 +105,7 @@ async def process_electricity_cost(message: Message, state: FSMContext, asic_ser
     await msg.edit_text("✅ Отлично! Теперь выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
     await state.set_state(CalculatorStates.waiting_for_asic_selection)
 
-@calculator_router.callback_query(CalculatorStates.waiting_for_asic_selection, F.data.startswith("calc_page:"))
+@calculator_router.callback_query(F.data.startswith("calc_page:"), CalculatorStates.waiting_for_asic_selection)
 async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     """Обрабатывает пагинацию в списке ASIC."""
     page = int(call.data.split(":")[1])
@@ -116,7 +115,7 @@ async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     keyboard = get_asic_selection_keyboard(asic_list, page=page)
     await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
 
-@calculator_router.callback_query(CalculatorStates.waiting_for_asic_selection, F.data.startswith("calc_select_asic:"))
+@calculator_router.callback_query(F.data.startswith("calc_select_asic:"), CalculatorStates.waiting_for_asic_selection)
 async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
     """Обрабатывает выбор ASIC из списка."""
     asic_index = int(call.data.split(":")[1])
@@ -136,7 +135,7 @@ async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
     await state.set_state(CalculatorStates.waiting_for_pool_commission)
 
 @calculator_router.message(CalculatorStates.waiting_for_pool_commission)
-async def process_pool_commission(message: Message, state: FSMContext, mining_service: MiningService, market_data_service: MarketDataService):
+async def process_pool_commission(message: Message, state: FSMContext, deps: Deps):
     """Обрабатывает ввод комиссии пула и выполняет финальный расчет."""
     try:
         commission_percent = float(message.text.replace(',', '.').strip())
@@ -150,15 +149,13 @@ async def process_pool_commission(message: Message, state: FSMContext, mining_se
     
     selected_asic = AsicMiner(**user_data["selected_asic_json"])
     
-    # Собираем все необходимые рыночные данные для расчета
-    input_data = await market_data_service.get_data_for_calculation()
+    input_data = await deps.market_data_service.get_data_for_calculation()
     if not input_data:
          await msg.edit_text("❌ Не удалось получить ключевые данные для расчета. Попробуйте позже.")
          await state.clear()
          return
 
-    # Выполняем расчет
-    result = await mining_service.calculate(
+    result = await deps.mining_service.calculate(
         asic=selected_asic,
         calculation_input=input_data,
         electricity_cost_usd=user_data["electricity_cost_usd"],
