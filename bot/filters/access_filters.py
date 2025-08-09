@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/filters/access_filters.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025 - ИСПРАВЛЕННЫЙ)
 # Описание: Динамический фильтр для проверки прав доступа.
-# ИСПРАВЛЕНИЕ: Сигнатура __call__ приведена в соответствие с DI-контейнером Deps.
+# ИСПРАВЛЕНИЕ: UserRole теперь импортируется из bot.utils.models для разрыва цикла.
 # =================================================================================
 
 import logging
@@ -10,8 +10,9 @@ from typing import Union
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery
 
-# ИСПРАВЛЕНО: Импортируем контейнер зависимостей
-from bot.utils.dependencies import Deps
+from bot.config.settings import Settings
+from bot.services.user_service import UserService 
+# ИСПРАВЛЕНО: Импортируем UserRole из нового места
 from bot.utils.models import UserRole
 
 logger = logging.getLogger(__name__)
@@ -23,11 +24,7 @@ class PrivilegeFilter(BaseFilter):
     def __init__(self, min_role: UserRole):
         self.min_role = min_role
 
-    # ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ==========================
-    # Вместо отдельных сервисов принимаем единый контейнер 'deps',
-    # как его предоставляет aiogram из start_polling.
-    async def __call__(self, event: Union[Message, CallbackQuery], deps: Deps) -> bool:
-    # =========================================================================
+    async def __call__(self, event: Union[Message, CallbackQuery], user_service: UserService, settings: Settings) -> bool:
         """
         Проверяет роль пользователя. Возвращает True, если у пользователя
         достаточно прав, иначе False.
@@ -36,13 +33,11 @@ class PrivilegeFilter(BaseFilter):
         user_id = event.from_user.id
         
         # 1. Супер-администраторы из конфига всегда имеют высший приоритет.
-        # ИСПРАВЛЕНО: Получаем доступ к настройкам через deps.settings
-        if user_id in deps.settings.admin_ids:
+        if user_id in settings.admin_ids:
             user_role = UserRole.SUPER_ADMIN
         else:
-            # 2. Для всех остальных получаем актуальную роль из UserService
-            # ИСПРАВЛЕНО: Получаем доступ к сервису через deps.user_service
-            user = await deps.user_service.get_user(user_id)
+            # 2. Для всех остальных получаем актуальную роль из UserService (который читает из Redis).
+            user = await user_service.get_user(user_id)
             if user:
                 user_role = user.role
             else:
