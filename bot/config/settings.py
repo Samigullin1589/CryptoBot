@@ -1,18 +1,15 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С РАБОЧИМИ RSS И РЕЗЕРВНЫМ API)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Обновлены RSS-ленты, добавлен CryptoCompare как резервный API.
+# ИСПРАВЛЕНИЕ: Переход на CryptoCompare как основной API. Экземпляр настроек
+#              вынесен в config.py для устранения циклического импорта.
 # =================================================================================
 
-import logging
 from typing import List, Dict, Any, Optional
 
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ValidationError, field_validator, ConfigDict)
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # --- Вложенные модели ---
 
@@ -47,11 +44,10 @@ class CoinListServiceConfig(BaseModel):
     search_score_cutoff: int = 85
 
 class NewsFeeds(BaseModel):
-    # ИСПРАВЛЕНО: Заменены неработающие RSS-ссылки на актуальные
     main_rss_feeds: List[HttpUrl] = [
         "https://forklog.com/feed",
-        "https://getblock.net/news/rss/", # Замена для Bits.media
-        "https://www.rbc.ru/crypto/feed"   # Замена для РБК
+        "https://getblock.net/news/rss/",
+        "https://www.rbc.ru/crypto/feed"
     ]
     alpha_rss_feeds: List[HttpUrl] = []
 
@@ -72,7 +68,6 @@ class EndpointsConfig(BaseModel):
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
     blockchain_info_hashrate: HttpUrl = "https://blockchain.info/q/hashrate"
 
-
 class ThreatFilterConfig(BaseModel):
     enabled: bool = True
     toxicity_threshold: float = 0.75
@@ -84,4 +79,85 @@ class AsicServiceConfig(BaseModel):
     enrich_score_cutoff: int = 95
 
 class CryptoCenterServiceConfig(BaseModel):
-    news_context_limit: int
+    news_context_limit: int = 20
+    alpha_cache_ttl_seconds: int = 1800
+    feed_cache_ttl_seconds: int = 600
+
+class QuizServiceConfig(BaseModel):
+    fallback_questions_path: str = "data/quiz_fallback.json"
+
+class MiningEventServiceConfig(BaseModel):
+    config_path: str = "data/events_config.json"
+    default_multiplier: float = 1.0
+
+class AchievementServiceConfig(BaseModel):
+    config_path: str = "data/achievements.json"
+
+class MarketDataServiceConfig(BaseModel):
+    update_interval_seconds: int = 60
+    top_n_coins: int = 100
+    default_vs_currency: str = "usd"
+    primary_provider: str = "cryptocompare"  # <== ИЗМЕНЕНО
+    fallback_provider: str = "coingecko"
+
+class ElectricityTariff(BaseModel):
+    cost_per_kwh: float
+    unlock_price: float
+
+class MiningGameServiceConfig(BaseModel):
+    session_duration_minutes: int = 60
+    market_commission_rate: float = 0.05
+    min_withdrawal_amount: float = 1000.0
+    default_electricity_tariff: str = "Бытовой"
+    electricity_tariffs: Dict[str, ElectricityTariff] = {
+        "Бытовой": {"cost_per_kwh": 0.1, "unlock_price": 0},
+        "Промышленный": {"cost_per_kwh": 0.07, "unlock_price": 5000},
+        "Зеленый": {"cost_per_kwh": 0.05, "unlock_price": 25000},
+    }
+
+# --- Главная модель настроек ---
+
+class Settings(BaseSettings):
+    BOT_TOKEN: SecretStr
+    admin_ids: Any = Field(alias="ADMIN_USER_IDS")
+    
+    REDIS_URL: RedisDsn
+    GEMINI_API_KEY: SecretStr
+    COINGECKO_API_KEY: Optional[SecretStr] = None
+    CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
+    ADMIN_CHAT_ID: Optional[int] = None
+    NEWS_CHAT_ID: Optional[int] = None
+    
+    log_level: str = "INFO"
+    ai: AIConfig = Field(default_factory=AIConfig)
+    throttling: ThrottlingConfig = Field(default_factory=ThrottlingConfig)
+    feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
+    price_service: PriceServiceConfig = Field(default_factory=PriceServiceConfig)
+    coin_list_service: CoinListServiceConfig = Field(default_factory=CoinListServiceConfig)
+    news_service: NewsServiceConfig = Field(default_factory=NewsServiceConfig)
+    endpoints: EndpointsConfig = Field(default_factory=EndpointsConfig)
+    threat_filter: ThreatFilterConfig = Field(default_factory=ThreatFilterConfig)
+    asic_service: AsicServiceConfig = Field(default_factory=AsicServiceConfig)
+    crypto_center: CryptoCenterServiceConfig = Field(default_factory=CryptoCenterServiceConfig)
+    quiz: QuizServiceConfig = Field(default_factory=QuizServiceConfig)
+    events: MiningEventServiceConfig = Field(default_factory=MiningEventServiceConfig)
+    achievements: AchievementServiceConfig = Field(default_factory=AchievementServiceConfig)
+    market_data: MarketDataServiceConfig = Field(default_factory=MarketDataServiceConfig)
+    game: MiningGameServiceConfig = Field(default_factory=MiningGameServiceConfig)
+    
+    @field_validator('admin_ids', mode='before')
+    @classmethod
+    def parse_admin_ids(cls, v: Any) -> List[int]:
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            if not v: return []
+            return [int(item.strip()) for item in v.split(',') if item.strip()]
+        raise TypeError("ADMIN_USER_IDS должен быть строкой с ID через запятую.")
+
+    model_config = SettingsConfigDict(
+        env_file='.env', 
+        env_file_encoding='utf-8', 
+        extra='ignore',
+        env_nested_delimiter='__'
+    )

@@ -15,7 +15,8 @@ from redis.asyncio import Redis
 
 from bot.utils.models import User, UserRole, VerificationData
 from bot.utils.keys import KeyFactory
-from bot.config.settings import settings
+# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
+from bot.config.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +76,9 @@ class UserService:
             return existing_user, False
         
         new_user = User(
-            user_id=tg_user.id,
+            id=tg_user.id,
             username=tg_user.username,
-            full_name=tg_user.full_name,
+            first_name=tg_user.full_name,
             language_code=tg_user.language_code,
             role=UserRole.USER
         )

@@ -14,7 +14,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
-from bot.config.settings import settings
+# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
+from bot.config.config import settings
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.public import (
     common_handler, menu_handlers, price_handler, asic_handler,
