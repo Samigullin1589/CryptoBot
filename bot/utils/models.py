@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/models.py (ФИНАЛЬНАЯ ИНТЕГРИРОВАННАЯ ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Полный и самодостаточный набор Pydantic-моделей для всего проекта,
-# объединяющий профиль, верификацию и систему ролей в единой модели User.
+# Файл: bot/utils/models.py (ФИНАЛЬНАЯ ВЕРСИЯ С ИГРОВОЙ МОДЕЛЬЮ, АВГУСТ 2025)
+# Описание: Полный набор Pydantic-моделей для всего проекта.
+# ИЗМЕНЕНИЕ: Добавлена недостающая модель UserGameProfile.
 # =================================================================================
 
 from __future__ import annotations
@@ -10,9 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from enum import IntEnum
 
 # --- ИЕРАРХИЯ РОЛЕЙ ---
-# Определена здесь, чтобы избежать циклических импортов
 class UserRole(IntEnum):
-    """Определяет роли пользователей с иерархией для сравнения."""
     BANNED = 0
     USER = 1
     MODERATOR = 2
@@ -26,33 +24,32 @@ class VerificationData(BaseModel):
     deposit: float = 0.0
     country_code: str = "🇷🇺"
 
+# --- НОВАЯ МОДЕЛЬ ДЛЯ ИГРОВЫХ ДАННЫХ ---
+class UserGameProfile(BaseModel):
+    balance: float = 0.0
+    total_earned: float = 0.0
+    current_tariff: str
+    owned_tariffs: List[str]
+
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
 class User(BaseModel):
-    """
-    Центральная модель пользователя, объединяющая профиль Telegram,
-    роль и данные о верификации. Сохраняет обратную совместимость через alias'ы.
-    """
     id: int = Field(alias="user_id")
     username: Optional[str] = None
-    first_name: str = Field(alias="full_name") # Имя в вашей системе
+    first_name: str = Field(alias="full_name")
     language_code: Optional[str] = None
-    
-    # ИНТЕГРАЦИЯ: Роль является неотъемлемой частью данных пользователя
     role: UserRole = UserRole.USER
-    
-    # Встраиваем данные о верификации прямо в модель пользователя
     verification_data: VerificationData = Field(default_factory=VerificationData)
 
     model_config = ConfigDict(
-        populate_by_name=True # Разрешаем Pydantic использовать alias'ы
+        populate_by_name=True
     )
 
 # --- Остальные модели вашего проекта ---
 
 class Coin(BaseModel):
-    id: str = Field(description="Уникальный идентификатор CoinGecko (например, 'bitcoin')")
-    symbol: str = Field(description="Тикер монеты (например, 'btc')")
-    name: str = Field(description="Полное название монеты (например, 'Bitcoin')")
+    id: str
+    symbol: str
+    name: str
 
 class PriceInfo(BaseModel):
     price: float
@@ -61,11 +58,11 @@ class PriceInfo(BaseModel):
     change_24h: Optional[float] = None
 
 class MiningEvent(BaseModel):
-    name: str = Field(description="Название события")
-    description: str = Field(description="Описание события для пользователя")
-    probability: float = Field(ge=0.0, le=1.0, description="Вероятность возникновения (0.0-1.0)")
-    profit_multiplier: float = Field(default=1.0, description="Множитель дохода (напр., 1.5 для +50%)")
-    cost_multiplier: float = Field(default=1.0, description="Множитель затрат (напр., 0.5 для -50%)")
+    name: str
+    description: str
+    probability: float = Field(ge=0.0, le=1.0)
+    profit_multiplier: float = 1.0
+    cost_multiplier: float = 1.0
 
 class AsicMiner(BaseModel):
     id: str
@@ -125,7 +122,7 @@ class QuizQuestion(BaseModel):
     explanation: Optional[str] = None
 
 class AIVerdict(BaseModel):
-    intent: str = Field(default="other", description="Основное намерение сообщения.")
-    toxicity_score: float = Field(default=0.0, description="Оценка токсичности от 0.0 до 1.0.")
-    is_potential_scam: bool = Field(default=False, description="True, если сообщение похоже на мошенничество.")
-    is_potential_phishing: bool = Field(default=False, description="True, если сообщение содержит подозрительные ссылки.")
+    intent: str = "other"
+    toxicity_score: float = 0.0
+    is_potential_scam: bool = False
+    is_potential_phishing: bool = False
