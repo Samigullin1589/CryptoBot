@@ -1,7 +1,8 @@
 # =================================================================================
-# Файл: bot/utils/models.py (ФИНАЛЬНАЯ ВЕРСЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
+# Файл: bot/utils/models.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
 # Описание: Полный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Перечисление UserRole перенесено сюда для устранения циклического импорта.
+# ИСПРАВЛЕНИЕ: Добавлены недостающие модели CalculationInput и CalculationResult
+# для устранения критической ошибки ImportError при запуске.
 # =================================================================================
 
 from __future__ import annotations
@@ -33,16 +34,38 @@ class UserGameProfile(BaseModel):
 
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
 class User(BaseModel):
-    id: int = Field(alias="user_id")
+    id: int
     username: Optional[str] = None
-    first_name: str = Field(alias="full_name")
+    first_name: str
     language_code: Optional[str] = None
     role: UserRole = UserRole.USER
     verification_data: VerificationData = Field(default_factory=VerificationData)
+    electricity_cost: float = 0.05 # Добавлено поле для калькулятора ASIC
 
     model_config = ConfigDict(
         populate_by_name=True
     )
+
+# --- Модели для сервиса майнинга и калькулятора ---
+
+class CalculationInput(BaseModel):
+    """Модель для входных данных калькулятора доходности."""
+    hashrate_str: str
+    power_consumption_watts: int
+    electricity_cost: float
+    pool_commission: float
+
+class CalculationResult(BaseModel):
+    """Модель для структурированного результата вычислений."""
+    btc_price_usd: float
+    usd_rub_rate: float
+    network_hashrate_ths: float
+    block_reward_btc: float
+    gross_revenue_usd_daily: float
+    electricity_cost_usd_daily: float
+    pool_fee_usd_daily: float
+    total_expenses_usd_daily: float
+    net_profit_usd_daily: float
 
 # --- Остальные модели вашего проекта ---
 
@@ -72,12 +95,17 @@ class AsicMiner(BaseModel):
     algorithm: str
     profitability: Optional[float] = None
     price: Optional[float] = None
+    # Поля для динамических расчетов
+    net_profit: Optional[float] = None
+    gross_profit: Optional[float] = None
+    electricity_cost_per_day: Optional[float] = None
+
 
 class NewsArticle(BaseModel):
     title: str
     url: str
     body: Optional[str] = None
-    source: str
+    source: Optional[str] = None
     timestamp: Optional[int] = None
     published_at: Optional[str] = None
     ai_summary: Optional[str] = None
