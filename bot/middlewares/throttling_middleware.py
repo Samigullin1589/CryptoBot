@@ -10,7 +10,8 @@ from aiogram import BaseMiddleware
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import Update, User
 
-from bot.config.settings import settings
+# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
+from bot.config.config import settings
 
 # ИСПРАВЛЕНО: LUA-скрипт теперь использует PEX для работы с миллисекундами
 THROTTLE_LUA_SCRIPT = """

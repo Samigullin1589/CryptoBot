@@ -53,9 +53,7 @@ async def on_startup(bot: Bot, deps: Deps):
         await deps.admin_service.notify_admins("✅ Бот успешно запущен!")
 
 
-# ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ==========================
 async def on_shutdown(bot: Bot, deps: Deps):
-# =========================================================================
     """Выполняет действия при остановке бота, гарантируя чистое закрытие ресурсов."""
     logger.info("Запуск процедур on_shutdown...")
     if hasattr(deps, 'admin_service') and deps.admin_service:
@@ -66,12 +64,8 @@ async def on_shutdown(bot: Bot, deps: Deps):
     if deps.redis_pool:
         await deps.redis_pool.aclose()
         logger.info("Пул соединений Redis закрыт.")
-    # ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ==========================
-    # Явно закрываем сессию бота, чтобы корректно разорвать соединение с Telegram.
-    # Это помогает предотвратить ошибку "Conflict: terminated by other getUpdates request".
     await bot.session.close()
     logger.info("Сессия бота закрыта.")
-    # =========================================================================
     logger.info("Бот успешно остановлен.")
 
 
@@ -106,14 +100,12 @@ async def main():
              dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
         logger.info("Middleware успешно зарегистрированы.")
         
-        # Передаем bot в on_shutdown
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
 
         await bot.delete_webhook(drop_pending_updates=True)
 
         logger.info("Запуск процесса опроса Telegram...")
-        # Передаем deps в start_polling
         await dp.start_polling(bot, deps=deps)
 
 

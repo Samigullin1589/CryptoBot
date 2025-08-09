@@ -97,7 +97,7 @@ class MarketDataServiceConfig(BaseModel):
     update_interval_seconds: int = 60
     top_n_coins: int = 100
     default_vs_currency: str = "usd"
-    primary_provider: str = "cryptocompare"  # <== ИЗМЕНЕНО
+    primary_provider: str = "cryptocompare"
     fallback_provider: str = "coingecko"
 
 class ElectricityTariff(BaseModel):

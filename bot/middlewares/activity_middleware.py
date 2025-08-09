@@ -2,7 +2,6 @@
 # Файл: bot/middlewares/activity_middleware.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Middleware для эффективного отслеживания активности
 # пользователей.
-# ИСПРАВЛЕНИЕ: Удален лишний класс настроек.
 # =================================================================================
 import time
 import logging
@@ -12,7 +11,8 @@ from aiogram import BaseMiddleware
 from aiogram.types import Update
 
 from bot.services.user_service import UserService
-from bot.config.settings import settings
+# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
+from bot.config.config import settings
 
 logger = logging.getLogger(__name__)
 
