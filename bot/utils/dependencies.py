@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ, ИСПРАВЛЕННАЯ)
-# Описание: DI-контейнер, поддерживающий асинхронную инициализацию сервисов.
-# ИСПРАВЛЕНИЕ: Устранена проблема с передачей зависимостей в CoinListService
-# для обеспечения работы с PRO API ключом.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - С CRYPTOCOMPARE)
+# Описание: DI-контейнер с корректной инициализацией зависимостей для
+#           MarketDataService.
 # =================================================================================
 
 import aiohttp
@@ -61,7 +60,6 @@ class Deps(BaseModel):
         """
         Асинхронный фабричный метод для сборки и настройки контейнера зависимостей.
         """
-        # --- Сначала создаем все экземпляры синхронно ---
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
         ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)
@@ -69,23 +67,21 @@ class Deps(BaseModel):
         parser_service = ParserService(http_session=http_session, config=settings.endpoints)
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
         event_service = MiningEventService(config=settings.events)
-        market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data, endpoints=settings.endpoints)
+        coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
+        
+        # ИСПРАВЛЕНО: MarketDataService теперь получает CoinListService для сопоставления ID и символов
+        market_data_service = MarketDataService(
+            redis=redis_pool, http_session=http_session, settings=settings, coin_list_service=coin_list_service
+        )
+        
         achievement_service = AchievementService(redis=redis_pool, config=settings.achievements, market_data_service=market_data_service)
         security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
-
-        # ======================= КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ =======================
-        # Передаем весь объект settings, а не его части.
-        # Это позволяет сервису получить доступ к COINGECKO_API_KEY и другим настройкам.
-        coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
-        # =====================================================================
-
         asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
 
         price_service = PriceService(
             redis=redis_pool,
-            http_session=http_session,
             config=settings.price_service,
-            endpoints=settings.endpoints
+            market_data_service=market_data_service
         )
 
         crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
@@ -96,11 +92,9 @@ class Deps(BaseModel):
             market_service=market_service, event_service=event_service, achievement_service=achievement_service, bot=bot
         )
 
-        # --- Затем асинхронно настраиваем те, которым это нужно ---
         await market_service.setup()
         await mining_game_service.setup()
 
-        # Сборка финального объекта Deps
         return cls(
             settings=settings, http_session=http_session, redis_pool=redis_pool, scheduler=scheduler_instance,
             bot=bot, user_service=user_service, admin_service=admin_service, ai_content_service=ai_content_service,

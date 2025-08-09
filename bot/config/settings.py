@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - 100% СОВМЕСТИМАЯ С RENDER ENV)
+# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С CRYPTOCOMPARE)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Устранена ошибка JSONDecodeError путем отключения автоматического
-#              JSON-парсинга для переменной окружения с кастомным форматом.
+# ИСПРАВЛЕНИЕ: Интегрирован CryptoCompare как резервный API-провайдер.
 # =================================================================================
 
 import logging
@@ -15,7 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Вложенные модели для каждого сервиса с надежными значениями по умолчанию ---
+# --- Вложенные модели ---
 
 class AIConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -38,7 +37,7 @@ class FeatureFlags(BaseModel):
     enable_threat_protection: bool = True
 
 class PriceServiceConfig(BaseModel):
-    cache_ttl_seconds: int = 300
+    cache_ttl_seconds: int = 90
     top_n_coins: int = 100
     default_vs_currency: str = "usd"
 
@@ -61,8 +60,13 @@ class NewsServiceConfig(BaseModel):
     news_limit_per_source: int = 5
 
 class EndpointsConfig(BaseModel):
+    # CoinGecko
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
     coingecko_api_pro_base: HttpUrl = "https://pro-api.coingecko.com/api/v3"
+    # CryptoCompare (НОВЫЙ ПРОВАЙДЕР)
+    cryptocompare_api_base: HttpUrl = "https://min-api.cryptocompare.com"
+    cryptocompare_price_endpoint: str = "/data/pricemulti"
+    # Общие
     coins_list_endpoint: str = "/coins/list"
     coins_markets_endpoint: str = "/coins/markets"
     simple_price_endpoint: str = "/simple/price"
@@ -97,6 +101,8 @@ class MarketDataServiceConfig(BaseModel):
     update_interval_seconds: int = 60
     top_n_coins: int = 100
     default_vs_currency: str = "usd"
+    primary_provider: str = "coingecko"
+    fallback_provider: str = "cryptocompare" # <-- ИЗМЕНЕНО
 
 class ElectricityTariff(BaseModel):
     cost_per_kwh: float
@@ -117,17 +123,12 @@ class MiningGameServiceConfig(BaseModel):
 
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
-    
-    # ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ========================
-    # Тип изменен обратно на `Any` для того, чтобы Pydantic НЕ ПЫТАЛСЯ
-    # автоматически парсить значение как JSON. Это позволяет нашему кастомному
-    # валидатору ниже корректно обработать строку '123,456'.
     admin_ids: Any = Field(alias="ADMIN_USER_IDS")
-    # =========================================================================
     
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     COINGECKO_API_KEY: Optional[SecretStr] = None
+    CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None # <-- ДОБАВЛЕНО
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
     
@@ -151,18 +152,11 @@ class Settings(BaseSettings):
     @field_validator('admin_ids', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
-        """
-        Этот валидатор теперь является единственным источником преобразования
-        для admin_ids. Он надежно преобразует строку '123,456' 
-        из переменных окружения в список целых чисел [123, 456].
-        """
         if isinstance(v, list):
             return v
         if isinstance(v, str):
             if not v: return []
             return [int(item.strip()) for item in v.split(',') if item.strip()]
-        # Этот TypeError будет вызван, если переменная окружения будет иметь
-        # не строковый тип, что маловероятно, но обеспечивает полноту защиты.
         raise TypeError("ADMIN_USER_IDS должен быть строкой с ID через запятую.")
 
     model_config = SettingsConfigDict(
@@ -172,7 +166,6 @@ class Settings(BaseSettings):
         env_nested_delimiter='__'
     )
 
-# --- Глобальный экземпляр настроек ---
 try:
     settings = Settings()
     logger.info("Все конфигурации успешно загружены и валидированы.")
