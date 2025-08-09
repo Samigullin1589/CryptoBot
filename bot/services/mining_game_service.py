@@ -109,7 +109,7 @@ class MiningGameService:
         session_duration = self.settings.game.session_duration_minutes * 60
         end_time = datetime.now(timezone.utc) + timedelta(seconds=session_duration)
         
-        keys = [self.keys.active_session(user_id), hangar_key, self.keys.global_stats()]
+        keys = [self.keys.active_session(user_id), hangar_key, self.keys.game_stats()]
         args = [asic_id, asic.name, asic.power or 0, asic.profitability or 0, int(time.time()), end_time.isoformat(), profile.current_tariff, current_tariff_cost]
         
         if await self.redis.evalsha(self.lua_start_session, len(keys), *keys, *args) == 0:
@@ -127,7 +127,7 @@ class MiningGameService:
         logger.info(f"Ending mining session for user {user_id}")
         event = self.events.get_random_event()
         
-        keys = [self.keys.active_session(user_id), self.keys.user_game_profile(user_id), self.keys.user_hangar(user_id), self.keys.global_stats()]
+        keys = [self.keys.active_session(user_id), self.keys.user_game_profile(user_id), self.keys.user_hangar(user_id), self.keys.game_stats()]
         args = [
             int(time.time()), self.settings.game.session_duration_minutes * 60,
             event.profit_multiplier if event else 1.0, event.cost_multiplier if event else 1.0

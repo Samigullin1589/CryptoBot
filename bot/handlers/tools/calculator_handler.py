@@ -29,10 +29,9 @@ logger = logging.getLogger(__name__)
 
 @calculator_router.callback_query(F.data == "nav:calculator")
 @calculator_router.message(F.text == "⛏️ Калькулятор")
-async def start_profit_calculator(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
+async def start_profit_calculator(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
     """Запускает сценарий калькулятора доходности."""
     await state.clear()
-    # ИСПРАВЛЕНО: Используем deps.admin_service вместо прямого импорта
     await deps.admin_service.track_action(update.from_user.id, "nav:calculator")
     
     text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
@@ -49,6 +48,8 @@ async def cancel_calculator(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("✅ Расчет отменен.")
     await call.answer()
+
+# ... (остальной код файла без изменений) ...
 
 # --- Шаги сценария FSM ---
 

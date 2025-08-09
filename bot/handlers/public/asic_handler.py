@@ -52,7 +52,7 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
 
 @router.message(F.text == "⚙️ Топ ASIC")
 @router.callback_query(F.data == "nav:asics")
-async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
+async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
     """Входная точка для просмотра топа ASIC."""
     await state.set_state(AsicExplorerStates.showing_top)
     await state.update_data(page=1)

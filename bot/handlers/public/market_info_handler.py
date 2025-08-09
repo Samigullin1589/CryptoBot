@@ -7,7 +7,6 @@ import logging
 from datetime import datetime
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from aiogram.fsm.context import FSMContext
 
 from bot.utils.dependencies import Deps
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
@@ -22,6 +21,8 @@ async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, **kwargs):
     await call.answer("Загружаю индекс...")
     try:
         data = await make_request(deps.http_session, str(deps.settings.endpoints.fear_and_greed_api))
+        if not data or 'data' not in data or not data['data']:
+            raise ValueError("Invalid data from Fear & Greed API")
         value = int(data['data'][0]['value'])
         classification = data['data'][0]['value_classification']
         emoji = {"Extreme Fear": "😱", "Fear": "😨", "Neutral": "😐", "Greed": "😏", "Extreme Greed": "🤑"}.get(classification, "")
@@ -37,16 +38,22 @@ async def handle_halving_info(call: CallbackQuery, deps: Deps, **kwargs):
     await call.answer("Загружаю данные о халвинге...")
     try:
         data = await make_request(deps.http_session, str(deps.settings.endpoints.mempool_space_difficulty))
+        if not data:
+            raise ValueError("Invalid data from Mempool Space API")
         progress = data.get('progressPercent', 0)
         remaining_blocks = data.get('remainingBlocks', 0)
-        estimated_date = datetime.fromtimestamp(data.get('nextRetargetTimeEstimate')).strftime('%d.%m.%Y')
+        # Добавлена проверка на существование ключа
+        next_retarget_timestamp = data.get('nextRetargetTimeEstimate')
+        if next_retarget_timestamp is None:
+            raise ValueError("Timestamp for next retarget not found in API response")
+        estimated_date = datetime.fromtimestamp(next_retarget_timestamp).strftime('%d.%m.%Y')
         text = (f"⏳ <b>Халвинг Bitcoin</b>\n\n"
                 f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
                 f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
                 f"Ориентировочная дата: <b>{estimated_date}</b>")
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
     except Exception as e:
-        logger.error(f"Ошибка получения данных о халвинге: {e}")
+        logger.error(f"Ошибка получения данных о халвинге: {e}", exc_info=True)
         await call.answer("Не удалось загрузить данные.", show_alert=True)
 
 @router.callback_query(F.data == "nav:btc_status")
@@ -55,6 +62,8 @@ async def handle_btc_status(call: CallbackQuery, deps: Deps, **kwargs):
     await call.answer("Загружаю статус сети...")
     try:
         hashrate_ths = await make_request(deps.http_session, str(deps.settings.endpoints.blockchain_info_hashrate), response_type="text")
+        if not hashrate_ths:
+            raise ValueError("Invalid data from Blockchain Info API")
         hashrate_ehs = float(hashrate_ths) / 1_000_000 # TH/s -> EH/s
         text = f"📡 <b>Статус сети Bitcoin</b>\n\nХешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())

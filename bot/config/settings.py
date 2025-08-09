@@ -1,21 +1,16 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С РАБОЧИМИ RSS И РЕЗЕРВНЫМ API)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Переход на CryptoCompare как основной API. Экземпляр настроек
-#              вынесен в config.py для устранения циклического импорта.
+# ИСПРАВЛЕНИЕ: Обновлены RSS-ленты на рабочие.
 # =================================================================================
 
 from typing import List, Dict, Any, Optional
-
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ValidationError, field_validator, ConfigDict)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# --- Вложенные модели ---
-
 class AIConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
-    
     provider: str = "gemini"
     model_name: str = "gemini-1.5-pro-latest"
     flash_model_name: str = "gemini-1.5-flash-latest"
@@ -41,13 +36,13 @@ class PriceServiceConfig(BaseModel):
 class CoinListServiceConfig(BaseModel):
     update_interval_hours: int = 24
     fallback_file_path: str = "data/fallback_coins.json"
-    search_score_cutoff: int = 85
+    search_score_cutoff: int = 90
 
 class NewsFeeds(BaseModel):
     main_rss_feeds: List[HttpUrl] = [
         "https://forklog.com/feed",
-        "https://getblock.net/news/rss/",
-        "https://www.rbc.ru/crypto/feed"
+        "https://beincrypto.ru/feed/",
+        "https://cointelegraph.com/rss"
     ]
     alpha_rss_feeds: List[HttpUrl] = []
 
@@ -115,19 +110,15 @@ class MiningGameServiceConfig(BaseModel):
         "Зеленый": {"cost_per_kwh": 0.05, "unlock_price": 25000},
     }
 
-# --- Главная модель настроек ---
-
 class Settings(BaseSettings):
     BOT_TOKEN: SecretStr
     admin_ids: Any = Field(alias="ADMIN_USER_IDS")
-    
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     COINGECKO_API_KEY: Optional[SecretStr] = None
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
-    
     log_level: str = "INFO"
     ai: AIConfig = Field(default_factory=AIConfig)
     throttling: ThrottlingConfig = Field(default_factory=ThrottlingConfig)
@@ -148,8 +139,7 @@ class Settings(BaseSettings):
     @field_validator('admin_ids', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
-        if isinstance(v, list):
-            return v
+        if isinstance(v, list): return v
         if isinstance(v, str):
             if not v: return []
             return [int(item.strip()) for item in v.split(',') if item.strip()]

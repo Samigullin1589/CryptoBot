@@ -25,7 +25,7 @@ PAGE_SIZE = 5
 
 @router.callback_query(F.data == "nav:crypto_center")
 @router.callback_query(F.data == f"{CC_CALLBACK_PREFIX}:main")
-async def crypto_center_main_menu(call: types.CallbackQuery, state: FSMContext):
+async def crypto_center_main_menu(call: types.CallbackQuery, state: FSMContext, **kwargs):
     await state.set_state(CryptoCenterStates.main_menu)
     text = ("💎 <b>Крипто-Центр</b>\n\n"
             "Ваш персональный AI-ассистент в мире криптовалют. "
