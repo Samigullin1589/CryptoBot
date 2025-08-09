@@ -1,44 +1,60 @@
 # =================================================================================
-# Файл: bot/handlers/public/news_handler.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
-# Описание: Обрабатывает раздел "Новости" с пагинацией.
+# Файл: bot/handlers/public/news_handler.py (ИНТЕГРИРОВАННЫЙ, АВГУСТ 2025)
+# Описание: Обработчик для раздела новостей, полностью интегрированный
+# с динамическим NewsService и клавиатурами.
 # =================================================================================
 import logging
-import math
-from aiogram import F, Router
+from aiogram import Router, F
 from aiogram.types import CallbackQuery
-from bot.utils.dependencies import Deps
-from bot.utils.formatters import format_news_list
-from bot.keyboards.paginators import create_paginator_keyboard
+from aiogram.utils.markdown import hlink
 
-router = Router(name=__name__)
+from bot.keyboards.news_keyboards import get_news_sources_keyboard
+from bot.keyboards.callback_factories import NewsCallback
+from bot.utils.dependencies import Deps
+
+router = Router(name="news_handler_router")
 logger = logging.getLogger(__name__)
 
-NEWS_PER_PAGE = 5
+async def handle_news_menu_start(call: CallbackQuery, state, deps: Deps):
+    """
+    Точка входа в раздел новостей. Получает источники из сервиса
+    и отображает динамическую клавиатуру.
+    """
+    sources = deps.news_service.get_all_sources()
+    text = "Выберите источник, чтобы прочитать последние новости:"
+    await call.message.edit_text(text, reply_markup=get_news_sources_keyboard(sources))
+    await call.answer()
 
-@router.callback_query(F.data.in_({"nav:news", "news_page:0"}))
-async def handle_news_list_start(call: CallbackQuery, deps: Deps):
-    await handle_news_list_page(call, deps, page=0)
-
-@router.callback_query(F.data.startswith("news_page:"))
-async def handle_news_list_page_callback(call: CallbackQuery, deps: Deps):
-    page = int(call.data.split(":")[1])
-    await handle_news_list_page(call, deps, page)
-
-async def handle_news_list_page(call: CallbackQuery, deps: Deps, page: int):
-    await call.answer("Загружаю новости...")
+@router.callback_query(NewsCallback.filter(F.action == "get_feed"))
+async def get_news_feed(call: CallbackQuery, callback_data: NewsCallback, deps: Deps):
+    """
+    Получает и отображает новости из источника, выбранного пользователем.
+    """
+    source_key = callback_data.source_key
+    # Получаем актуальные источники и их имена из сервиса
+    all_sources = deps.news_service.get_all_sources()
+    source_name = all_sources.get(source_key, "Неизвестный источник")
     
-    all_articles = await deps.news_service.get_latest_news()
+    await call.answer(f"Загружаю новости из {source_name}...")
     
-    if not all_articles:
-        await call.message.edit_text("Не удалось загрузить новости. Попробуйте позже.", reply_markup=create_paginator_keyboard(0, 1, 'news_page'))
+    articles = await deps.news_service.get_latest_news(source_key)
+    
+    if not articles:
+        await call.message.edit_text(
+            f"❌ Не удалось загрузить новости из источника «{source_name}». Попробуйте позже.",
+            reply_markup=get_news_sources_keyboard(all_sources)
+        )
         return
 
-    total_pages = math.ceil(len(all_articles) / NEWS_PER_PAGE)
-    start_index = page * NEWS_PER_PAGE
-    end_index = start_index + NEWS_PER_PAGE
-    articles_on_page = all_articles[start_index:end_index]
-
-    text = format_news_list(articles_on_page, page, total_pages)
-    keyboard = create_paginator_keyboard(page, total_pages, 'news_page')
+    # Формируем красивое сообщение
+    response_lines = [f"<b>Свежие новости из {source_name}:</b>\n"]
+    for i, article in enumerate(articles, 1):
+        response_lines.append(f"{i}. {hlink(article.title, article.url)}")
     
-    await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
+    response_text = "\n".join(response_lines)
+    
+    await call.message.edit_text(
+        response_text,
+        reply_markup=get_news_sources_keyboard(all_sources),
+        disable_web_page_preview=True
+    )

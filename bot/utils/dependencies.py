@@ -1,7 +1,8 @@
 # =================================================================================
 # Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: DI-контейнер, поддерживающий асинхронную инициализацию сервисов.
-# ИСПРАВЛЕНИЕ: Метод build стал асинхронным и вызывает setup() для сервисов.
+# ИСПРАВЛЕНИЕ: Устранена циклическая/некорректная зависимость PriceService
+# от CoinListService, что исправляет критическую ошибку TypeError при запуске.
 # =================================================================================
 
 import aiohttp
@@ -64,7 +65,7 @@ class Deps(BaseModel):
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
         ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)
-        news_service = NewsService(redis=redis_pool, http_session=http_session, settings=settings)
+        news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
         parser_service = ParserService(http_session=http_session, config=settings.endpoints)
         quiz_service = QuizService(ai_content_service=ai_content_service, config=settings.quiz)
         event_service = MiningEventService(config=settings.events)
@@ -73,7 +74,16 @@ class Deps(BaseModel):
         security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
         coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, config=settings.coin_list_service, endpoints=settings.endpoints)
         asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
-        price_service = PriceService(redis=redis_pool, http_session=http_session, coin_list_service=coin_list_service, config=settings.price_service, endpoints=settings.endpoints)
+        
+        # ИСПРАВЛЕНО: PriceService НЕ зависит от CoinListService при инициализации.
+        # Он получает ID монет как аргумент в своих методах, что является правильным подходом.
+        price_service = PriceService(
+            redis=redis_pool, 
+            http_session=http_session, 
+            config=settings.price_service, 
+            endpoints=settings.endpoints
+        )
+        
         crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
         market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
         scheduler_instance = AsyncIOScheduler(timezone="UTC")
