@@ -1,13 +1,13 @@
 # =================================================================================
 # Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ОБЪЕДИНЕННАЯ)
 # Описание: Вспомогательные функции для форматирования данных в текст.
-# ИСПРАВЛЕНИЕ: Добавлены недостающие функции format_halving_info и format_network_status
-# для устранения ImportError и обеспечения полной функциональности.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая функция format_calculation_result
+# для устранения критической ошибки ImportError в calculator_handler.
 # =================================================================================
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 
-from bot.utils.models import AsicMiner, NewsArticle, Coin
+from bot.utils.models import AsicMiner, NewsArticle, Coin, CalculationResult
 
 # --- Форматтеры для раздела ASIC ---
 
@@ -88,15 +88,12 @@ def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
         f"<b>Цена:</b> ${price_str}"
     )
 
-# --- НЕДОСТАЮЩИЕ ФОРМАТТЕРЫ ДЛЯ РЫНОЧНЫХ ДАННЫХ ---
+# --- Форматтеры для рыночных данных ---
 
 def format_halving_info(halving_data: Dict[str, Any]) -> str:
-    """
-    Форматирует информацию о халвинге Bitcoin.
-    """
+    """Форматирует информацию о халвинге Bitcoin."""
     progress = halving_data.get('progressPercent', 0)
     remaining_blocks = halving_data.get('remainingBlocks', 0)
-    # Предполагаем, что сервис вернет уже отформатированную дату
     estimated_date = halving_data.get('estimated_date', 'неизвестно')
     
     return (
@@ -107,12 +104,44 @@ def format_halving_info(halving_data: Dict[str, Any]) -> str:
     )
 
 def format_network_status(network_data: Dict[str, Any]) -> str:
-    """
-    Форматирует информацию о статусе сети Bitcoin.
-    """
+    """Форматирует информацию о статусе сети Bitcoin."""
     hashrate_ehs = network_data.get('hashrate_ehs', 0.0)
     
     return (
         f"📡 <b>Статус сети Bitcoin</b>\n\n"
         f"Хешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
+    )
+
+# --- Форматтер для калькулятора (ВОССТАНОВЛЕНО) ---
+
+def format_calculation_result(result: CalculationResult) -> str:
+    """Форматирует Pydantic-модель CalculationResult в читаемый текст."""
+    
+    # Расчеты для других периодов
+    net_profit_weekly = result.net_profit_usd_daily * 7
+    net_profit_monthly = result.net_profit_usd_daily * 30.44
+    net_profit_yearly = result.net_profit_usd_daily * 365.25
+
+    # Конвертация в рубли
+    net_profit_rub_daily = result.net_profit_usd_daily * result.usd_rub_rate
+
+    # Определение цвета для чистой прибыли (зеленый для >0, красный для <0)
+    profit_color_emoji = "🟢" if result.net_profit_usd_daily > 0 else "🔴"
+
+    return (
+        f"📊 <b>Результаты расчета доходности</b>\n\n"
+        f"<b><u>Доходы:</u></b>\n"
+        f"▫️ Грязный доход: <b>${result.gross_revenue_usd_daily:,.2f}</b> / день\n\n"
+        f"<b><u>Расходы:</u></b>\n"
+        f"▫️ Электроэнергия: ${result.electricity_cost_usd_daily:,.2f} / день\n"
+        f"▫️ Комиссия пула: ${result.pool_fee_usd_daily:,.2f} / день\n"
+        f"▫️ <b>Итого расходов:</b> ${result.total_expenses_usd_daily:,.2f} / день\n\n"
+        f"<b><u>{profit_color_emoji} Чистая прибыль:</u></b>\n"
+        f"💵 <b>${result.net_profit_usd_daily:,.2f} / день</b>\n"
+        f"💵 ${net_profit_weekly:,.2f} / неделя\n"
+        f"💵 ${net_profit_monthly:,.2f} / месяц\n"
+        f"💵 ${net_profit_yearly:,.2f} / год\n\n"
+        f"🇷🇺 В рублях: ≈ {net_profit_rub_daily:,.2f} ₽ / день\n\n"
+        f"<i>Расчеты основаны на текущем курсе BTC ≈ ${int(result.btc_price_usd):,} и сложности сети. "
+        f"Реальная доходность может отличаться.</i>"
     )
