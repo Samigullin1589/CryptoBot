@@ -1,7 +1,8 @@
 # =================================================================================
-# Файл: bot/filters/access_filters.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025 - ИСПРАВЛЕННЫЙ)
-# Описание: Динамический фильтр для проверки прав доступа.
-# ИСПРАВЛЕНИЕ: UserRole теперь импортируется из bot.utils.models для разрыва цикла.
+# Файл: bot/filters/access_filters.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025 - ФИНАЛЬНАЯ ВЕРСИЯ)
+# Описание: Динамический фильтр для проверки прав доступа, полностью
+#           интегрированный с DI-контейнером.
+# ИСПРАВЛЕНИЕ: Сигнатура __call__ приведена в полное соответствие с DI-контейнером Deps.
 # =================================================================================
 
 import logging
@@ -10,9 +11,8 @@ from typing import Union
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery
 
-from bot.config.settings import Settings
-from bot.services.user_service import UserService 
-# ИСПРАВЛЕНО: Импортируем UserRole из нового места
+# ИСПРАВЛЕНО: Импортируем контейнер зависимостей Deps
+from bot.utils.dependencies import Deps
 from bot.utils.models import UserRole
 
 logger = logging.getLogger(__name__)
@@ -24,20 +24,24 @@ class PrivilegeFilter(BaseFilter):
     def __init__(self, min_role: UserRole):
         self.min_role = min_role
 
-    async def __call__(self, event: Union[Message, CallbackQuery], user_service: UserService, settings: Settings) -> bool:
+    # ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ==========================
+    # Вместо отдельных сервисов (user_service, settings), фильтр теперь принимает
+    # единый контейнер 'deps', как его предоставляет aiogram из `dp.start_polling`.
+    async def __call__(self, event: Union[Message, CallbackQuery], deps: Deps) -> bool:
+    # =========================================================================
         """
         Проверяет роль пользователя. Возвращает True, если у пользователя
         достаточно прав, иначе False.
-        Работает как для сообщений, так и для колбэков.
         """
         user_id = event.from_user.id
         
         # 1. Супер-администраторы из конфига всегда имеют высший приоритет.
-        if user_id in settings.admin_ids:
+        # ИСПРАВЛЕНО: Доступ к настройкам и сервисам осуществляется через объект deps.
+        if user_id in deps.settings.admin_ids:
             user_role = UserRole.SUPER_ADMIN
         else:
-            # 2. Для всех остальных получаем актуальную роль из UserService (который читает из Redis).
-            user = await user_service.get_user(user_id)
+            # 2. Для всех остальных получаем актуальную роль из UserService.
+            user = await deps.user_service.get_user(user_id)
             if user:
                 user_role = user.role
             else:
