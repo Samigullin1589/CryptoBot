@@ -1,7 +1,9 @@
 # =================================================================================
 # Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
-# Описание: Сервис управления пользователями, переведенный на атомарную
-# работу с HASH в Redis для устранения ошибок WRONGTYPE.
+# Описание: Сервис управления пользователями с корректной сериализацией
+# вложенных Pydantic моделей для Redis HASH.
+# ИСПРАВЛЕНИЕ: Устранена ошибка redis.exceptions.DataError путем
+# преобразования вложенных моделей в JSON-строки перед сохранением в Redis.
 # =================================================================================
 import json
 import logging
@@ -11,7 +13,7 @@ from datetime import datetime, timedelta
 from aiogram.types import User as TelegramUser
 from redis.asyncio import Redis
 
-from bot.utils.models import User, UserRole
+from bot.utils.models import User, UserRole, VerificationData
 from bot.utils.keys import KeyFactory
 from bot.config.settings import settings
 
@@ -25,47 +27,46 @@ class UserService:
         self.keys = KeyFactory
         self.history_max_size = settings.ai.history_max_size
 
-    # ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ №1 ==========================
     async def get_user(self, user_id: int) -> Optional[User]:
         """
-        Получает данные пользователя из Redis, используя HGETALL, так как
-        профиль хранится в виде HASH для гибкости и производительности.
+        Получает данные пользователя из Redis HASH и корректно десериализует вложенные JSON.
         """
         user_key = self.keys.user_profile(user_id)
-        # Используем HGETALL для чтения хэша, а не GET для строки
         user_data_dict = await self.redis.hgetall(user_key)
         
         if not user_data_dict:
             return None
-            
+        
         try:
-            # Pydantic v2 отлично работает со словарями напрямую
+            # ИСПРАВЛЕНО: Десериализуем вложенные JSON-объекты перед валидацией
+            if 'verification_data' in user_data_dict:
+                user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
+            
             return User.model_validate(user_data_dict)
-        except Exception as e:
+        except (json.JSONDecodeError, TypeError, Exception) as e:
             logger.error(f"Ошибка при десериализации HASH-данных для пользователя {user_id}: {e}")
             return None
 
     async def save_user(self, user: User) -> None:
         """
-        Сохраняет модель пользователя в Redis в виде HASH.
-        Это позволяет атомарно обновлять отдельные поля в будущем.
+        Сохраняет модель пользователя в Redis HASH, корректно сериализуя вложенные модели.
         """
         user_key = self.keys.user_profile(user.id)
-        # Преобразуем Pydantic модель в словарь строк для HMSET
-        user_data_to_save = user.model_dump(mode='json')
-        # Pydantic автоматически сериализует вложенные модели в JSON-строки
         
+        # ИСПРАВЛЕНО: Преобразуем модель в словарь и вручную сериализуем вложенные объекты
+        user_data_to_save = user.model_dump() 
+        if isinstance(user_data_to_save.get('verification_data'), dict):
+            user_data_to_save['verification_data'] = json.dumps(user_data_to_save['verification_data'])
+
         await self.redis.hset(user_key, mapping=user_data_to_save)
-    # =========================================================================
 
     async def get_or_create_user(self, tg_user: TelegramUser) -> Tuple[User, bool]:
         """
         Получает пользователя из базы данных. Если его нет, создает нового
-        и сохраняет его в виде HASH.
+        и сохраняет его, корректно сериализуя данные.
         """
         existing_user = await self.get_user(tg_user.id)
         if existing_user:
-            # Обновим данные, если они изменились (например, username)
             if (existing_user.username != tg_user.username or 
                 existing_user.first_name != tg_user.full_name):
                 existing_user.username = tg_user.username
@@ -74,28 +75,19 @@ class UserService:
             return existing_user, False
         
         new_user = User(
-            id=tg_user.id,
+            user_id=tg_user.id,
             username=tg_user.username,
-            first_name=tg_user.full_name,
+            full_name=tg_user.full_name,
             language_code=tg_user.language_code,
             role=UserRole.USER
         )
         
-        user_key = self.keys.user_profile(new_user.id)
-        user_data_to_save = new_user.model_dump(mode='json')
-
-        async with self.redis.pipeline(transaction=True) as pipe:
-            # ================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ №2 ==================
-            # Используем HSET вместо SET для сохранения профиля
-            pipe.hset(user_key, mapping=user_data_to_save)
-            # =============================================================
-            pipe.sadd(self.keys.all_users_set(), new_user.id)
-            await pipe.execute()
+        await self.save_user(new_user)
+        await self.redis.sadd(self.keys.all_users_set(), new_user.id)
 
         logger.info(f"Зарегистрирован новый пользователь {tg_user.id} (@{tg_user.username}).")
         return new_user, True
 
-    # --- Остальные методы остаются без изменений, так как они не затрагивают профиль напрямую ---
     async def get_all_user_ids(self) -> List[int]:
         user_ids_raw = await self.redis.smembers(self.keys.all_users_set())
         return [int(user_id) for user_id in user_ids_raw]

@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
 # Описание: Полный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлены недостающие модели CalculationInput и CalculationResult
-# для устранения критической ошибки ImportError при запуске.
+# ИСПРАВЛЕНИЕ: Восстановлены псевдонимы (alias) в модели User для корректной
+# валидации данных и устранения ValidationError.
 # =================================================================================
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field, ConfigDict
 from enum import IntEnum
 
-# --- ИЕРАРХИЯ РОЛЕЙ (ПЕРЕНЕСЕНО СЮДА) ---
+# --- ИЕРАРХИЯ РОЛЕЙ ---
 class UserRole(IntEnum):
     BANNED = 0
     USER = 1
@@ -34,16 +34,18 @@ class UserGameProfile(BaseModel):
 
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
 class User(BaseModel):
-    id: int
+    # ИСПРАВЛЕНО: Восстановлены псевдонимы для полей
+    id: int = Field(alias="user_id")
     username: Optional[str] = None
-    first_name: str
+    first_name: str = Field(alias="full_name")
     language_code: Optional[str] = None
     role: UserRole = UserRole.USER
     verification_data: VerificationData = Field(default_factory=VerificationData)
-    electricity_cost: float = 0.05 # Добавлено поле для калькулятора ASIC
+    electricity_cost: float = 0.05
 
     model_config = ConfigDict(
-        populate_by_name=True
+        populate_by_name=True,
+        arbitrary_types_allowed=True
     )
 
 # --- Модели для сервиса майнинга и калькулятора ---
@@ -67,7 +69,7 @@ class CalculationResult(BaseModel):
     total_expenses_usd_daily: float
     net_profit_usd_daily: float
 
-# --- Остальные модели вашего проекта ---
+# --- Остальные модели проекта ---
 
 class Coin(BaseModel):
     id: str
@@ -95,11 +97,9 @@ class AsicMiner(BaseModel):
     algorithm: str
     profitability: Optional[float] = None
     price: Optional[float] = None
-    # Поля для динамических расчетов
     net_profit: Optional[float] = None
     gross_profit: Optional[float] = None
     electricity_cost_per_day: Optional[float] = None
-
 
 class NewsArticle(BaseModel):
     title: str
