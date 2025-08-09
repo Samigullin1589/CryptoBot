@@ -7,21 +7,16 @@
 
 import asyncio
 import logging
-from typing import List, Dict, Any, Callable, Coroutine
+from typing import List, Dict, Any
 
 import aiohttp
-from bot.config.settings import settings # Предполагается, что конфиг импортируется отсюда
+# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
+from bot.config.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ПРИМЕЧАНИЕ: В реальном проекте этот класс настроек должен быть
-# частью основного класса настроек в bot/config/settings.py
-class AIConsultantSettings:
-    gemini_api_key: str = settings.api_keys.gemini_api_key
-    model_name: str = "gemini-1.5-pro-latest"
-    max_retries: int = 3
-    initial_retry_delay: float = 1.0
-    request_timeout: int = 45
+# ПРИМЕЧАНИЕ: Класс AIConsultantSettings удален за ненадобностью,
+# так как все настройки теперь берутся из единого объекта `settings`.
 
 class AIConsultantService:
     """
@@ -33,21 +28,22 @@ class AIConsultantService:
         
         :param http_session: Общий экземпляр aiohttp.ClientSession.
         """
-        self.config = AIConsultantSettings()
-        if not self.config.gemini_api_key:
+        # ИЗМЕНЕНО: Обращаемся напрямую к `settings`
+        self.gemini_api_key = settings.GEMINI_API_KEY.get_secret_value()
+        self.model_name = settings.ai.model_name
+        self.max_retries = settings.ai.max_retries
+        
+        if not self.gemini_api_key:
             raise ValueError("Необходимо предоставить API-ключ Gemini.")
         
         self.session = http_session
-        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.config.model_name}:generateContent"
-        self.headers = {
-            'Content-Type': 'application/json',
-        }
-        self.params = {'key': self.config.gemini_api_key}
+        self.api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
+        self.headers = {'Content-Type': 'application/json'}
+        self.params = {'key': self.gemini_api_key}
 
     def _create_system_prompt(self) -> str:
         """
         Создает и возвращает системный промпт, определяющий роль и поведение AI-консультанта.
-        Промпт актуализирован для реалий середины 2025 года.
         """
         return (
             "You are 'CryptoBot Co-Pilot', a world-class expert engineer in cryptocurrency and ASIC mining. Your tone is professional, helpful, and precise. "
@@ -89,12 +85,12 @@ class AIConsultantService:
 
     async def _execute_request(self, payload: Dict[str, Any]) -> str:
         """Выполняет запрос к API с логикой повторных попыток."""
-        retries = self.config.max_retries
-        delay = self.config.initial_retry_delay
+        retries = self.max_retries
+        delay = 1.0
 
         for attempt in range(retries):
             try:
-                timeout = aiohttp.ClientTimeout(total=self.config.request_timeout)
+                timeout = aiohttp.ClientTimeout(total=45)
                 async with self.session.post(
                     self.api_url,
                     headers=self.headers,
@@ -105,7 +101,6 @@ class AIConsultantService:
                     if response.status == 200:
                         result = await response.json()
                         
-                        # Обработка блокировки контента
                         if not result.get('candidates'):
                             feedback = result.get('promptFeedback', {})
                             if feedback.get('blockReason'):
@@ -118,10 +113,10 @@ class AIConsultantService:
                         answer = result['candidates'][0].get('content', {}).get('parts', [{}])[0].get('text', '')
                         return answer.strip() if answer else "AI вернул пустой ответ. Попробуйте задать вопрос иначе."
 
-                    elif response.status in [500, 502, 503, 504]: # Ошибки сервера, которые можно повторить
+                    elif response.status in [500, 502, 503, 504]:
                         logger.warning(f"Gemini API returned server error {response.status}. Retrying in {delay}s... (Attempt {attempt + 1}/{retries})")
                         await asyncio.sleep(delay)
-                        delay *= 2 # Экспоненциальная задержка
+                        delay *= 2
                     else:
                         response_text = await response.text()
                         logger.error(f"Gemini API returned non-200 status {response.status}: {response_text}")
@@ -151,4 +146,3 @@ class AIConsultantService:
         except Exception as e:
             logger.error(f"Unexpected error in get_ai_answer: {e}", exc_info=True)
             return "Произошла непредвиденная внутренняя ошибка при обработке вашего запроса."
-

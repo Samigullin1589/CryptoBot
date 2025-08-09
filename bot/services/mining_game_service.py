@@ -15,7 +15,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Добавлен импорт класса Settings для корректной работы type hints
+from bot.config.settings import Settings
 from bot.services.user_service import UserService
 from bot.services.market_service import AsicMarketService
 from bot.services.event_service import MiningEventService
@@ -69,14 +70,12 @@ class MiningGameService:
                 "owned_tariffs": default_tariff,
             }
             await self.redis.hmset(profile_key, initial_data)
-            profile_data.update(initial_data) # Обновляем локальный словарь
+            profile_data.update(initial_data)
         
-        # === ИСПРАВЛЕНО: Гарантируем, что current_tariff не None ===
         current_tariff = profile_data.get("current_tariff")
         if not current_tariff:
             current_tariff = self.settings.game.default_electricity_tariff
             await self.redis.hset(profile_key, "current_tariff", current_tariff)
-        # ==========================================================
 
         game_profile = UserGameProfile(
             balance=float(profile_data.get("balance", 0.0)),
@@ -191,13 +190,14 @@ class MiningGameService:
             pipe.hincrby(self.keys.global_stats(), "pending_withdrawals", 1)
             await pipe.execute()
         
-        await self.bot.send_message(
-            self.settings.ADMIN_CHAT_ID,
-            f"⚠️ <b>Новая заявка на вывод!</b>\n\n"
-            f"Пользователь: <a href='tg://user?id={user.id}'>{user.first_name}</a> (@{user.username})\n"
-            f"ID: <code>{user.id}</code>\n"
-            f"Сумма: <b>{balance:,.2f} монет</b>"
-        )
+        if self.settings.ADMIN_CHAT_ID:
+            await self.bot.send_message(
+                self.settings.ADMIN_CHAT_ID,
+                f"⚠️ <b>Новая заявка на вывод!</b>\n\n"
+                f"Пользователь: <a href='tg://user?id={user.id}'>{user.first_name}</a> (@{user.username})\n"
+                f"ID: <code>{user.id}</code>\n"
+                f"Сумма: <b>{balance:,.2f} монет</b>"
+            )
         logger.info(f"User {user.id} created a withdrawal request for {balance} coins.")
         return "✅ Ваша заявка на вывод принята! Администратор скоро свяжется с вами для уточнения деталей.", True
 

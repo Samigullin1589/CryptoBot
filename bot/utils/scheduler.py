@@ -5,7 +5,8 @@
 
 from typing import NamedTuple, Callable, Awaitable, List
 
-from bot.config.settings import AppSettings
+# ИСПРАВЛЕНО: Импортируем Settings для корректной типизации
+from bot.config.settings import Settings
 from bot.jobs import scheduled_tasks
 
 # --- УЛУЧШЕНИЕ: Добавляем 'Dependencies' для корректной типизации ---
@@ -22,31 +23,28 @@ class ScheduledJob(NamedTuple):
     id: str
 
 # --- УЛУЧШЕНИЕ: Реестр теперь является функцией для лучшей инкапсуляции ---
-def get_jobs(settings: AppSettings) -> List[ScheduledJob]:
+# ИСПРАВЛЕНО: AppSettings заменен на Settings
+def get_jobs(settings: Settings) -> List[ScheduledJob]:
     """Возвращает список всех запланированных задач."""
     
-    # ПРИМЕЧАНИЕ: health_check_job больше не нужен, т.к. бот теперь сам
-    # уведомляет о сбоях. Если он нужен для внешних систем, можно оставить.
-    # Мы его пока уберем для чистоты.
-
     return [
         ScheduledJob(
             func=scheduled_tasks.update_asics_db_job,
             trigger='interval',
-            config={'hours': settings.scheduler.asic_update_hours},
+            config={'hours': settings.asic_service.update_interval_hours},
             id='asic_db_update_job'
         ),
         ScheduledJob(
             func=scheduled_tasks.send_news_job,
             trigger='interval',
-            config={'hours': settings.scheduler.news_interval_hours},
+            config={'hours': 3}, # Пример: раз в 3 часа
             id='news_sending_job'
         ),
         ScheduledJob(
             func=scheduled_tasks.send_morning_summary_job,
             trigger='cron',
             config={
-                'hour': settings.scheduler.morning_summary_hour,
+                'hour': 9, # Пример: в 9 утра
                 'minute': 0
             },
             id='morning_summary_job'
@@ -55,8 +53,8 @@ def get_jobs(settings: AppSettings) -> List[ScheduledJob]:
             func=scheduled_tasks.send_leaderboard_job,
             trigger='cron',
             config={
-                'day_of_week': settings.scheduler.leaderboard_day,
-                'hour': settings.scheduler.leaderboard_hour,
+                'day_of_week': 'mon', # Пример: каждый понедельник
+                'hour': 12,
                 'minute': 0
             },
             id='leaderboard_job'
