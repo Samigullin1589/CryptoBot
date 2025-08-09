@@ -1,15 +1,14 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ПРОМЫШЛЕННАЯ ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Единая, строго типизированная и самодостаточная система конфигурации.
-# ПОЛНОСТЬЮ ЗАМЕНЯЕТ все внешние .json файлы, инкапсулируя значения по умолчанию
-# в коде и загружая секреты из .env/переменных окружения.
+# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ С УЧЕТОМ ЛОГОВ, АВГУСТ 2025)
+# Описание: Единая, строго типизированная система конфигурации, исправленная
+# в соответствии с логами Render для обеспечения безупречной работы.
 # =================================================================================
 
 import logging
 from typing import List, Dict, Any, Optional
 
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
-                      ValidationError, field_validator)
+                      ValidationError, field_validator, ConfigDict)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +17,9 @@ logger = logging.getLogger(__name__)
 # --- Вложенные модели для каждого сервиса с надежными значениями по умолчанию ---
 
 class AIConfig(BaseModel):
+    # ИСПРАВЛЕНО: Добавлена конфигурация для устранения UserWarning из логов
+    model_config = ConfigDict(protected_namespaces=())
+    
     provider: str = "gemini"
     model_name: str = "gemini-1.5-pro-latest"
     flash_model_name: str = "gemini-1.5-flash-latest"
@@ -114,16 +116,18 @@ class MiningGameServiceConfig(BaseModel):
 # --- Главная модель настроек ---
 
 class Settings(BaseSettings):
-    # --- Секреты и основные настройки (ЗАГРУЖАЮТСЯ ИЗ .env) ---
     BOT_TOKEN: SecretStr
-    ADMIN_IDS: List[int] # ИСПРАВЛЕНО: Имя поля для соответствия
+    
+    # ИСПРАВЛЕНО: Используем alias для чтения переменной ADMIN_USER_IDS из Render
+    # в поле `admin_ids` нашего класса. Это решает критическую ошибку.
+    admin_ids: List[int] = Field(alias="ADMIN_USER_IDS")
+    
     REDIS_URL: RedisDsn
     GEMINI_API_KEY: SecretStr
     COINGECKO_API_KEY: Optional[SecretStr] = None
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
     
-    # --- Вложенные конфигурации с надежными значениями по умолчанию ---
     log_level: str = "INFO"
     ai: AIConfig = Field(default_factory=AIConfig)
     throttling: ThrottlingConfig = Field(default_factory=ThrottlingConfig)
@@ -141,7 +145,7 @@ class Settings(BaseSettings):
     market_data: MarketDataServiceConfig = Field(default_factory=MarketDataServiceConfig)
     game: MiningGameServiceConfig = Field(default_factory=MiningGameServiceConfig)
     
-    @field_validator('ADMIN_IDS', mode='before')
+    @field_validator('admin_ids', mode='before')
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
         if isinstance(v, str):
@@ -149,13 +153,13 @@ class Settings(BaseSettings):
             return [int(item.strip()) for item in v.split(',') if item.strip()]
         if isinstance(v, list):
             return v
-        raise ValueError("ADMIN_IDS должен быть строкой с ID через запятую или списком чисел.")
+        raise ValueError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком чисел.")
 
     model_config = SettingsConfigDict(
         env_file='.env', 
         env_file_encoding='utf-8', 
         extra='ignore',
-        env_nested_delimiter='__' # Позволяет переопределять вложенные поля: AI__PROVIDER="openai"
+        env_nested_delimiter='__'
     )
 
 # --- Глобальный экземпляр настроек ---

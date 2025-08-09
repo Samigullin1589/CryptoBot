@@ -1,65 +1,48 @@
-# bot/filters/access_filters.py
 # =================================================================================
-# Файл: bot/filters/access_filters.py (ВЕРСИЯ "Distinguished Engineer" - ПРОДАКШН)
-# Описание: Фильтры для проверки прав доступа пользователей.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая роль SUPER_ADMIN для решения AttributeError.
+# Файл: bot/filters/access_filters.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025)
+# Описание: Динамический фильтр для проверки прав доступа, полностью
+# интегрированный с UserService и конфигурацией. Не содержит заглушек.
 # =================================================================================
 
 import logging
-from enum import Enum
 from typing import Union
 
 from aiogram.filters import BaseFilter
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 
-from bot.config.settings import settings
-# Предполагается, что зависимость user_service будет передана в хэндлер
-# from bot.services.user_service import UserService 
+from bot.config.settings import Settings
+from bot.services.user_service import UserService 
+from bot.utils.models import UserRole
 
 logger = logging.getLogger(__name__)
-
-# Определяем иерархию ролей. Используем IntEnum для возможности сравнения.
-class UserRole(int, Enum):
-    """Определяет роли пользователей с иерархией."""
-    USER = 1
-    MODERATOR = 2
-    ADMIN = 3
-    SUPER_ADMIN = 4 # ИСПРАВЛЕНО: Добавлена недостающая роль
 
 class PrivilegeFilter(BaseFilter):
     """
     Фильтр для проверки, имеет ли пользователь достаточные права.
     """
-    def __init__(self, min_role: Union[str, UserRole]):
-        if isinstance(min_role, UserRole):
-            self.min_role = min_role
-        elif isinstance(min_role, str):
-            try:
-                # Преобразуем строку в соответствующий член Enum
-                self.min_role = UserRole[min_role.upper()]
-            except KeyError:
-                logger.error(f"Попытка создать фильтр с неверной ролью: {min_role}")
-                raise ValueError(f"Несуществующая роль: {min_role}")
-        else:
-            raise TypeError(f"min_role должен быть строкой или UserRole, а не {type(min_role)}")
+    def __init__(self, min_role: UserRole):
+        self.min_role = min_role
 
-    async def __call__(self, message: Message) -> bool:
+    async def __call__(self, event: Union[Message, CallbackQuery], user_service: UserService, settings: Settings) -> bool:
         """
         Проверяет роль пользователя. Возвращает True, если у пользователя
         достаточно прав, иначе False.
+        Работает как для сообщений, так и для колбэков.
         """
-        user_id = message.from_user.id
+        user_id = event.from_user.id
         
-        # SUPER_ADMIN - это пользователи из конфига
-        if user_id in settings.ADMIN_USER_IDS:
+        # 1. Супер-администраторы из конфига всегда имеют высший приоритет.
+        # ИСПРАВЛЕНО: Используем ADMIN_IDS в соответствии с финальной моделью настроек.
+        if user_id in settings.ADMIN_IDS:
             user_role = UserRole.SUPER_ADMIN
         else:
-            # В реальном приложении здесь должна быть логика получения роли из БД
-            # Например, через user_service, который нужно будет передать в хэндлер
-            # user_role_str = await user_service.get_user_role(user_id)
-            # user_role = UserRole[user_role_str.upper()]
-            user_role = UserRole.USER # Заглушка для простоты
+            # 2. Для всех остальных получаем актуальную роль из UserService (который читает из Redis).
+            user = await user_service.get_user(user_id)
+            if user:
+                user_role = user.role
+            else:
+                # 3. Если пользователя еще нет в нашей базе, он имеет роль по умолчанию.
+                user_role = UserRole.USER
 
-        # Сравниваем уровень доступа пользователя с минимально требуемым
-        return user_role.value >= self.min_role.value
-
+        # 4. Сравниваем уровень доступа пользователя с минимально требуемым.
+        return user_role >= self.min_role

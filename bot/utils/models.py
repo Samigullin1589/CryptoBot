@@ -1,7 +1,8 @@
 # =================================================================================
-# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/utils/models.py (ФИНАЛЬНАЯ ИНТЕГРИРОВАННАЯ ВЕРСИЯ, АВГУСТ 2025)
 # Описание: Полный и самодостаточный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлено поле 'type' в модель Achievement.
+# ИНТЕГРАЦИЯ: Система верификации встроена непосредственно в основную модель
+# пользователя для обеспечения целостности данных.
 # =================================================================================
 
 from __future__ import annotations
@@ -37,13 +38,6 @@ class MiningEvent(BaseModel):
     profit_multiplier: float = Field(default=1.0, description="Множитель дохода (напр., 1.5 для +50%)")
     cost_multiplier: float = Field(default=1.0, description="Множитель затрат (напр., 0.5 для -50%)")
 
-class UserProfile(BaseModel):
-    """Профиль пользователя Telegram."""
-    user_id: int
-    username: Optional[str] = None
-    full_name: str
-    language_code: Optional[str] = None
-
 class AsicMiner(BaseModel):
     """Модель данных для ASIC-майнера."""
     id: str
@@ -58,9 +52,10 @@ class NewsArticle(BaseModel):
     """Модель для новостной статьи."""
     title: str
     url: str
-    body: str
+    body: Optional[str] = None # Сделаем опциональным, т.к. не все RSS отдают тело
     source: str
-    timestamp: int
+    timestamp: Optional[int] = None # Сделаем опциональным
+    published_at: Optional[str] = None # Для совместимости с разными форматами дат
     ai_summary: Optional[str] = None
 
 class AirdropProject(BaseModel):
@@ -72,7 +67,6 @@ class AirdropProject(BaseModel):
     tasks: List[str]
     guide_url: Optional[str] = None
 
-# ИСПРАВЛЕНО: Добавлено поле 'type' для поддержки динамических достижений
 class Achievement(BaseModel):
     """
     Модель для достижения. Загружается из achievements_config.json.
@@ -109,15 +103,42 @@ class QuizQuestion(BaseModel):
     """Модель для вопроса в викторине."""
     question: str
     options: List[str]
-    correct_option_index: int # Индекс правильного ответа
+    correct_option_index: int
     explanation: Optional[str] = None
 
 class AIVerdict(BaseModel):
     """
     Модель для структурированного ответа от AI-анализатора безопасности.
-    Определяет вердикт по проанализированному сообщению.
     """
     intent: str = Field(default="other", description="Основное намерение сообщения.")
     toxicity_score: float = Field(default=0.0, description="Оценка токсичности от 0.0 до 1.0.")
     is_potential_scam: bool = Field(default=False, description="True, если сообщение похоже на мошенничество.")
     is_potential_phishing: bool = Field(default=False, description="True, если сообщение содержит подозрительные ссылки.")
+
+# --- ИНТЕГРИРОВАННАЯ СИСТЕМА ВЕРИФИКАЦИИ ---
+
+class VerificationData(BaseModel):
+    """
+    Модель для хранения данных о верификации и репутации пользователя.
+    Является частью основной модели User.
+    """
+    is_verified: bool = False
+    passport_verified: bool = False
+    deposit: float = 0.0
+    country_code: str = "🇷🇺" # Значение по умолчанию
+
+class User(BaseModel):
+    """
+    Центральная модель пользователя, объединяющая профиль Telegram
+    с данными о верификации и репутации.
+    """
+    id: int = Field(alias="user_id") # Используем alias для совместимости с UserProfile
+    username: Optional[str] = None
+    first_name: str = Field(alias="full_name") # Используем alias
+    language_code: Optional[str] = None
+    
+    # Встраиваем данные о верификации прямо в модель пользователя
+    verification_data: VerificationData = Field(default_factory=VerificationData)
+
+    class Config:
+        populate_by_name = True # Разрешаем Pydantic использовать alias'ы
