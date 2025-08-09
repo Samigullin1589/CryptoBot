@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ, ИСПРАВЛЕННАЯ)
 # Описание: DI-контейнер, поддерживающий асинхронную инициализацию сервисов.
-# ИСПРАВЛЕНИЕ: Устранена циклическая/некорректная зависимость PriceService
-# от CoinListService, что исправляет критическую ошибку TypeError при запуске.
+# ИСПРАВЛЕНИЕ: Устранена проблема с передачей зависимостей в CoinListService
+# для обеспечения работы с PRO API ключом.
 # =================================================================================
 
 import aiohttp
@@ -72,18 +72,22 @@ class Deps(BaseModel):
         market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, config=settings.market_data, endpoints=settings.endpoints)
         achievement_service = AchievementService(redis=redis_pool, config=settings.achievements, market_data_service=market_data_service)
         security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
-        coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, config=settings.coin_list_service, endpoints=settings.endpoints)
+
+        # ======================= КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ =======================
+        # Передаем весь объект settings, а не его части.
+        # Это позволяет сервису получить доступ к COINGECKO_API_KEY и другим настройкам.
+        coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
+        # =====================================================================
+
         asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
-        
-        # ИСПРАВЛЕНО: PriceService НЕ зависит от CoinListService при инициализации.
-        # Он получает ID монет как аргумент в своих методах, что является правильным подходом.
+
         price_service = PriceService(
-            redis=redis_pool, 
-            http_session=http_session, 
-            config=settings.price_service, 
+            redis=redis_pool,
+            http_session=http_session,
+            config=settings.price_service,
             endpoints=settings.endpoints
         )
-        
+
         crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
         market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
         scheduler_instance = AsyncIOScheduler(timezone="UTC")
