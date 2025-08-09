@@ -15,12 +15,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 
-from bot.config.settings import Settings
+from bot.config.config import settings
 from bot.services.user_service import UserService
 from bot.services.market_service import AsicMarketService
 from bot.services.event_service import MiningEventService
 from bot.services.achievement_service import AchievementService
-# ИСПРАВЛЕНО: Импортируем единую, правильную модель User и новую UserGameProfile
 from bot.utils.models import MiningSessionResult, AsicMiner, User, UserGameProfile
 from bot.keyboards.game_keyboards import get_game_main_menu_keyboard, get_electricity_menu_keyboard
 from bot.utils.lua_scripts import LuaScripts
@@ -63,7 +62,6 @@ class MiningGameService:
 
         if not profile_data:
             default_tariff = self.settings.game.default_electricity_tariff
-            # Данные для создания нового профиля
             initial_data = {
                 "balance": "0.0",
                 "total_earned": "0.0",
@@ -71,13 +69,19 @@ class MiningGameService:
                 "owned_tariffs": default_tariff,
             }
             await self.redis.hmset(profile_key, initial_data)
-            profile_data = initial_data
+            profile_data.update(initial_data) # Обновляем локальный словарь
         
-        # Преобразуем строковые значения из Redis в правильные типы
+        # === ИСПРАВЛЕНО: Гарантируем, что current_tariff не None ===
+        current_tariff = profile_data.get("current_tariff")
+        if not current_tariff:
+            current_tariff = self.settings.game.default_electricity_tariff
+            await self.redis.hset(profile_key, "current_tariff", current_tariff)
+        # ==========================================================
+
         game_profile = UserGameProfile(
             balance=float(profile_data.get("balance", 0.0)),
             total_earned=float(profile_data.get("total_earned", 0.0)),
-            current_tariff=profile_data.get("current_tariff"),
+            current_tariff=current_tariff,
             owned_tariffs=profile_data.get("owned_tariffs", "").split(',')
         )
         

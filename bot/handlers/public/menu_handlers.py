@@ -1,13 +1,13 @@
 # =================================================================================
 # Файл: bot/handlers/public/menu_handlers.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ - ИСПРАВЛЕННАЯ)
 # Описание: Центральный роутер, использующий CallbackData для навигации.
-# ИСПРАВЛЕНИЕ: Устранены ошибки TypeError и ValidationError, вызовы хэндлеров
-# приведены в соответствие с их сигнатурами.
+# ИСПРАВЛЕНИЕ: Устранены ошибки TypeError, вызовы хэндлеров приведены
+#              в соответствие с их реальными сигнатурами.
 # =================================================================================
 import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery
 
 from bot.keyboards.callback_factories import MenuCallback
 from bot.utils.dependencies import Deps
@@ -20,7 +20,7 @@ from . import (
     news_handler,
     quiz_handler,
     game_handler,
-    market_info_handler, # ИСПРАВЛЕНО: Используем единый market_info_handler
+    market_info_handler,
     crypto_center_handler
 )
 from ..tools import calculator_handler
@@ -58,11 +58,10 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
     handler_func = navigation_map.get(action)
 
     if handler_func:
-        # >>>>> ГЛАВНОЕ ИСПРАВЛЕНИЕ <<<<<
         # aiogram 3 элегантно передает в хэндлер только те зависимости,
         # которые указаны в его сигнатуре. Мы можем безопасно передавать
         # все доступные, и хэндлер сам выберет нужные.
-        await handler_func(call, state=state, deps=deps)
+        await handler_func(call=call, state=state, deps=deps)
     else:
         logger.warning(f"Не найден обработчик для действия 'menu:0:{action}'")
         await call.answer(f"Раздел '{action}' находится в разработке.", show_alert=True)

@@ -4,7 +4,7 @@
 # =================================================================================
 import logging
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.utils.dependencies import Deps
@@ -14,7 +14,7 @@ router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
 @router.callback_query(F.data == "nav:quiz")
-async def handle_quiz_start(call: CallbackQuery, deps: Deps):
+async def handle_quiz_start(call: CallbackQuery, deps: Deps, **kwargs):
     await call.answer("Генерирую вопрос...")
     question_data = await deps.quiz_service.get_random_question()
 
@@ -40,7 +40,7 @@ async def handle_quiz_answer(call: CallbackQuery):
     
     next_keyboard = InlineKeyboardBuilder()
     next_keyboard.button(text="🔄 Следующий вопрос", callback_data="nav:quiz")
-    next_keyboard.button(text="🏠 Главное меню", callback_data="back_to_main_menu")
+    next_keyboard.button(text="🏠 Главное меню", callback_data="menu:0:main")
     next_keyboard.adjust(1)
 
     if is_correct:
