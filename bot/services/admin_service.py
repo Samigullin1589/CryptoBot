@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/services/admin_service.py (ПРОДАКШН-ВЕРСИЯ - ФИНАЛЬНАЯ)
+# Файл: bot/services/admin_service.py (ПРОДАКШН-ВЕРСИЯ - ФИНАЛЬНАЯ, ИСПРАВЛЕННАЯ)
 # Описание: Сервис для сбора статистики и выполнения административных задач.
-# ИСПРАВЛЕНИЕ: Конструктор приведен в полное соответствие с DI-контейнером.
+# ИСПРАВЛЕНИЕ: Конструктор приведен в полное соответствие с моделью настроек Pydantic.
 # ===============================================================
 import logging
 from datetime import datetime, timedelta, timezone
@@ -11,7 +11,6 @@ import redis.asyncio as redis
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 
-# ИСПРАВЛЕНО: Добавлены все необходимые импорты
 from bot.config.settings import Settings 
 from bot.utils.keys import KeyFactory
 from bot.keyboards.admin_keyboards import (
@@ -27,7 +26,6 @@ class AdminService:
     Использует эффективные и безопасные методы работы с Redis.
     """
     
-    # ИСПРАВЛЕНО: Конструктор полностью синхронизирован с dependencies.py
     def __init__(self, redis: redis.Redis, settings: Settings, bot: Bot):
         """
         Инициализирует сервис администратора.
@@ -39,13 +37,21 @@ class AdminService:
         self.redis = redis
         self.settings = settings
         self.bot = bot
-        # ИСПРАВЛЕНО: Используется корректное имя поля из настроек
-        self.admin_ids = settings.ADMIN_USER_IDS
-        # ИСПРАВЛЕНО: Используется корректное имя фабрики ключей
+        
+        # ======================= КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ =======================
+        # Обращаемся к атрибуту по его имени в Python (`admin_ids`), 
+        # а не по псевдониму из .env (`ADMIN_USER_IDS`).
+        self.admin_ids: List[int] = settings.admin_ids
+        # =====================================================================
+
         self.keys = KeyFactory
 
     async def notify_admins(self, message: str, **kwargs):
         """Отправляет уведомление всем администраторам из списка."""
+        if not self.admin_ids:
+            logger.warning("Попытка отправить уведомление, но список ID администраторов пуст.")
+            return
+            
         for admin_id in self.admin_ids:
             try:
                 await self.bot.send_message(admin_id, message, **kwargs)
@@ -70,9 +76,9 @@ class AdminService:
         stats_key = self.keys.game_stats() 
         raw_stats = await self.redis.hgetall(stats_key)
         return {
-            "active_sessions": int(raw_stats.get("active_sessions", 0)),
-            "total_balance": float(raw_stats.get("total_balance", 0.0)),
-            "pending_withdrawals": int(raw_stats.get("pending_withdrawals", 0)),
+            "active_sessions": int(raw_stats.get(b"active_sessions", 0)),
+            "total_balance": float(raw_stats.get(b"total_balance", 0.0)),
+            "pending_withdrawals": int(raw_stats.get(b"pending_withdrawals", 0)),
         }
 
     async def change_user_game_balance(self, user_id: int, amount: float) -> float | None:
@@ -86,4 +92,3 @@ class AdminService:
         
         logger.info(f"Admin changed game balance for user {user_id} by {amount}. New balance: {new_balance}")
         return new_balance
-
