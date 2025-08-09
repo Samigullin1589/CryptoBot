@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/keyboards/callback_factories.py (НОВЫЙ ФАЙЛ, ПРОМЫШЛЕННЫЙ СТАНДАРТ)
+# Файл: bot/keyboards/callback_factories.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
 # Описание: Централизованное определение всех структур данных для инлайн-кнопок.
-# Этот файл является "единым источником правды" для всех колбэков в боте.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая фабрика `NewsCallback` для устранения ImportError.
 # =================================================================================
 
 from aiogram.filters.callback_data import CallbackData
@@ -22,7 +22,16 @@ class PriceCallback(CallbackData, prefix="price"):
     - coin_id: идентификатор монеты (например, 'bitcoin')
     """
     action: str
-    coin_id: str | None = None # coin_id не обязателен для кнопки "поиск"
+    coin_id: str | None = None
+
+class NewsCallback(CallbackData, prefix="news"):
+    """
+    Фабрика для навигации в разделе новостей.
+    - action: действие ('list_sources', 'get_feed')
+    - source_key: ключ источника (например, 'forklog')
+    """
+    action: str
+    source_key: str | None = None
 
 class PaginatorCallback(CallbackData, prefix="paginator"):
     """
