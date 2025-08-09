@@ -1,5 +1,5 @@
 # =================================================================================
-# Файл: bot/handlers/public/menu_handlers.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
+# Файл: bot/handlers/public/menu_handlers.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ - ИСПРАВЛЕННАЯ)
 # Описание: Центральный роутер, использующий CallbackData для навигации.
 # ИСПРАВЛЕНИЕ: Устранены ошибки TypeError и ValidationError, вызовы хэндлеров
 # приведены в соответствие с их сигнатурами.
@@ -61,7 +61,8 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
         # aiogram 3 элегантно передает в хэндлер только те зависимости,
         # которые указаны в его сигнатуре. Мы можем безопасно передавать
         # все доступные, и хэндлер сам выберет нужные.
-        await handler_func(update=call, state=state, deps=deps)
+        # ИСПРАВЛЕНО: Теперь передаем `call` как именованный аргумент `call`
+        await handler_func(call=call, state=state, deps=deps)
     else:
         logger.warning(f"Не найден обработчик для действия 'menu:0:{action}'")
         await call.answer(f"Раздел '{action}' находится в разработке.", show_alert=True)

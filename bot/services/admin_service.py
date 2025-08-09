@@ -33,11 +33,11 @@ class AdminService:
         self.admin_ids: List[int] = settings.admin_ids
         self.keys = KeyFactory
 
-    # --- Методы для отслеживания статистики ---
+    # --- Методы для отслеживания статистики (ВОССТАНОВЛЕНО) ---
     async def track_action(self, user_id: int, action_name: str):
         """Отслеживает использование команды или нажатие на кнопку."""
         await self.redis.zincrby("stats:actions", 1, action_name)
-
+        
     # --- Уведомления ---
     async def notify_admins(self, message: str, **kwargs):
         """Отправляет уведомление всем администраторам."""

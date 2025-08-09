@@ -18,7 +18,8 @@ from bot.utils.formatters import format_price_info
 router = Router(name="price_handler_router")
 logger = logging.getLogger(__name__)
 
-async def handle_price_menu_start(call: CallbackQuery, state: FSMContext, deps: Deps):
+# ИСПРАВЛЕНО: Сигнатура изменена для совместимости с menu_handlers
+async def handle_price_menu_start(call: CallbackQuery, state: FSMContext, deps: Deps, **kwargs):
     """Точка входа в раздел курсов. Вызывается из menu_handlers."""
     text = "Курс какой монеты вас интересует? Выберите из популярных или отправьте тикер/название."
     await call.message.edit_text(text, reply_markup=get_price_keyboard())
@@ -58,10 +59,8 @@ async def show_price_for_coin(target: Message | CallbackQuery, coin_id: str, dep
 async def handle_price_button_callback(call: CallbackQuery, callback_data: PriceCallback, state: FSMContext, deps: Deps):
     """
     Обрабатывает нажатие на кнопку с конкретной монетой.
-    aiogram автоматически распакует данные из `callback_data` в одноименный аргумент.
     """
     await state.clear()
-    # coin_id берем прямо из типизированного объекта callback_data
     await show_price_for_coin(call, callback_data.coin_id, deps)
 
 @router.message(PriceInquiryState.waiting_for_ticker)
