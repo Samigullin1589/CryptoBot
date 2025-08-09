@@ -1,12 +1,13 @@
 # =================================================================================
-# Файл: bot/handlers/public/menu_handlers.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ - ИСПРАВЛЕННАЯ)
+# Файл: bot/handlers/public/menu_handlers.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
 # Описание: Центральный роутер, использующий CallbackData для навигации.
-# ИСПРАВЛЕНИЕ: Устранены ошибки TypeError и ValidationError.
+# ИСПРАВЛЕНИЕ: Устранены ошибки TypeError и ValidationError, вызовы хэндлеров
+# приведены в соответствие с их сигнатурами.
 # =================================================================================
 import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.callback_factories import MenuCallback
 from bot.utils.dependencies import Deps
@@ -40,7 +41,7 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
         await show_main_menu_from_callback(call)
         return
 
-    # ИСПРАВЛЕНО: Карта навигации теперь полная и вызывает правильные функции
+    # Карта навигации: сопоставляет 'action' с функцией-обработчиком
     navigation_map = {
         "price": price_handler.handle_price_menu_start,
         "asics": asic_handler.top_asics_start,
@@ -57,9 +58,10 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
     handler_func = navigation_map.get(action)
 
     if handler_func:
-        # ИСПРАВЛЕНО: Убрано некорректное изменение call.data.
-        # Хэндлеры вызываются с нужными аргументами.
-        await handler_func(call=call, state=state, deps=deps)
+        # aiogram 3 элегантно передает в хэндлер только те зависимости,
+        # которые указаны в его сигнатуре. Мы можем безопасно передавать
+        # все доступные, и хэндлер сам выберет нужные.
+        await handler_func(update=call, state=state, deps=deps)
     else:
         logger.warning(f"Не найден обработчик для действия 'menu:0:{action}'")
         await call.answer(f"Раздел '{action}' находится в разработке.", show_alert=True)

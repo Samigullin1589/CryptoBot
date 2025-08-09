@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/models.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
+# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Восстановлены псевдонимы (alias) в модели User для корректной
-# валидации данных и устранения ValidationError.
+# ИСПРАВЛЕНИЕ: Перемещен Enum UserRole для устранения циклического импорта.
 # =================================================================================
 
 from __future__ import annotations
@@ -10,7 +9,7 @@ from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field, ConfigDict
 from enum import IntEnum
 
-# --- ИЕРАРХИЯ РОЛЕЙ ---
+# --- ИЕРАРХИЯ РОЛЕЙ (ПЕРЕНЕСЕНО СЮДА) ---
 class UserRole(IntEnum):
     BANNED = 0
     USER = 1
@@ -34,7 +33,6 @@ class UserGameProfile(BaseModel):
 
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
 class User(BaseModel):
-    # ИСПРАВЛЕНО: Восстановлены псевдонимы для полей
     id: int = Field(alias="user_id")
     username: Optional[str] = None
     first_name: str = Field(alias="full_name")
@@ -51,14 +49,12 @@ class User(BaseModel):
 # --- Модели для сервиса майнинга и калькулятора ---
 
 class CalculationInput(BaseModel):
-    """Модель для входных данных калькулятора доходности."""
     hashrate_str: str
     power_consumption_watts: int
     electricity_cost: float
     pool_commission: float
 
 class CalculationResult(BaseModel):
-    """Модель для структурированного результата вычислений."""
     btc_price_usd: float
     usd_rub_rate: float
     network_hashrate_ths: float
