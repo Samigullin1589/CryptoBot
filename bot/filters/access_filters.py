@@ -1,17 +1,17 @@
 # =================================================================================
 # Файл: bot/filters/access_filters.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025 - ФИНАЛЬНАЯ ВЕРСИЯ)
-# Описание: Динамический фильтр для проверки прав доступа, полностью
-#           интегрированный с DI-контейнером.
-# ИСПРАВЛЕНИЕ: Сигнатура __call__ приведена в полное соответствие с DI-контейнером Deps.
+# Описание: Фильтр прав доступа, адаптированный под механизм DI в aiogram 3+.
+# ИСПРАВЛЕНИЕ: __call__ теперь корректно извлекает контейнер 'deps' из
+#              словаря 'data', передаваемого aiogram в фильтры.
 # =================================================================================
 
 import logging
-from typing import Union
+from typing import Union, Dict, Any
 
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery
 
-# ИСПРАВЛЕНО: Импортируем контейнер зависимостей Deps
+# Импортируем зависимости, которые нам нужно будет найти
 from bot.utils.dependencies import Deps
 from bot.utils.models import UserRole
 
@@ -25,18 +25,25 @@ class PrivilegeFilter(BaseFilter):
         self.min_role = min_role
 
     # ========================== КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ==========================
-    # Вместо отдельных сервисов (user_service, settings), фильтр теперь принимает
-    # единый контейнер 'deps', как его предоставляет aiogram из `dp.start_polling`.
-    async def __call__(self, event: Union[Message, CallbackQuery], deps: Deps) -> bool:
+    # aiogram передает все зависимости в фильтры внутри словаря `data`.
+    # Мы принимаем этот словарь и извлекаем из него наш контейнер `deps`.
+    async def __call__(self, event: Union[Message, CallbackQuery], **data: Any) -> bool:
     # =========================================================================
         """
         Проверяет роль пользователя. Возвращает True, если у пользователя
         достаточно прав, иначе False.
         """
+        # Извлекаем контейнер зависимостей из переданных данных
+        deps: Deps = data.get('deps')
+        
+        # Если по какой-то причине контейнер не был передан, блокируем доступ
+        if not deps:
+            logger.error("Критическая ошибка: DI-контейнер 'deps' не был передан в PrivilegeFilter.")
+            return False
+
         user_id = event.from_user.id
         
         # 1. Супер-администраторы из конфига всегда имеют высший приоритет.
-        # ИСПРАВЛЕНО: Доступ к настройкам и сервисам осуществляется через объект deps.
         if user_id in deps.settings.admin_ids:
             user_role = UserRole.SUPER_ADMIN
         else:
