@@ -1,12 +1,14 @@
 # =================================================================================
-# Файл: bot/services/news_service.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025)
+# Файл: bot/services/news_service.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ, АВГУСТ 2025)
 # Описание: Динамический сервис для получения новостей из источников,
 # определенных в конфигурации, а не в коде.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт `asyncio` для устранения NameError.
 # =================================================================================
 
 from __future__ import annotations
 import logging
 import json
+import asyncio # <-- ИСПРАВЛЕНО: Добавлен необходимый импорт
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -33,11 +35,9 @@ class NewsService:
         self.http_session = http_session
         self.config = config
         
-        # --- ДИНАМИЧЕСКАЯ ИНИЦИАЛИЗАЦИЯ ИСТОЧНИКОВ ИЗ КОНФИГУРАЦИИ ---
         self.news_feeds: Dict[str, str] = {}
         self.source_names: Dict[str, str] = {}
         
-        # Обрабатываем основные ленты
         for url in config.feeds.main_rss_feeds:
             key, name = self._generate_source_info(str(url))
             if key:
@@ -52,7 +52,6 @@ class NewsService:
         try:
             parsed_url = urlparse(url)
             domain = parsed_url.netloc
-            # Создаем ключ (например, 'forklog_com') и имя (например, 'Forklog')
             key = domain.replace('.', '_').lower()
             name = domain.split('.')[-2].capitalize()
             return key, name
