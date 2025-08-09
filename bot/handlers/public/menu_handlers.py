@@ -1,46 +1,45 @@
 # =================================================================================
-# Файл: bot/handlers/public/menu_handlers.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
-# Описание: Центральный обработчик для всех кнопок главного меню.
-# Устраняет проблему "зависания" кнопок.
+# Файл: bot/handlers/public/menu_handlers.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ)
+# Описание: Центральный роутер, использующий CallbackData для навигации.
 # =================================================================================
 import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import CallbackQuery
 
+from bot.keyboards.callback_factories import MenuCallback
 from bot.utils.dependencies import Deps
-from bot.keyboards.keyboards import get_main_menu_keyboard, get_back_to_main_menu_keyboard
-from bot.keyboards.info_keyboards import get_price_keyboard
-from bot.states.info_states import PriceInquiryState
-from bot.utils.formatters import format_price_info
+from bot.utils.ui_helpers import show_main_menu_from_callback
 
-router = Router(name=__name__)
+# Импортируем целевые обработчики
+from . import price_handler # и другие по мере реализации
+
+router = Router(name="main_menu_router")
 logger = logging.getLogger(__name__)
 
-# --- ОБРАБОТЧИК ВОЗВРАТА В ГЛАВНОЕ МЕНЮ ---
-@router.callback_query(F.data == "back_to_main_menu")
-async def handle_back_to_main_menu(call: CallbackQuery, state: FSMContext):
+# --- ЦЕНТРАЛЬНЫЙ ОБРАБОТЧИК НАВИГАЦИИ ---
+# Фильтруем по объекту MenuCallback, где level=0 (главное меню)
+@router.callback_query(MenuCallback.filter(F.level == 0))
+async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, state: FSMContext, deps: Deps):
+    """
+    Принимает нажатия на кнопки главного меню и перенаправляет в нужные модули.
+    """
     await state.clear()
-    text = "👋 Выберите одну из опций в меню ниже."
-    await call.message.edit_text(text, reply_markup=get_main_menu_keyboard())
-    await call.answer()
-
-# --- РАЗДЕЛ: КУРСЫ ВАЛЮТ (перенесен из price_handler) ---
-@router.callback_query(F.data == "nav:price")
-async def handle_price_menu(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    text = "Курс какой монеты вас интересует? Выберите из популярных или отправьте тикер/название."
-    await call.message.edit_text(text, reply_markup=get_price_keyboard())
-    await state.set_state(PriceInquiryState.waiting_for_ticker)
-    await call.answer()
-
-# --- ОБРАБОТЧИКИ-ЗАГЛУШКИ ДЛЯ ОСТАЛЬНЫХ КНОПОК МЕНЮ ---
-@router.callback_query(F.data.startswith("nav:"))
-async def handle_placeholder_menu(call: CallbackQuery):
-    """Отвечает на все остальные кнопки 'nav:*', которые еще не реализованы."""
-    # Исключаем уже реализованный 'nav:price'
-    if call.data == "nav:price":
+    action = callback_data.action
+    
+    if action == "main":
+        await show_main_menu_from_callback(call, deps)
         return
-        
-    destination = call.data.split(":")[1]
-    await call.answer(f"Раздел '{destination}' находится в разработке.", show_alert=True)
+
+    navigation_map = {
+        "price": price_handler.handle_price_menu_start,
+        # "asics": asic_handler.handle_asic_menu_start, # Будет добавлено
+    }
+    
+    handler_func = navigation_map.get(action)
+    
+    if handler_func:
+        await handler_func(call, state, deps)
+    else:
+        logger.warning(f"Не найден обработчик для действия 'menu:0:{action}'")
+        await call.answer(f"Раздел '{action}' в разработке.", show_alert=True)
