@@ -44,25 +44,14 @@ class CoinListService:
     @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=5, logger=logger, jitter=backoff.full_jitter)
     async def _fetch_from_api(self) -> Optional[List[Dict[str, Any]]]:
         """
-        Загружает список монет с API CoinGecko, используя API-ключ, если он предоставлен.
+        Загружает список монет с API CoinGecko.
         """
-        params = {}
-        headers = {}
-        
-        # ======================= КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ =======================
-        # Динамический выбор эндпоинта и добавление API ключа
-        if self.settings.COINGECKO_API_KEY and self.settings.COINGECKO_API_KEY.get_secret_value():
-            api_key = self.settings.COINGECKO_API_KEY.get_secret_value()
-            # Для Pro-плана ключ передается в заголовке
-            headers['x-cg-pro-api-key'] = api_key
-            url = f"{self.endpoints.coingecko_api_pro_base}{self.endpoints.coins_list_endpoint}"
-            logger.info(f"Загрузка свежего списка монет с PRO API: {url}")
-        else:
-            url = f"{self.endpoints.coingecko_api_base}{self.endpoints.coins_list_endpoint}"
-            logger.info(f"Загрузка свежего списка монет с публичного API: {url}")
-        # =====================================================================
+        # === ИЗМЕНЕНО: Логика с COINGECKO_API_KEY удалена по вашему запросу ===
+        url = f"{self.endpoints.coingecko_api_base}{self.endpoints.coins_list_endpoint}"
+        logger.info(f"Загрузка свежего списка монет с публичного API: {url}")
+        # =======================================================================
 
-        async with self.http_session.get(url, params=params, headers=headers, timeout=20) as response:
+        async with self.http_session.get(url, timeout=20) as response:
             if response.status == 429:
                 logger.warning("Получен статус 429 (Too Many Requests). Ожидание перед повторной попыткой.")
             response.raise_for_status()

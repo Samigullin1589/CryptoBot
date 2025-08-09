@@ -20,7 +20,7 @@ from . import (
     news_handler,
     quiz_handler,
     game_handler,
-    market_data_handler,
+    market_info_handler, # ИСПРАВЛЕНО: Используем единый market_info_handler
     crypto_center_handler
 )
 from ..tools import calculator_handler
@@ -47,9 +47,9 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
         "asics": asic_handler.top_asics_start,
         "calculator": calculator_handler.start_profit_calculator,
         "news": news_handler.handle_news_menu_start,
-        "fear_index": market_data_handler.handle_fear_greed_index,
-        "halving": market_data_handler.handle_halving_info,
-        "btc_status": market_data_handler.handle_btc_status,
+        "fear_index": market_info_handler.handle_fear_greed_index,
+        "halving": market_info_handler.handle_halving_info,
+        "btc_status": market_info_handler.handle_btc_status,
         "quiz": quiz_handler.handle_quiz_start,
         "game": game_handler.handle_game_menu_entry,
         "crypto_center": crypto_center_handler.crypto_center_main_menu,
@@ -58,11 +58,11 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
     handler_func = navigation_map.get(action)
 
     if handler_func:
+        # >>>>> ГЛАВНОЕ ИСПРАВЛЕНИЕ <<<<<
         # aiogram 3 элегантно передает в хэндлер только те зависимости,
         # которые указаны в его сигнатуре. Мы можем безопасно передавать
         # все доступные, и хэндлер сам выберет нужные.
-        # ИСПРАВЛЕНО: Теперь передаем `call` как именованный аргумент `call`
-        await handler_func(call=call, state=state, deps=deps)
+        await handler_func(call, state=state, deps=deps)
     else:
         logger.warning(f"Не найден обработчик для действия 'menu:0:{action}'")
         await call.answer(f"Раздел '{action}' находится в разработке.", show_alert=True)
