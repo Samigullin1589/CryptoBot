@@ -1,16 +1,8 @@
 # ===============================================================
-# Файл: bot/states/mining_states.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Определяет состояния (FSM) для игры "Виртуальный
-# Майнинг" и для Калькулятора доходности.
+# Файл: bot/states/mining_states.py (ПРОДАКШН-ВЕРСИЯ 2025 - СКОРРЕКТИРОВАННЫЙ)
+# Описание: Определяет состояния (FSM) только для Калькулятора доходности.
 # ===============================================================
 from aiogram.fsm.state import State, StatesGroup
-
-class MiningGameStates(StatesGroup):
-    """
-    Состояния для многошаговых действий в игре "Виртуальный Майнинг".
-    """
-    confirm_tariff_purchase = State()
-    confirm_withdraw = State()
 
 class CalculatorStates(StatesGroup):
     """

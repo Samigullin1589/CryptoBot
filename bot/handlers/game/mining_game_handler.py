@@ -8,10 +8,10 @@ from aiogram import F, Router, Bot, types
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
+from bot.config.config import settings
 from bot.services.mining_game_service import MiningGameService
 from bot.services.asic_service import AsicService
-from bot.states.mining_states import MiningGameStates
+from bot.states.game_states import MiningGameStates # <-- ИСПРАВЛЕН ИМПОРТ
 from bot.keyboards.mining_keyboards import (
     get_mining_menu_keyboard, get_shop_keyboard, get_my_farm_keyboard,
     get_withdraw_keyboard
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 @game_router.callback_query(F.data == "nav:mining_game")
 async def handle_mining_menu(call: CallbackQuery, state: FSMContext, game_service: MiningGameService):
     """Отображает главное меню игры 'Виртуальный Майнинг'."""
-    await state.clear() # Очищаем состояние при входе в главное меню игры
+    await state.clear()
     text = "💎 <b>Центр управления Виртуальным Майнингом</b>\n\nВыберите действие:"
     farm_info, stats_info = await game_service.get_farm_and_stats_info(call.from_user.id)
     full_text = f"{text}\n\n{farm_info}\n\n{stats_info}"
@@ -45,26 +45,24 @@ async def show_shop_page(call: CallbackQuery, state: FSMContext, asic_service: A
     """Отображает страницу магазина, используя данные из FSM или загружая их."""
     fsm_data = await state.get_data()
     asics_data = fsm_data.get('shop_asics')
+    asics = [AsicMiner(**data) for data in asics_data] if asics_data else []
 
-    if not asics_data:
+    if not asics:
         logger.info(f"User {call.from_user.id} fetching new ASIC list for shop.")
-        # --- УЛУЧШЕНИЕ: Загружаем список ОДИН РАЗ ---
-        asics, _ = await asic_service.get_top_asics(electricity_cost=0.05, count=50) # Загружаем разумное количество для игры
+        asics, _ = await asic_service.get_top_asics(electricity_cost=0.05, count=50)
         if not asics:
             await call.message.edit_text(
                 "К сожалению, список оборудования временно недоступен.",
                 reply_markup=get_mining_menu_keyboard(is_session_active=False)
             )
             return
-        # --- УЛУЧШЕНИЕ: Кэшируем список в FSM ---
         await state.update_data(shop_asics=[asic.model_dump() for asic in asics])
-    else:
-        asics = [AsicMiner(**data) for data in asics_data]
     
     text = "🏪 <b>Магазин оборудования</b>\n\nВыберите ASIC для запуска сессии:"
     keyboard = get_shop_keyboard(asics, page)
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()
+
 
 @game_router.callback_query(F.data == "game_nav:shop")
 async def handle_shop_menu(call: CallbackQuery, state: FSMContext, asic_service: AsicService):
@@ -73,24 +71,26 @@ async def handle_shop_menu(call: CallbackQuery, state: FSMContext, asic_service:
     await state.set_state(MiningGameStates.in_shop)
     await show_shop_page(call, state, asic_service, 0)
 
+
 @game_router.callback_query(F.data.startswith("game_shop_page:"), MiningGameStates.in_shop)
 async def handle_shop_pagination(call: CallbackQuery, state: FSMContext, asic_service: AsicService):
     """Обрабатывает пагинацию в магазине."""
     page = int(call.data.split(":")[-1])
     await show_shop_page(call, state, asic_service, page)
 
+
 # --- Логика игры ---
 
 @game_router.callback_query(F.data.startswith("game_action:start:"), MiningGameStates.in_shop)
 async def handle_start_mining(call: CallbackQuery, state: FSMContext, game_service: MiningGameService):
     """Запускает майнинг-сессию, используя стабильный ID асика."""
-    asic_id = call.data.split(":")[-1]
+    asic_id_norm = call.data.split(":")[-1]
     
     fsm_data = await state.get_data()
     shop_asics_data = fsm_data.get('shop_asics', [])
     shop_asics = [AsicMiner(**data) for data in shop_asics_data]
     
-    selected_asic = next((asic for asic in shop_asics if normalize_asic_name(asic.name) == asic_id), None)
+    selected_asic = next((asic for asic in shop_asics if normalize_asic_name(asic.name) == asic_id_norm), None)
     
     if not selected_asic:
         await call.answer("Ошибка! Этот ASIC больше не доступен. Обновите магазин.", show_alert=True)
@@ -100,6 +100,7 @@ async def handle_start_mining(call: CallbackQuery, state: FSMContext, game_servi
     await call.message.edit_text(result_text, reply_markup=get_mining_menu_keyboard(is_session_active=True))
     await state.clear()
 
+
 @game_router.callback_query(F.data == "game_nav:my_farm")
 async def handle_my_farm(call: CallbackQuery, game_service: MiningGameService):
     """Показывает информацию об активной сессии и статистике."""
@@ -107,6 +108,7 @@ async def handle_my_farm(call: CallbackQuery, game_service: MiningGameService):
     full_text = f"{farm_info_text}\n\n{user_stats_text}"
     await call.message.edit_text(full_text, reply_markup=get_my_farm_keyboard())
     await call.answer()
+
 
 # --- Вывод средств и рефералы ---
 
@@ -119,6 +121,7 @@ async def handle_withdraw(call: CallbackQuery, game_service: MiningGameService):
         await call.message.edit_text(result_text, reply_markup=get_withdraw_keyboard())
     else:
         await call.answer(result_text, show_alert=True)
+
 
 @game_router.callback_query(F.data == "game_action:invite")
 async def handle_invite_friend(call: CallbackQuery, bot: Bot):
@@ -135,6 +138,7 @@ async def handle_invite_friend(call: CallbackQuery, bot: Bot):
     await call.message.edit_text(text, reply_markup=get_my_farm_keyboard())
     await call.answer("Ваша реферальная ссылка сформирована!")
 
+
 # --- Управление электроэнергией ---
 
 @game_router.callback_query(F.data == "game_nav:electricity")
@@ -144,6 +148,7 @@ async def handle_electricity_menu(call: CallbackQuery, game_service: MiningGameS
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()
 
+
 @game_router.callback_query(F.data.startswith("game_tariff_select:"))
 async def handle_select_tariff(call: CallbackQuery, game_service: MiningGameService):
     """Выбирает тариф."""
@@ -152,6 +157,7 @@ async def handle_select_tariff(call: CallbackQuery, game_service: MiningGameServ
     await call.answer(alert_text, show_alert=True)
     text, keyboard = await game_service.get_electricity_menu(call.from_user.id)
     await call.message.edit_text(text, reply_markup=keyboard)
+
 
 @game_router.callback_query(F.data.startswith("game_tariff_buy:"))
 async def handle_buy_tariff(call: CallbackQuery, game_service: MiningGameService):

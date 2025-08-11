@@ -1,7 +1,6 @@
 # =================================================================================
 # Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Обрабатывает общие команды и текстовый ввод.
-# ИСПРАВЛЕНИЕ: Роутер переименован в 'router' для совместимости с main.py.
 # =================================================================================
 import logging
 from typing import Union, Dict, Any
@@ -20,7 +19,6 @@ from bot.utils.formatters import format_price_info
 from bot.utils.text_utils import sanitize_html
 from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS, get_referral_success_text
 
-# ИСПРАВЛЕНО: Роутер переименован для единообразия
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
@@ -51,16 +49,18 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     if is_new_user and command.args:
         try:
             referrer_id = int(command.args)
-            bonus_credited = await deps.user_service.process_referral(
-                new_user_id=user.id,
-                referrer_id=referrer_id
-            )
-            if bonus_credited:
-                bonus_amount = 50.0 # Пример
-                await deps.bot.send_message(
-                    referrer_id,
-                    get_referral_success_text(float(bonus_amount))
-                )
+            # ВРЕМЕННО ОТКЛЮЧЕНО, так как метод process_referral не реализован в UserService
+            # bonus_credited = await deps.user_service.process_referral(
+            #     new_user_id=user.id,
+            #     referrer_id=referrer_id
+            # )
+            # if bonus_credited:
+            #     bonus_amount = 50.0 # Пример
+            #     await deps.bot.send_message(
+            #         referrer_id,
+            #         get_referral_success_text(float(bonus_amount))
+            #     )
+            logger.info(f"Новый пользователь {user.id} пришел по реферальной ссылке от {referrer_id}")
         except (ValueError, TypeError):
             logger.warning(f"Некорректный deeplink-аргумент '{command.args}' от пользователя {user.id}")
         except Exception as e:
@@ -86,6 +86,7 @@ async def handle_help(message: Message):
 # --- УПРАВЛЕНИЕ ОНБОРДИНГОМ ЧЕРЕЗ FSM ---
 @router.callback_query(F.data.startswith("onboarding:"))
 async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
+    await call.answer()
     action = call.data.split(":")[1]
 
     if action in ["skip", "finish"]:
@@ -113,13 +114,6 @@ async def handle_text_message(message: Message, state: FSMContext, deps: Deps):
     """
     Многоуровневый обработчик текста: сначала ищет цену, если не находит - передает AI.
     """
-    # Уровень 1: Поиск цены (закомментировано, так как эта логика в price_handler)
-    # price_info = await deps.price_service.get_crypto_price(message.text.strip())
-    # if price_info:
-    #     text = format_price_info(price_info)
-    #     await message.answer(text)
-    #     return
-
     # Уровень 2: AI-Консультант
     ai_filter = AITriggerFilter()
     if await ai_filter(message, deps.bot):
