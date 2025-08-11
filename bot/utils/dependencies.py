@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: DI-контейнер с корректной инициализацией всех зависимостей.
-# ИСПРАВЛЕНИЕ: Добавлен импорт Settings и KeyFactory в модель Deps.
+# ИСПРАВЛЕНИЕ: Добавлен VerificationService.
 # =================================================================================
 
 import aiohttp
@@ -10,7 +10,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-# ИСПРАВЛЕНО: Добавляем импорт класса Settings для type hints
 from bot.config.settings import Settings
 from bot.services.user_service import UserService
 from bot.services.admin_service import AdminService
@@ -28,6 +27,7 @@ from bot.services.event_service import MiningEventService
 from bot.services.achievement_service import AchievementService
 from bot.services.market_service import AsicMarketService
 from bot.services.mining_game_service import MiningGameService
+from bot.services.verification_service import VerificationService # <-- НОВЫЙ ИМПОРТ
 from bot.utils.keys import KeyFactory
 
 class Deps(BaseModel):
@@ -36,7 +36,6 @@ class Deps(BaseModel):
     redis_pool: Redis
     scheduler: AsyncIOScheduler = Field(default_factory=lambda: AsyncIOScheduler(timezone="UTC"))
     bot: Bot
-    # ИСПРАВЛЕНО: Добавляем KeyFactory в контейнер
     keys: KeyFactory = Field(default_factory=KeyFactory)
     user_service: UserService
     admin_service: AdminService
@@ -54,6 +53,7 @@ class Deps(BaseModel):
     crypto_center_service: CryptoCenterService
     market_service: AsicMarketService
     mining_game_service: MiningGameService
+    verification_service: VerificationService # <-- НОВЫЙ СЕРВИС
 
     class Config:
         arbitrary_types_allowed = True
@@ -80,6 +80,7 @@ class Deps(BaseModel):
         market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
         scheduler_instance = AsyncIOScheduler(timezone="UTC")
         mining_game_service = MiningGameService(redis=redis_pool, scheduler=scheduler_instance, settings=settings, user_service=user_service, market_service=market_service, event_service=event_service, achievement_service=achievement_service, bot=bot)
+        verification_service = VerificationService(user_service=user_service) # <-- ИНИЦИАЛИЗАЦИЯ
 
         await market_service.setup()
         await mining_game_service.setup()
@@ -91,5 +92,5 @@ class Deps(BaseModel):
             event_service=event_service, achievement_service=achievement_service, market_data_service=market_data_service,
             security_service=security_service, coin_list_service=coin_list_service, asic_service=asic_service,
             price_service=price_service, crypto_center_service=crypto_center_service, market_service=market_service,
-            mining_game_service=mining_game_service
+            mining_game_service=mining_game_service, verification_service=verification_service
         )

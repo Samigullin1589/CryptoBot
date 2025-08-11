@@ -14,14 +14,15 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
-# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
 from bot.config.config import settings
-from bot.handlers.admin.admin_menu import admin_router
+from bot.handlers.admin import admin_menu, verification_admin_handler # <-- ИЗМЕНЕН ИМПОРТ
 from bot.handlers.public import (
     common_handler, menu_handlers, price_handler, asic_handler,
-    news_handler, quiz_handler, game_handler, market_info_handler,
-    crypto_center_handler
+    news_handler, quiz_handler, market_info_handler,
+    crypto_center_handler, verification_public_handler # <-- НОВЫЙ ИМПОРТ
 )
+# Игровые хэндлеры теперь в своей папке
+from bot.handlers.game import mining_game_handler
 from bot.jobs.scheduled_tasks import setup_jobs
 from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
@@ -34,7 +35,10 @@ async def set_bot_commands(bot: Bot):
     """Устанавливает команды, видимые пользователям в меню Telegram."""
     commands = [
         BotCommand(command="start", description="🚀 Перезапустить бота"),
-        BotCommand(command="price", description="📈 Узнать курс криптовалюты"),
+        BotCommand(command="help", description="ℹ️ Помощь по боту"),
+        BotCommand(command="check", description="✅ Проверить статус пользователя"),
+        BotCommand(command="infoVerif", description="📄 Узнать о верификации"),
+        BotCommand(command="admin", description="🔒 Панель администратора"),
     ]
     await bot.set_my_commands(commands, BotCommandScopeDefault())
     logger.info("Команды бота успешно установлены.")
@@ -62,7 +66,7 @@ async def on_shutdown(bot: Bot, deps: Deps):
         deps.scheduler.shutdown(wait=False)
         logger.info("Планировщик задач остановлен.")
     if deps.redis_pool:
-        await deps.redis_pool.aclose()
+        await deps.redis_pool.close() # Используем close вместо aclose
         logger.info("Пул соединений Redis закрыт.")
     await bot.session.close()
     logger.info("Сессия бота закрыта.")
@@ -80,24 +84,27 @@ async def main():
     dp = Dispatcher(storage=storage)
 
     # Регистрация всех роутеров
-    dp.include_router(admin_router)
+    dp.include_router(admin_menu.admin_router)
+    dp.include_router(verification_admin_handler.router) # <-- НОВЫЙ АДМИН РОУТЕР
     dp.include_router(common_handler.router)
     dp.include_router(menu_handlers.router)
     dp.include_router(price_handler.router)
     dp.include_router(asic_handler.router)
     dp.include_router(news_handler.router)
     dp.include_router(quiz_handler.router)
-    dp.include_router(game_handler.router)
+    dp.include_router(mining_game_handler.game_router)
     dp.include_router(market_info_handler.router)
     dp.include_router(crypto_center_handler.router)
+    dp.include_router(verification_public_handler.router) # <-- НОВЫЙ ПУБЛИЧНЫЙ РОУТЕР
+    
     logger.info("Все роутеры успешно подключены.")
 
     async with ClientSession() as http_session:
         deps = await Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool, bot=bot)
 
+        # Передаем deps в middleware через data
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
-        if hasattr(deps, 'user_service'):
-             dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
+        dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
         logger.info("Middleware успешно зарегистрированы.")
         
         dp.startup.register(on_startup)
@@ -106,6 +113,7 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
 
         logger.info("Запуск процесса опроса Telegram...")
+        # Передаем deps во все хэндлеры
         await dp.start_polling(bot, deps=deps)
 
 

@@ -15,9 +15,11 @@ def get_verification_info_keyboard(admin_id: Optional[int]) -> InlineKeyboardMar
     builder = InlineKeyboardBuilder()
     
     if admin_id:
+        # Предполагаем, что главный администратор - первый в списке
+        admin_url = f"tg://user?id={admin_id}"
         builder.button(
             text="✍️ Связаться с куратором",
-            url=f"tg://user?id={admin_id}"
+            url=admin_url
         )
         
     return builder.as_markup()

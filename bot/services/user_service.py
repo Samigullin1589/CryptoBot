@@ -15,7 +15,6 @@ from redis.asyncio import Redis
 
 from bot.utils.models import User, UserRole, VerificationData
 from bot.utils.keys import KeyFactory
-# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
 from bot.config.config import settings
 
 logger = logging.getLogger(__name__)
@@ -39,8 +38,16 @@ class UserService:
             return None
         
         try:
-            # ИСПРАВЛЕНО: Десериализуем вложенные JSON-объекты перед валидацией
-            if 'verification_data' in user_data_dict:
+            # Преобразуем строковые значения к их правильным типам
+            if 'id' in user_data_dict:
+                user_data_dict['id'] = int(user_data_dict['id'])
+            if 'role' in user_data_dict:
+                user_data_dict['role'] = int(user_data_dict['role'])
+            if 'electricity_cost' in user_data_dict:
+                user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
+            
+            # Десериализуем вложенные JSON-объекты
+            if 'verification_data' in user_data_dict and isinstance(user_data_dict['verification_data'], str):
                 user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
             
             return User.model_validate(user_data_dict)
@@ -54,12 +61,17 @@ class UserService:
         """
         user_key = self.keys.user_profile(user.id)
         
-        # ИСПРАВЛЕНО: Преобразуем модель в словарь и вручную сериализуем вложенные объекты
-        user_data_to_save = user.model_dump() 
-        if isinstance(user_data_to_save.get('verification_data'), dict):
-            user_data_to_save['verification_data'] = json.dumps(user_data_to_save['verification_data'])
+        user_data_to_save = user.model_dump()
+        
+        # Вручную преобразуем все значения в строки, чтобы избежать ошибок Redis
+        final_mapping = {}
+        for key, value in user_data_to_save.items():
+            if isinstance(value, dict) or isinstance(value, list) or isinstance(value, BaseModel):
+                final_mapping[key] = json.dumps(value)
+            elif value is not None:
+                final_mapping[key] = str(value)
 
-        await self.redis.hset(user_key, mapping=user_data_to_save)
+        await self.redis.hset(user_key, mapping=final_mapping)
 
     async def get_or_create_user(self, tg_user: TelegramUser) -> Tuple[User, bool]:
         """
@@ -68,10 +80,14 @@ class UserService:
         """
         existing_user = await self.get_user(tg_user.id)
         if existing_user:
-            if (existing_user.username != tg_user.username or 
-                existing_user.first_name != tg_user.full_name):
+            update_needed = False
+            if existing_user.username != tg_user.username:
                 existing_user.username = tg_user.username
+                update_needed = True
+            if existing_user.first_name != tg_user.full_name:
                 existing_user.first_name = tg_user.full_name
+                update_needed = True
+            if update_needed:
                 await self.save_user(existing_user)
             return existing_user, False
         
@@ -93,7 +109,7 @@ class UserService:
         user_ids_raw = await self.redis.smembers(self.keys.all_users_set())
         return [int(user_id) for user_id in user_ids_raw]
 
-    async def update_user_activity(self, user_id: int, chat_id: int):
+    async def update_user_activity(self, user_id: int):
         now = datetime.utcnow()
         today_str, week_str = now.strftime('%Y-%m-%d'), now.strftime('%Y-%U')
         day_key, week_key = f"users:active:day:{today_str}", f"users:active:week:{week_str}"
@@ -120,3 +136,11 @@ class UserService:
             pipe.lpush(history_key, json.dumps(user_message, ensure_ascii=False))
             pipe.ltrim(history_key, 0, self.history_max_size * 2 - 1)
             await pipe.execute()
+
+    async def set_user_electricity_cost(self, user_id: int, cost: float) -> None:
+        """Сохраняет стоимость электроэнергии для пользователя."""
+        user = await self.get_user(user_id)
+        if user:
+            user.electricity_cost = cost
+            await self.save_user(user)
+            logger.info(f"Стоимость э/э для пользователя {user_id} обновлена на {cost}.")

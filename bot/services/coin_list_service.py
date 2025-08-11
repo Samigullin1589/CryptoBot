@@ -7,11 +7,9 @@
 from __future__ import annotations
 import json
 import logging
-import asyncio
 from typing import List, Dict, Any, Optional
 
 import aiohttp
-import backoff
 from redis.asyncio import Redis
 from rapidfuzz import process, fuzz
 from pydantic import ValidationError
@@ -22,12 +20,9 @@ from bot.utils.http_client import make_request
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_EXCEPTIONS = (aiohttp.ClientError, asyncio.TimeoutError, aiohttp.ClientResponseError)
-
 class CoinListService:
-    _COIN_LIST_CACHE_KEY = "cache:coin_list:v3:all"
     _COIN_MAP_CACHE_KEY = "cache:coin_list:v3:map"
-    _SEARCH_SYMBOL_KEY_PREFIX = "search:coin:v3:symbol"
+    _SEARCH_SYMBOL_KEY = "search:coin:v3:symbol_map"
     _SEARCH_NAME_CHOICES_KEY = "cache:coin_list:v3:name_choices"
 
     def __init__(
@@ -77,8 +72,11 @@ class CoinListService:
             symbol_map_to_cache = {c.symbol.lower(): c.id for c in coins}
             name_choices_to_cache = {c.name: c.id for c in coins}
 
+            # Очищаем старые данные перед записью
+            pipe.delete(self._COIN_MAP_CACHE_KEY, self._SEARCH_SYMBOL_KEY, self._SEARCH_NAME_CHOICES_KEY)
+
             pipe.hset(self._COIN_MAP_CACHE_KEY, mapping=coin_map_to_cache)
-            pipe.hset(self._SEARCH_SYMBOL_KEY_PREFIX, mapping=symbol_map_to_cache)
+            pipe.hset(self._SEARCH_SYMBOL_KEY, mapping=symbol_map_to_cache)
             pipe.set(self._SEARCH_NAME_CHOICES_KEY, json.dumps(name_choices_to_cache))
             
             await pipe.execute()
@@ -93,35 +91,40 @@ class CoinListService:
         if not query_lower:
             return None
 
-        # 1. Точный поиск по символу (BTC, ETH)
-        found_id = await self.redis.hget(self._SEARCH_SYMBOL_KEY_PREFIX, query_lower)
-        if found_id:
-            coin_json = await self.redis.hget(self._COIN_MAP_CACHE_KEY, found_id)
-            if coin_json:
-                return Coin.model_validate_json(coin_json)
+        # --- Сценарий 1: Точное совпадение с ID монеты (например, 'bitcoin') ---
+        coin_json_by_id = await self.redis.hget(self._COIN_MAP_CACHE_KEY, query_lower)
+        if coin_json_by_id:
+            logger.debug(f"Найдено точное совпадение по ID для '{query}'.")
+            return Coin.model_validate_json(coin_json_by_id)
 
-        # 2. Точный поиск по ID (bitcoin, ethereum)
-        if await self.redis.hexists(self._COIN_MAP_CACHE_KEY, query_lower):
-            coin_json = await self.redis.hget(self._COIN_MAP_CACHE_KEY, query_lower)
-            if coin_json:
-                return Coin.model_validate_json(coin_json)
+        # --- Сценарий 2: Точное совпадение с символом монеты (например, 'btc') ---
+        found_id_by_symbol = await self.redis.hget(self._SEARCH_SYMBOL_KEY, query_lower)
+        if found_id_by_symbol:
+            coin_json_by_symbol = await self.redis.hget(self._COIN_MAP_CACHE_KEY, found_id_by_symbol)
+            if coin_json_by_symbol:
+                logger.debug(f"Найдено точное совпадение по символу для '{query}'.")
+                return Coin.model_validate_json(coin_json_by_symbol)
 
-        # 3. Нечеткий поиск по полному имени
+        # --- Сценарий 3: Нечеткий поиск по названию монеты ---
         name_choices_json = await self.redis.get(self._SEARCH_NAME_CHOICES_KEY)
         if not name_choices_json:
-            logger.warning("Кэш для нечеткого поиска имен пуст.")
-            return None
+            logger.warning("Кэш для нечеткого поиска имен пуст. Запускаю обновление.")
+            await self.update_coin_list()
+            name_choices_json = await self.redis.get(self._SEARCH_NAME_CHOICES_KEY)
+            if not name_choices_json:
+                return None
             
         name_choices = json.loads(name_choices_json)
+        # Ищем лучшее совпадение с высоким порогом
         best_match = process.extractOne(query_lower, name_choices.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.search_score_cutoff)
         
         if best_match:
             found_name, score, _ = best_match
             found_id_by_name = name_choices[found_name]
-            coin_json = await self.redis.hget(self._COIN_MAP_CACHE_KEY, found_id_by_name)
-            if coin_json:
+            coin_json_by_name = await self.redis.hget(self._COIN_MAP_CACHE_KEY, found_id_by_name)
+            if coin_json_by_name:
                 logger.info(f"Найдена монета через нечеткий поиск: '{query}' -> '{found_name}' (счет: {score:.2f})")
-                return Coin.model_validate_json(coin_json)
+                return Coin.model_validate_json(coin_json_by_name)
 
-        logger.warning(f"Монета по запросу '{query}' не найдена.")
+        logger.warning(f"Монета по запросу '{query}' не найдена ни одним из методов.")
         return None

@@ -6,8 +6,8 @@
 import logging
 from typing import Optional
 
-from .user_service import UserService
-from bot.utils.models import User, VerificationData
+from bot.services.user_service import UserService
+from bot.utils.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class VerificationService:
             
         user.verification_data.deposit = amount
         await self.user_service.save_user(user)
-        logger.info(f"Депозит для пользователя {user_id} обновлен на ${amount}.")
+        logger.info(f"Депозит для пользователя {user_id} обновлен на ${amount:,.2f}.")
         return True
 
     def format_check_message(self, user: User) -> str:
@@ -52,27 +52,28 @@ class VerificationService:
         vd = user.verification_data
         
         if vd.is_verified:
-            status_header = "✅ ПРОВЕРЕННЫЙ ПОСТАВЩИК ✅"
-            passport_status = "✅ Проверен ✅"
+            status_header = "✅ <b>ПРОВЕРЕННЫЙ ПОСТАВЩИК</b> ✅"
+            passport_status = "✅ Проверен"
             deposit_text = f"${vd.deposit:,.0f}" if vd.deposit > 0 else "Отсутствует"
             warning_text = ""
         else:
-            status_header = "⚠️ НЕ ПРОВЕРЕН ⚠️"
-            passport_status = "⚠️ НЕ ПРОВЕРЕН ⚠️"
+            status_header = "⚠️ <b>НЕ ПРОВЕРЕН</b> ⚠️"
+            passport_status = "⚠️ Не проверен"
             deposit_text = "Отсутствует"
-            warning_text = "\nПри переводе предоплаты есть риск потерять денежные средства"
+            warning_text = "\n<i>При переводе предоплаты есть риск потерять денежные средства.</i>"
 
         username_str = f"@{user.username}" if user.username else "Не указан"
 
         return (
-            f"<b>Бот-куратор @НашБот</b>\n"
+            f"<b>Бот-куратор</b>\n"
             f"--------------------\n"
-            f"<b>Статус :</b>\n{status_header}{warning_text}\n\n"
+            f"<b>Статус:</b>\n{status_header}{warning_text}\n\n"
             f"<b>Пользователь</b>\n"
-            f"Идентификатор пользователя: <code>{user.id}</code>\n"
+            f"ID: <code>{user.id}</code>\n"
             f"Имя: {user.first_name}\n"
-            f"Имя пользователя: {username_str}\n\n"
+            f"Username: {username_str}\n\n"
+            f"<b>Детали верификации</b>\n"
             f"Страна: {vd.country_code}\n"
-            f"Паспорт : {passport_status}\n"
-            f"Депозит : {deposit_text}"
+            f"Паспорт: {passport_status}\n"
+            f"Депозит: {deposit_text}"
         )

@@ -23,6 +23,11 @@ router = Router(name="asic_handler")
 
 async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
     """Отображает страницу с топом ASIC-майнеров, используя FSM для хранения страницы."""
+    is_callback = isinstance(update, CallbackQuery)
+    target_message = update.message if is_callback else update
+
+    await target_message.edit_text("⏳ Загружаю актуальный список ASIC...") if is_callback else await update.answer("⏳ Загружаю актуальный список ASIC...")
+
     user_id = update.from_user.id
     fsm_data = await state.get_data()
     page = fsm_data.get("page", 1)
@@ -34,37 +39,37 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
 
     if not top_miners:
         error_text = "😕 Не удалось получить данные о майнерах. База данных пуста или источники недоступны. Попробуйте позже."
-        if isinstance(update, Message): await update.answer(error_text)
-        else: await update.message.edit_text(error_text)
+        await target_message.edit_text(error_text)
         return
 
-    minutes_ago = int((datetime.now(timezone.utc) - last_update_time).total_seconds() / 60) if last_update_time else "N/A"
-    
+    minutes_ago_str = "N/A"
+    if last_update_time:
+        minutes_ago = int((datetime.now(timezone.utc) - last_update_time).total_seconds() / 60)
+        minutes_ago_str = str(minutes_ago)
+
     text = (f"🏆 <b>Топ доходных ASIC</b>\n"
-            f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago} мин. назад.</i>")
+            f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago_str} мин. назад.</i>")
     
     keyboard = get_top_asics_keyboard(top_miners, page)
 
-    if isinstance(update, Message):
-        await update.answer(text, reply_markup=keyboard)
-    else:
-        await update.message.edit_text(text, reply_markup=keyboard)
+    await target_message.edit_text(text, reply_markup=keyboard)
+
 
 @router.message(F.text == "⚙️ Топ ASIC")
 @router.callback_query(F.data == "nav:asics")
 async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
     """Входная точка для просмотра топа ASIC."""
+    if isinstance(update, CallbackQuery): await update.answer()
     await state.set_state(AsicExplorerStates.showing_top)
     await state.update_data(page=1)
-    if isinstance(update, CallbackQuery): await update.answer()
     await show_top_asics_page(update, state, deps)
 
 @router.callback_query(F.data.startswith("asic_page:"), AsicExplorerStates.showing_top)
 async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):
     """Обрабатывает пагинацию в меню топа ASIC."""
+    await call.answer()
     page = int(call.data.split(":")[1])
     await state.update_data(page=page)
-    await call.answer()
     await show_top_asics_page(call, state, deps)
 
 @router.callback_query(F.data.startswith("asic_passport:"), AsicExplorerStates.showing_top)

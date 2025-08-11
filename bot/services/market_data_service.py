@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ С CRYPTOCOMPARE)
+# Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ И РАСШИРЕННАЯ)
 # Описание: Центральный сервис для получения любых рыночных данных с
-#           поддержкой CryptoCompare как резервного источника.
+#           поддержкой CryptoCompare как резервного источника и новым методом для рыночной капитализации.
 # =================================================================================
 import logging
 from typing import List, Optional, Dict, Any, Literal
@@ -76,7 +76,6 @@ class MarketDataService:
         params = {'ids': ','.join(coin_ids), 'vs_currencies': 'usd'}
         data = await make_request(self.http_session, url, params=params, headers=headers)
         
-        # Возвращаем словарь с None для всех запрошенных ID, если API не вернул данные
         result = {cid: None for cid in coin_ids}
         if data:
             for cid, price_data in data.items():
@@ -92,8 +91,6 @@ class MarketDataService:
         headers = {'Authorization': f'Apikey {api_key}'}
         url = f"{self.endpoints.cryptocompare_api_base}{self.endpoints.cryptocompare_price_endpoint}"
 
-        # CryptoCompare использует символы (BTC), а не ID (bitcoin).
-        # Нам нужно сопоставить ID с символами.
         id_to_symbol_map = {}
         symbols_to_fetch = []
         for cid in coin_ids:
@@ -117,7 +114,35 @@ class MarketDataService:
                     result[original_id] = price_data.get('USD')
         return result
 
-    # --- Остальные методы ---
+    async def get_top_coins_by_market_cap(self) -> List[Dict[str, Any]]:
+        """
+        [НОВЫЙ МЕТОД] Получает топ N монет по рыночной капитализации.
+        Решает проблему 'AttributeError' в scheduled_tasks.
+        """
+        cache_key = "cache:market_data:top_coins"
+        cached_data = await self.redis.get(cache_key)
+        if cached_data:
+            return json.loads(cached_data)
+
+        api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
+        headers = {'x-cg-pro-api-key': api_key} if api_key else {}
+        base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
+        url = f"{base_url}{self.endpoints.coins_markets_endpoint}"
+        
+        params = {
+            'vs_currency': self.config.default_vs_currency,
+            'order': 'market_cap_desc',
+            'per_page': self.config.top_n_coins,
+            'page': 1,
+            'sparkline': 'false'
+        }
+        
+        data = await make_request(self.http_session, url, params=params, headers=headers)
+        if data:
+            await self.redis.set(cache_key, json.dumps(data), ex=3600) # Кэшируем на 1 час
+            return data
+        return []
+
     async def get_fear_and_greed_index(self) -> Optional[Dict]:
         data = await make_request(self.http_session, str(self.endpoints.fear_and_greed_api))
         if data and data.get('data'):
@@ -125,10 +150,13 @@ class MarketDataService:
         return None
 
     async def get_halving_info(self) -> Optional[Dict]:
-        return await make_request(self.http_session, "https://mempool.space/api/v1/difficulty-adjustment")
+        return await make_request(self.http_session, str(self.endpoints.mempool_space_difficulty))
         
     async def get_btc_network_status(self) -> Optional[Dict]:
-        hashrate_ths = await make_request(self.http_session, "https://blockchain.info/q/hashrate", response_type="text")
+        hashrate_ths = await make_request(self.http_session, str(self.endpoints.blockchain_info_hashrate), response_type="text")
         if hashrate_ths:
-            return {'hashrate_ehs': float(hashrate_ths) / 1_000_000}
+            try:
+                return {'hashrate_ehs': float(hashrate_ths) / 1_000_000}
+            except (ValueError, TypeError):
+                logger.error(f"Не удалось преобразовать хешрейт '{hashrate_ths}' в число.")
         return None
