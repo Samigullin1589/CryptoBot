@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - С CRYPTOCOMPARE)
-# Описание: DI-контейнер с корректной инициализацией зависимостей.
-# ИСПРАВЛЕНИЕ: Добавлен KeyFactory в сам контейнер.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: DI-контейнер с корректной инициализацией всех зависимостей.
+# ИСПРАВЛЕНИЕ: Добавлен импорт Settings и KeyFactory в модель Deps.
 # =================================================================================
 
 import aiohttp
@@ -10,7 +10,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Добавляем импорт класса Settings для type hints
+from bot.config.settings import Settings
 from bot.services.user_service import UserService
 from bot.services.admin_service import AdminService
 from bot.services.ai_content_service import AIContentService
@@ -35,6 +36,7 @@ class Deps(BaseModel):
     redis_pool: Redis
     scheduler: AsyncIOScheduler = Field(default_factory=lambda: AsyncIOScheduler(timezone="UTC"))
     bot: Bot
+    # ИСПРАВЛЕНО: Добавляем KeyFactory в контейнер
     keys: KeyFactory = Field(default_factory=KeyFactory)
     user_service: UserService
     admin_service: AdminService
@@ -58,6 +60,9 @@ class Deps(BaseModel):
 
     @classmethod
     async def build(cls, settings: Settings, http_session: aiohttp.ClientSession, redis_pool: Redis, bot: Bot) -> "Deps":
+        """
+        Асинхронный фабричный метод для сборки и настройки контейнера зависимостей.
+        """
         user_service = UserService(redis=redis_pool)
         admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
         ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)

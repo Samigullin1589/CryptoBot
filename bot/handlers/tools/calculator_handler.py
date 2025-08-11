@@ -37,8 +37,13 @@ async def start_profit_calculator(update: Union[Message, CallbackQuery], state: 
     text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
     keyboard = get_currency_selection_keyboard()
     
-    message = update.message if isinstance(update, CallbackQuery) else update
-    await message.answer(text, reply_markup=keyboard)
+    # Определяем, откуда пришел апдейт, и отвечаем соответствующим образом
+    target_message = update if isinstance(update, Message) else update.message
+    if isinstance(update, CallbackQuery):
+        await update.answer()
+        await target_message.edit_text(text, reply_markup=keyboard)
+    else:
+        await target_message.answer(text, reply_markup=keyboard)
     
     await state.set_state(CalculatorStates.waiting_for_currency)
 
@@ -48,8 +53,6 @@ async def cancel_calculator(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.message.edit_text("✅ Расчет отменен.")
     await call.answer()
-
-# ... (остальной код файла без изменений) ...
 
 # --- Шаги сценария FSM ---
 
@@ -84,6 +87,7 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
     cost_usd = cost
     if user_data.get("currency") == "rub":
         await msg.edit_text("⏳ Получаю актуальный курс USD/RUB...")
+        # Предполагаем, что такой метод есть в market_data_service
         rate_usd_rub = await deps.market_data_service.get_usd_rub_rate()
         if not rate_usd_rub:
             await msg.edit_text("❌ Не удалось получить курс валют. Попробуйте позже.", reply_markup=get_calculator_cancel_keyboard())
@@ -91,7 +95,7 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
         cost_usd = cost / rate_usd_rub
     
     await msg.edit_text("⏳ Загружаю список оборудования...")
-    all_asics, _ = await deps.asic_service.get_top_asics(0.05, count=1000) # Используем стандартную цену для получения полного списка
+    all_asics, _ = await deps.asic_service.get_top_asics(0.05, count=1000)
     
     if not all_asics:
         await msg.edit_text("❌ Ошибка: не удалось загрузить список ASIC.", reply_markup=get_calculator_cancel_keyboard())
@@ -115,6 +119,7 @@ async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     
     keyboard = get_asic_selection_keyboard(asic_list, page=page)
     await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
+    await call.answer()
 
 @calculator_router.callback_query(F.data.startswith("calc_select_asic:"), CalculatorStates.waiting_for_asic_selection)
 async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
