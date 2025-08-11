@@ -26,7 +26,10 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
     is_callback = isinstance(update, CallbackQuery)
     target_message = update.message if is_callback else update
 
-    await target_message.edit_text("⏳ Загружаю актуальный список ASIC...") if is_callback else await update.answer("⏳ Загружаю актуальный список ASIC...")
+    if is_callback:
+        await target_message.edit_text("⏳ Загружаю актуальный список ASIC...")
+    else:
+        await update.answer("⏳ Загружаю актуальный список ASIC...")
 
     user_id = update.from_user.id
     fsm_data = await state.get_data()
@@ -57,12 +60,12 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
 
 @router.message(F.text == "⚙️ Топ ASIC")
 @router.callback_query(F.data == "nav:asics")
-async def top_asics_start(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
+async def top_asics_start(call: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
     """Входная точка для просмотра топа ASIC."""
-    if isinstance(update, CallbackQuery): await update.answer()
+    if isinstance(call, CallbackQuery): await call.answer()
     await state.set_state(AsicExplorerStates.showing_top)
     await state.update_data(page=1)
-    await show_top_asics_page(update, state, deps)
+    await show_top_asics_page(call, state, deps)
 
 @router.callback_query(F.data.startswith("asic_page:"), AsicExplorerStates.showing_top)
 async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):

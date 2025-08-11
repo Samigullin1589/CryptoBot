@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Сервис для взаимодействий с AI, который самостоятельно
-# инициализирует SDK и использует декларативные ретраи.
-# ИСПРАВЛЕНИЕ: Конструктор полностью переработан для самодостаточности.
+# Файл: bot/services/ai_content_service.py (ВЕРСЯ "Distinguished Engineer" - С ПОИСКОМ)
+# Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете
+# для предоставления актуальных ответов.
 # ===============================================================
 
 import logging
@@ -11,40 +10,36 @@ from typing import Dict, Any, List, Optional
 
 import backoff
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig, ContentDict
+from google.generativeai.types import GenerationConfig, ContentDict, Tool
 from google.api_core import exceptions as google_exceptions
 
 from bot.config.settings import AIConfig
 from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
+from Google Search import search as Google Search_func
 
 logger = logging.getLogger(__name__)
 
-# Определяем ошибки, при которых стоит повторять запрос
 RETRYABLE_EXCEPTIONS = (
-    google_exceptions.ResourceExhausted,  # 429 - Квоты исчерпаны
-    google_exceptions.ServiceUnavailable, # 503 - Сервис недоступен
-    google_exceptions.InternalServerError,  # 500 - Внутренняя ошибка сервера
-    google_exceptions.DeadlineExceeded,   # Таймаут
+    google_exceptions.ResourceExhausted,
+    google_exceptions.ServiceUnavailable,
+    google_exceptions.InternalServerError,
+    google_exceptions.DeadlineExceeded,
 )
 
 class AIContentService:
-    """Центральный сервис для генерации контента, построенный на Google AI SDK."""
+    """Центральный сервис для генерации контента, построенный на Google AI SDK с функцией поиска."""
     
-    # ИСПРАВЛЕНО: Конструктор теперь принимает api_key и config,
-    # и самостоятельно инициализирует клиент.
     def __init__(self, api_key: str, config: AIConfig):
-        """
-        Инициализирует сервис и настраивает клиент Google AI.
-
-        :param api_key: API-ключ для Gemini.
-        :param config: Конфигурация для AI-сервиса.
-        """
         self.config = config
         self.client: Optional[genai.GenerativeModel] = None
         try:
             genai.configure(api_key=api_key)
-            self.client = genai.GenerativeModel(self.config.model_name)
-            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name}.")
+            # Настраиваем модель с поддержкой вызова инструментов (для поиска)
+            self.client = genai.GenerativeModel(
+                self.config.model_name,
+                tools=[Tool.from_Google Search_retrieval(Google Search_func)]
+            )
+            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name} с функцией поиска.")
         except Exception as e:
             logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.")
 
@@ -53,20 +48,19 @@ class AIContentService:
         try:
             return response.candidates[0].content.parts[0].text
         except (AttributeError, IndexError, KeyError):
-            # Логируем ошибку, но не выводим весь объект ответа, чтобы избежать спама в логах
-            logger.error("Не удалось извлечь текст из ответа AI.")
+            logger.error("Не удалось извлечь текст из ответа AI.", exc_info=True)
             return None
 
     @backoff.on_exception(
         backoff.expo,
         RETRYABLE_EXCEPTIONS,
-        max_tries=5, # ИСПРАВЛЕНО: Используем статическое значение вместо лямбды
+        max_tries=5,
         on_giveup=lambda details: logger.error(
             f"Запрос к AI не удался после {details['tries']} попыток. Ошибка: {details['exception']}"
         )
     )
     async def _make_request(self, model: genai.GenerativeModel, *args, **kwargs) -> Any:
-        """Выполняет асинхронный запрос к SDK и обрабатывает ошибки с помощью backoff."""
+        """Выполняет асинхронный запрос к SDK с обработкой ошибок."""
         return await model.generate_content_async(*args, **kwargs)
 
     async def generate_structured_content(
@@ -82,8 +76,10 @@ class AIContentService:
         )
         
         try:
+            # Для структурированного вывода используем модель без поиска, чтобы гарантировать JSON
+            base_model = genai.GenerativeModel(self.config.model_name)
             response = await self._make_request(
-                self.client,
+                base_model,
                 contents=[{"role": "user", "parts": [{"text": prompt}]}],
                 generation_config=generation_config
             )
@@ -111,19 +107,19 @@ class AIContentService:
             logger.error(f"Непредвиденная ошибка при генерации саммари: {e}")
             return "Ошибка анализа."
 
-
     async def get_consultant_answer(
         self, user_question: str, history: List[ContentDict]
     ) -> Optional[str]:
-        """Отвечает на вопрос пользователя в режиме чата."""
+        """Отвечает на вопрос пользователя, используя поиск в интернете при необходимости."""
         if not self.client: return "AI-консультант временно недоступен."
         
         system_prompt = get_consultant_prompt(user_question)
         full_history = history + [{"role": "user", "parts": [{"text": system_prompt}]}]
         
         try:
+            # Модель сама решит, нужно ли использовать поиск, и вернет ответ
             response = await self._make_request(self.client, contents=full_history)
             return self._extract_text_from_response(response)
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}")
+            logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}", exc_info=True)
             return "Произошла ошибка, попробуйте позже."
