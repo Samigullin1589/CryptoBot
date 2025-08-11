@@ -19,11 +19,12 @@ from . import (
     asic_handler,
     news_handler,
     quiz_handler,
-    game_handler,
     market_info_handler,
     crypto_center_handler
 )
 from ..tools import calculator_handler
+# Игровые хэндлеры теперь в своей папке
+from ..game import mining_game_handler
 
 router = Router(name="main_menu_router")
 logger = logging.getLogger(__name__)
@@ -51,17 +52,17 @@ async def main_menu_navigator(call: CallbackQuery, callback_data: MenuCallback, 
         "halving": market_info_handler.handle_halving_info,
         "btc_status": market_info_handler.handle_btc_status,
         "quiz": quiz_handler.handle_quiz_start,
-        "game": game_handler.handle_game_menu_entry,
+        "game": mining_game_handler.handle_mining_menu, # <-- ИСПРАВЛЕНО НА ПРАВИЛЬНЫЙ ХЕНДЛЕР
         "crypto_center": crypto_center_handler.crypto_center_main_menu,
     }
 
     handler_func = navigation_map.get(action)
 
     if handler_func:
-        # aiogram 3 элегантно передает в хэндлер только те зависимости,
+        # ИСПРАВЛЕНО: aiogram 3 элегантно передает в хэндлер только те зависимости,
         # которые указаны в его сигнатуре. Мы можем безопасно передавать
-        # все доступные, и хэндлер сам выберет нужные.
-        await handler_func(call=call, state=state, deps=deps)
+        # все доступные, и хэндлер сам выберет нужные. `update` передается как `call`.
+        await handler_func(call, state=state, deps=deps)
     else:
         logger.warning(f"Не найден обработчик для действия 'menu:0:{action}'")
         await call.answer(f"Раздел '{action}' находится в разработке.", show_alert=True)

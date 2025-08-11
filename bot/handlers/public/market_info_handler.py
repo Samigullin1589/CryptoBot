@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/handlers/public/market_info_handler.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
+# Файл: bot/handlers/public/market_info_handler.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
 # Описание: Обрабатывает запросы на получение общих рыночных данных.
-# ИСПРАВЛЕНИЕ: Убраны лишние аргументы из сигнатур функций для устранения TypeError.
+# ИСПРАВЛЕНИЕ: Добавлена отказоустойчивость для API халвинга.
 # =================================================================================
 import logging
 from datetime import datetime
@@ -40,17 +40,20 @@ async def handle_halving_info(call: CallbackQuery, deps: Deps, **kwargs):
         data = await make_request(deps.http_session, str(deps.settings.endpoints.mempool_space_difficulty))
         if not data:
             raise ValueError("Invalid data from Mempool Space API")
+            
         progress = data.get('progressPercent', 0)
         remaining_blocks = data.get('remainingBlocks', 0)
-        # Добавлена проверка на существование ключа
+        
+        # ИСПРАВЛЕНО: Добавлена проверка на существование ключа
+        estimated_date_str = "неизвестно"
         next_retarget_timestamp = data.get('nextRetargetTimeEstimate')
-        if next_retarget_timestamp is None:
-            raise ValueError("Timestamp for next retarget not found in API response")
-        estimated_date = datetime.fromtimestamp(next_retarget_timestamp).strftime('%d.%m.%Y')
+        if next_retarget_timestamp:
+            estimated_date_str = datetime.fromtimestamp(next_retarget_timestamp).strftime('%d.%m.%Y')
+
         text = (f"⏳ <b>Халвинг Bitcoin</b>\n\n"
                 f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
                 f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
-                f"Ориентировочная дата: <b>{estimated_date}</b>")
+                f"Ориентировочная дата: <b>{estimated_date_str}</b>")
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
     except Exception as e:
         logger.error(f"Ошибка получения данных о халвинге: {e}", exc_info=True)

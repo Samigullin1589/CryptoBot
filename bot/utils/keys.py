@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/keys.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/utils/keys.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ РАСШИРЕННАЯ)
 # Описание: Централизованная фабрика для генерации всех ключей Redis.
-# ИСПРАВЛЕНИЕ: Добавлен ключ all_users_set для поддержки глобальных задач.
+# ИСПРАВЛЕНИЕ: Добавлены ключи для Крипто-Центра.
 # =================================================================================
 
 class KeyFactory:
@@ -15,6 +15,11 @@ class KeyFactory:
     @staticmethod
     def all_users_set() -> str:
         return "users:all"
+
+    # --- Профиль интересов пользователя (для Крипто-Центра) ---
+    @staticmethod
+    def user_interest_profile(user_id: int) -> str:
+        return f"user:interest_profile:{user_id}"
 
     # --- История диалогов ---
     @staticmethod
@@ -60,10 +65,22 @@ class KeyFactory:
     def market_listing_data(listing_id: str) -> str:
         return f"market:listing:{listing_id}"
 
-    # --- Новости ---
+    # --- Новости и Крипто-Центр ---
     @staticmethod
     def news_deduplication_set() -> str:
         return "news:dedup_hashes"
+        
+    @staticmethod
+    def personalized_alpha_cache(user_id: int, alpha_type: str) -> str:
+        return f"cache:crypto_center:alpha:{user_id}:{alpha_type}"
+
+    @staticmethod
+    def live_feed_cache() -> str:
+        return "cache:crypto_center:live_feed"
+
+    @staticmethod
+    def user_airdrop_progress(user_id: int, airdrop_id: str) -> str:
+        return f"crypto_center:progress:{user_id}:{airdrop_id}"
 
     # --- ASIC ---
     @staticmethod
