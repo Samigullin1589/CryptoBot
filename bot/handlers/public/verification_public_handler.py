@@ -21,10 +21,8 @@ async def handle_check_command(message: Message, deps: Deps):
     Обрабатывает команду /check для проверки статуса пользователя.
     Поддерживает 3 сценария: проверка себя, проверка по reply, проверка по mention/ID.
     """
-    # Сначала пытаемся найти целевого пользователя по reply или mention
     target_user = await extract_target_user(message, deps.user_service)
     
-    # Если цель не найдена (команда введена без аргументов), проверяем автора сообщения
     if not target_user:
         logger.info(f"Цель для /check не найдена, проверяем автора: {message.from_user.id}")
         target_user, _ = await deps.user_service.get_or_create_user(message.from_user)
@@ -36,7 +34,8 @@ async def handle_check_command(message: Message, deps: Deps):
     response_text = deps.verification_service.format_check_message(target_user)
     await message.answer(response_text, disable_web_page_preview=True)
 
-@router.message(Command("infoVerif"))
+# ИСПРАВЛЕНО: Команда приведена к нижнему регистру
+@router.message(Command("infoverif"))
 async def handle_info_verif_command(message: Message, deps: Deps):
     """
     Отправляет подробную информацию о том, как и зачем проходить верификацию,
