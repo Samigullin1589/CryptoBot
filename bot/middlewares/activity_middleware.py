@@ -11,8 +11,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import Update
 
 from bot.services.user_service import UserService
-# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
-from bot.config.config import settings
+from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +35,7 @@ class ActivityMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         user = data.get('event_from_user')
-        chat = data.get('event_chat')
-
-        if not user or not chat:
+        if not user:
             return await handler(event, data)
 
         user_id = user.id
@@ -53,10 +50,10 @@ class ActivityMiddleware(BaseMiddleware):
 
         # --- Обновление активности ---
         try:
-            await self.user_service.update_user_activity(user_id, chat.id)
+            await self.user_service.update_user_activity(user_id)
             self.last_update_times[user_id] = current_time
-            logger.debug(f"Updated activity for user {user_id} in chat {chat.id}")
+            logger.debug(f"Updated activity for user {user_id}")
         except Exception as e:
-            logger.error(f"Failed to update activity for user {user_id} in chat {chat.id}: {e}")
+            logger.error(f"Failed to update activity for user {user_id}: {e}")
 
         return await handler(event, data)

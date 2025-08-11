@@ -2,8 +2,6 @@
 # Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
 # Описание: Сервис управления пользователями с корректной сериализацией
 # вложенных Pydantic моделей для Redis HASH.
-# ИСПРАВЛЕНИЕ: Устранена ошибка redis.exceptions.DataError путем
-# преобразования вложенных моделей в JSON-строки перед сохранением в Redis.
 # =================================================================================
 import json
 import logging
@@ -12,10 +10,11 @@ from datetime import datetime, timedelta
 
 from aiogram.types import User as TelegramUser
 from redis.asyncio import Redis
+from pydantic import BaseModel
 
 from bot.utils.models import User, UserRole, VerificationData
 from bot.utils.keys import KeyFactory
-from bot.config.config import settings
+from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +45,6 @@ class UserService:
             if 'electricity_cost' in user_data_dict:
                 user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
             
-            # Десериализуем вложенные JSON-объекты
             if 'verification_data' in user_data_dict and isinstance(user_data_dict['verification_data'], str):
                 user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
             
@@ -60,10 +58,8 @@ class UserService:
         Сохраняет модель пользователя в Redis HASH, корректно сериализуя вложенные модели.
         """
         user_key = self.keys.user_profile(user.id)
-        
         user_data_to_save = user.model_dump()
         
-        # Вручную преобразуем все значения в строки, чтобы избежать ошибок Redis
         final_mapping = {}
         for key, value in user_data_to_save.items():
             if isinstance(value, dict) or isinstance(value, list) or isinstance(value, BaseModel):
@@ -76,7 +72,7 @@ class UserService:
     async def get_or_create_user(self, tg_user: TelegramUser) -> Tuple[User, bool]:
         """
         Получает пользователя из базы данных. Если его нет, создает нового
-        и сохраняет его, корректно сериализуя данные.
+        и сохраняет его.
         """
         existing_user = await self.get_user(tg_user.id)
         if existing_user:
@@ -124,8 +120,7 @@ class UserService:
     async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict]:
         history_key = self.keys.conversation_history(user_id, chat_id)
         raw_history = await self.redis.lrange(history_key, 0, self.history_max_size * 2 - 1)
-        history = [json.loads(msg) for msg in reversed(raw_history)]
-        return history
+        return [json.loads(msg) for msg in reversed(raw_history)]
 
     async def add_to_conversation_history(self, user_id: int, chat_id: int, user_text: str, ai_answer: str):
         history_key = self.keys.conversation_history(user_id, chat_id)
@@ -136,7 +131,7 @@ class UserService:
             pipe.lpush(history_key, json.dumps(user_message, ensure_ascii=False))
             pipe.ltrim(history_key, 0, self.history_max_size * 2 - 1)
             await pipe.execute()
-
+            
     async def set_user_electricity_cost(self, user_id: int, cost: float) -> None:
         """Сохраняет стоимость электроэнергии для пользователя."""
         user = await self.get_user(user_id)

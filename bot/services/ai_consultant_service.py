@@ -10,13 +10,9 @@ import logging
 from typing import List, Dict, Any
 
 import aiohttp
-# ИЗМЕНЕНО: Импортируем экземпляр настроек из нового файла
-from bot.config.config import settings
+from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
 
 logger = logging.getLogger(__name__)
-
-# ПРИМЕЧАНИЕ: Класс AIConsultantSettings удален за ненадобностью,
-# так как все настройки теперь берутся из единого объекта `settings`.
 
 class AIConsultantService:
     """
@@ -28,7 +24,6 @@ class AIConsultantService:
         
         :param http_session: Общий экземпляр aiohttp.ClientSession.
         """
-        # ИЗМЕНЕНО: Обращаемся напрямую к `settings`
         self.gemini_api_key = settings.GEMINI_API_KEY.get_secret_value()
         self.model_name = settings.ai.model_name
         self.max_retries = settings.ai.max_retries
