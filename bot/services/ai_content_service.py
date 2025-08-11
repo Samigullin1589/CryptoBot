@@ -1,5 +1,5 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСЯ "Distinguished Engineer" - С ПОИСКОМ)
+# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - С ПОИСКОМ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете
 # для предоставления актуальных ответов.
 # ===============================================================
@@ -10,12 +10,12 @@ from typing import Dict, Any, List, Optional
 
 import backoff
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig, ContentDict, Tool
+from google.generativeai.types import GenerationConfig, ContentDict
 from google.api_core import exceptions as google_exceptions
 
-from bot.config.settings import AIConfig
+from bot.config.config import settings
 from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
-from Google Search import search as Google Search_func
+from Google Search import search as Google Search_tool # Правильный импорт
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class AIContentService:
             # Настраиваем модель с поддержкой вызова инструментов (для поиска)
             self.client = genai.GenerativeModel(
                 self.config.model_name,
-                tools=[Tool.from_Google Search_retrieval(Google Search_func)]
+                tools=[Google Search_tool]
             )
             logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name} с функцией поиска.")
         except Exception as e:
@@ -46,6 +46,9 @@ class AIContentService:
     def _extract_text_from_response(self, response: Any) -> Optional[str]:
         """Безопасно извлекает текстовое содержимое из ответа модели."""
         try:
+            # Проверяем, есть ли function_call, что означает, что модель хочет использовать инструмент
+            if response.candidates[0].content.parts[0].function_call:
+                return None # Возвращаем None, чтобы показать, что нужен еще один шаг
             return response.candidates[0].content.parts[0].text
         except (AttributeError, IndexError, KeyError):
             logger.error("Не удалось извлечь текст из ответа AI.", exc_info=True)
@@ -76,7 +79,6 @@ class AIContentService:
         )
         
         try:
-            # Для структурированного вывода используем модель без поиска, чтобы гарантировать JSON
             base_model = genai.GenerativeModel(self.config.model_name)
             response = await self._make_request(
                 base_model,
@@ -113,13 +115,14 @@ class AIContentService:
         """Отвечает на вопрос пользователя, используя поиск в интернете при необходимости."""
         if not self.client: return "AI-консультант временно недоступен."
         
-        system_prompt = get_consultant_prompt(user_question)
-        full_history = history + [{"role": "user", "parts": [{"text": system_prompt}]}]
-        
+        system_prompt = get_consultant_prompt()
+        chat = self.client.start_chat(history=history)
+
         try:
-            # Модель сама решит, нужно ли использовать поиск, и вернет ответ
-            response = await self._make_request(self.client, contents=full_history)
-            return self._extract_text_from_response(response)
+            response = await chat.send_message_async(
+                [system_prompt, user_question],
+            )
+            return response.text
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}", exc_info=True)
             return "Произошла ошибка, попробуйте позже."

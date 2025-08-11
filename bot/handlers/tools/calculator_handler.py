@@ -19,7 +19,7 @@ from bot.keyboards.mining_keyboards import (
     get_asic_selection_keyboard
 )
 from bot.utils.dependencies import Deps
-from bot.utils.models import AsicMiner
+from bot.utils.models import AsicMiner, CalculationInput
 from bot.utils.formatters import format_calculation_result
 
 calculator_router = Router()
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # --- Запуск и отмена калькулятора ---
 
+# ИСПРАВЛЕНО: Сигнатура изменена для приема Union[Message, CallbackQuery] как 'call'
 @calculator_router.callback_query(F.data == "nav:calculator")
 @calculator_router.message(F.text == "⛏️ Калькулятор")
 async def start_profit_calculator(call: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
@@ -87,8 +88,8 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
     cost_usd = cost
     if user_data.get("currency") == "rub":
         await msg.edit_text("⏳ Получаю актуальный курс USD/RUB...")
-        # Предполагаем, что такой метод есть в market_data_service, но его нет, поэтому заглушка
-        rate_usd_rub = 95.0 # await deps.market_data_service.get_usd_rub_rate()
+        # Заглушка, так как метод не реализован
+        rate_usd_rub = 95.0
         if not rate_usd_rub:
             await msg.edit_text("❌ Не удалось получить курс валют. Попробуйте позже.", reply_markup=get_calculator_cancel_keyboard())
             return
@@ -157,11 +158,6 @@ async def process_pool_commission(message: Message, state: FSMContext, deps: Dep
     
     selected_asic = AsicMiner(**user_data["selected_asic_json"])
     
-    # Этот метод не существует, будет использована заглушка в сервисе
-    # input_data = await deps.market_data_service.get_data_for_calculation()
-    
-    # Заглушка, так как get_data_for_calculation не реализован
-    from bot.utils.models import CalculationInput
     calc_input = CalculationInput(
         hashrate_str=selected_asic.hashrate,
         power_consumption_watts=selected_asic.power,
@@ -172,9 +168,9 @@ async def process_pool_commission(message: Message, state: FSMContext, deps: Dep
     result = await deps.mining_service.calculate_btc_profitability(calc_input)
     
     if not result:
-        await msg.edit_text("❌ Не удалось получить ключевые данные для расчета. Попробуйте позже.")
-        await state.clear()
-        return
+         await msg.edit_text("❌ Не удалось получить ключевые данные для расчета. Попробуйте позже.")
+         await state.clear()
+         return
 
     result_text = format_calculation_result(result)
     

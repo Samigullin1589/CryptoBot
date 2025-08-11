@@ -57,7 +57,7 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
 
     await target_message.edit_text(text, reply_markup=keyboard)
 
-
+# ИСПРАВЛЕНО: Сигнатура изменена для приема Union[Message, CallbackQuery] как 'call'
 @router.message(F.text == "⚙️ Топ ASIC")
 @router.callback_query(F.data == "nav:asics")
 async def top_asics_start(call: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
