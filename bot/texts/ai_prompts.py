@@ -1,7 +1,8 @@
 # ===============================================================
 # Файл: bot/texts/ai_prompts.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНАЯ)
 # Описание: Централизованное хранилище для всех промптов, используемых AI.
-# ИСПРАВЛЕНИЕ: Промпт консультанта обновлен для поддержки поиска.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая функция get_quiz_json_schema для
+#              структурированной генерации вопросов викторины.
 # ===============================================================
 from typing import Dict, Any, List
 
@@ -35,6 +36,31 @@ def get_quiz_question_prompt() -> str:
         "'correct_option_index' (индекс правильного ответа от 0 до 3). "
         "Вопрос и ответы должны быть на русском языке. Ответы не должны быть слишком очевидными."
     )
+
+def get_quiz_json_schema() -> Dict[str, Any]:
+    """
+    Возвращает JSON-схему, которой должен следовать AI при генерации вопроса викторины.
+    """
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "question": {
+                "type": "STRING",
+                "description": "Текст вопроса викторины на русском языке."
+            },
+            "options": {
+                "type": "ARRAY",
+                "description": "Массив из ровно 4-х строк с вариантами ответа.",
+                "items": {"type": "STRING"}
+            },
+            "correct_option_index": {
+                "type": "NUMBER",
+                "description": "Индекс (от 0 до 3) правильного ответа в массиве 'options'."
+            }
+        },
+        "required": ["question", "options", "correct_option_index"]
+    }
+
 
 def get_personalized_alpha_prompt(news_context: str, user_profile: Dict[str, List[str]], alpha_type: str) -> str:
     """
