@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ОБЪЕДИНЕННАЯ)
+# Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - С КОРРЕКТНЫМ ХАЛВИНГОМ)
 # Описание: Вспомогательные функции для форматирования данных в текст.
-# ИСПРАВЛЕНИЕ: Исправлена логика парсинга даты в функции format_halving_info
-#              для корректной обработки ответа API.
+# ИСПРАВЛЕНИЕ: Обновлена функция format_halving_info для работы с новой
+#              структурой данных и отображения правильной информации.
 # =================================================================================
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -10,9 +10,8 @@ from datetime import datetime, timezone
 from bot.utils.models import AsicMiner, NewsArticle, Coin, CalculationResult
 
 # --- Форматтеры для раздела ASIC ---
-
 def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str:
-    """Форматирует список ASIC-майнеров для вывода в сообщении."""
+    # ... (код остается без изменений) ...
     if not asics:
         return "Нет доступных ASIC для отображения."
 
@@ -31,7 +30,7 @@ def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str
     return header + "\n".join(body) + footer
 
 def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
-    """Формирует текстовый паспорт для ASIC с расчетом чистой прибыли."""
+    # ... (код остается без изменений) ...
     specs_map = {
         "algorithm": "Алгоритм", "hashrate": "Хешрейт",
         "power": "Потребление"
@@ -58,9 +57,8 @@ def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
     )
 
 # --- Форматтеры для раздела новостей ---
-
 def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -> str:
-    """Форматирует список новостей для вывода в сообщении."""
+    # ... (код остается без изменений) ...
     if not articles:
         return "Нет доступных новостей."
 
@@ -78,9 +76,8 @@ def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -
     return header + "\n".join(body) + footer
 
 # --- Форматтеры для раздела курсов ---
-
 def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
-    """Форматирует информацию о цене монеты."""
+    # ... (код остается без изменений) ...
     price = price_data.get('price')
     price_str = f"{price:,.4f}".rstrip('0').rstrip('.') if price else "N/A"
     return (
@@ -89,28 +86,22 @@ def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
     )
 
 # --- Форматтеры для рыночных данных ---
-
 def format_halving_info(halving_data: Dict[str, Any]) -> str:
     """Форматирует информацию о халвинге Bitcoin."""
+    # ИСПРАВЛЕНО: Теперь используем новые, корректные данные
     progress = halving_data.get('progressPercent', 0)
     remaining_blocks = halving_data.get('remainingBlocks', 0)
-    
-    # ИСПРАВЛЕНО: Используем правильный ключ 'nextRetargetTimeEstimate' и конвертируем Unix timestamp
-    estimated_timestamp = halving_data.get('nextRetargetTimeEstimate')
-    if estimated_timestamp:
-        estimated_date = datetime.fromtimestamp(estimated_timestamp, tz=timezone.utc).strftime('%d.%m.%Y')
-    else:
-        estimated_date = 'неизвестно'
+    estimated_date = halving_data.get('estimated_date', 'неизвестно')
     
     return (
         f"⏳ <b>Халвинг Bitcoin</b>\n\n"
         f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
         f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
-        f"Ориентировочная дата следующей корректировки сложности: <b>{estimated_date}</b>"
+        f"Ориентировочная дата халвинга: <b>{estimated_date}</b>"
     )
 
 def format_network_status(network_data: Dict[str, Any]) -> str:
-    """Форматирует информацию о статусе сети Bitcoin."""
+    # ... (код остается без изменений) ...
     hashrate_ehs = network_data.get('hashrate_ehs', 0.0)
     
     return (
@@ -119,19 +110,12 @@ def format_network_status(network_data: Dict[str, Any]) -> str:
     )
 
 # --- Форматтер для калькулятора ---
-
 def format_calculation_result(result: CalculationResult) -> str:
-    """Форматирует Pydantic-модель CalculationResult в читаемый текст."""
-    
-    # Расчеты для других периодов
+    # ... (код остается без изменений) ...
     net_profit_weekly = result.net_profit_usd_daily * 7
     net_profit_monthly = result.net_profit_usd_daily * 30.44
     net_profit_yearly = result.net_profit_usd_daily * 365.25
-
-    # Конвертация в рубли
     net_profit_rub_daily = result.net_profit_usd_daily * result.usd_rub_rate
-
-    # Определение цвета для чистой прибыли (зеленый для >0, красный для <0)
     profit_color_emoji = "🟢" if result.net_profit_usd_daily > 0 else "🔴"
 
     return (

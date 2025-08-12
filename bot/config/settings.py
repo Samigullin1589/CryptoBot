@@ -1,13 +1,9 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - ЕДИНЫЙ ИСТОЧНИК)
+# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С ИСПРАВЛЕННЫМИ ЭНДПОИНТАМИ)
 # Описание: Единая, строго типизированная система конфигурации.
-#           Определяет Pydantic-модели и создает единственный
-#           экземпляр (singleton) настроек для всего приложения.
-# ИСПРАВЛЕНИЕ: Объединены файлы settings.py и config.py для устранения
-#              циклических импортов.
+# ИСПРАВЛЕНИЕ: Добавлен эндпоинт для получения высоты блока Bitcoin.
 # =================================================================================
 
-import logging
 from typing import List, Dict, Any, Optional
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ValidationError, field_validator, ConfigDict)
@@ -69,6 +65,8 @@ class EndpointsConfig(BaseModel):
     whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
     asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
     minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
+    # ИСПРАВЛЕНО: Добавлен новый эндпоинт
+    mempool_space_tip_height: HttpUrl = "https://mempool.space/api/blocks/tip/height"
 
 class ThreatFilterConfig(BaseModel):
     enabled: bool = True
@@ -159,7 +157,6 @@ class Settings(BaseSettings):
         env_nested_delimiter='__'
     )
 
-# --- СОЗДАНИЕ ЕДИНСТВЕННОГО ЭКЗЕМПЛЯРА НАСТРОЕК ---
 try:
     settings = Settings()
     logging.info("Конфигурация успешно загружена и валидирована.")
