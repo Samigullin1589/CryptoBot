@@ -1,5 +1,5 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ОКОНЧАТЕЛЬНО ИСПРАВЛЕННАЯ)
+# Файл: bot/services/ai_content_service.py (ВЕРСЯ "Distinguished Engineer" - ОКОНЧАТЕЛЬНО ИСПРАВЛЕННАЯ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете
 # для предоставления актуальных ответов.
 # ИСПРАВЛЕНИЕ: Устранена критическая синтаксическая ошибка импорта, интеграция с
@@ -37,6 +37,9 @@ class AIContentService:
     def __init__(self, api_key: str, config: AIConfig):
         self.config = config
         self.client: Optional[genai.GenerativeModel] = None
+        if not api_key:
+            logger.critical("API-ключ для Gemini не предоставлен. AI-сервис будет отключен.")
+            return
         try:
             genai.configure(api_key=api_key)
             # Настраиваем модель с поддержкой вызова инструментов (для поиска)
@@ -51,10 +54,11 @@ class AIContentService:
     def _extract_text_from_response(self, response: Any) -> Optional[str]:
         """Безопасно извлекает текстовое содержимое из ответа модели."""
         try:
-            # Проверяем, есть ли function_call, что означает, что модель хочет использовать инструмент
-            if response.candidates and response.candidates[0].content.parts[0].function_call:
-                return None # Возвращаем None, чтобы показать, что нужен еще один шаг
-            return response.candidates[0].content.parts[0].text
+            if response.candidates and response.candidates[0].content.parts:
+                if response.candidates[0].content.parts[0].function_call:
+                    return None
+                return response.candidates[0].content.parts[0].text
+            return None
         except (AttributeError, IndexError, KeyError):
             logger.error("Не удалось извлечь текст из ответа AI.", exc_info=True)
             return None
@@ -78,13 +82,10 @@ class AIContentService:
         if not self.client: return None
 
         try:
-            # Для структурированного вывода используем модель без поиска, чтобы гарантировать JSON
             base_model = genai.GenerativeModel(
                 self.config.model_name,
                 generation_config={"response_mime_type": "application/json"}
             )
-
-            # Передаем схему в самом промпте для большей надежности
             full_prompt = f"{prompt}\n\nStrictly adhere to this JSON schema:\n{json.dumps(json_schema)}"
 
             response = await self._make_request(
@@ -108,7 +109,6 @@ class AIContentService:
         try:
             flash_model = genai.GenerativeModel(self.config.flash_model_name)
             prompt = get_summary_prompt(text_to_summarize)
-
             response = await self._make_request(flash_model, contents=prompt)
             return self._extract_text_from_response(response)
         except Exception as e:
