@@ -1,9 +1,13 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С РАБОЧИМИ RSS И РЕЗЕРВНЫМ API)
+# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - ЕДИНЫЙ ИСТОЧНИК)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Обновлены RSS-ленты на рабочие.
+#           Определяет Pydantic-модели и создает единственный
+#           экземпляр (singleton) настроек для всего приложения.
+# ИСПРАВЛЕНИЕ: Объединены файлы settings.py и config.py для устранения
+#              циклических импортов.
 # =================================================================================
 
+import logging
 from typing import List, Dict, Any, Optional
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ValidationError, field_validator, ConfigDict)
@@ -62,6 +66,9 @@ class EndpointsConfig(BaseModel):
     fear_and_greed_api: HttpUrl = "https://api.alternative.me/fng/"
     mempool_space_difficulty: HttpUrl = "https://mempool.space/api/v1/difficulty-adjustment"
     blockchain_info_hashrate: HttpUrl = "https://blockchain.info/q/hashrate"
+    whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
+    asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
+    minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
 
 class ThreatFilterConfig(BaseModel):
     enabled: bool = True
@@ -151,3 +158,11 @@ class Settings(BaseSettings):
         extra='ignore',
         env_nested_delimiter='__'
     )
+
+# --- СОЗДАНИЕ ЕДИНСТВЕННОГО ЭКЗЕМПЛЯРА НАСТРОЕК ---
+try:
+    settings = Settings()
+    logging.info("Конфигурация успешно загружена и валидирована.")
+except ValidationError as e:
+    logging.critical(f"КРИТИЧЕСКАЯ ОШИБКА ВАЛИДАЦИИ НАСТРОЕК. Проверьте ваш .env файл и переменные окружения.\n{e}")
+    raise SystemExit("Ошибки валидации конфигурации.")

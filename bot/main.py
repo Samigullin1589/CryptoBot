@@ -2,6 +2,7 @@
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
 # Описание: Точка входа с улучшенной архитектурой, роутингом и процедурой
 #           завершения работы для максимальной стабильности.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для устранения циклической зависимости.
 # =================================================================================
 
 import asyncio
@@ -14,7 +15,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 from bot.utils.dependencies import Deps
 from bot.utils.logging_setup import setup_logging
 from bot.middlewares.activity_middleware import ActivityMiddleware
