@@ -2,6 +2,7 @@
 # Файл: bot/middlewares/activity_middleware.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Middleware для эффективного отслеживания активности
 # пользователей.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # =================================================================================
 import time
 import logging
@@ -11,7 +12,8 @@ from aiogram import BaseMiddleware
 from aiogram.types import Update
 
 from bot.services.user_service import UserService
-from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
