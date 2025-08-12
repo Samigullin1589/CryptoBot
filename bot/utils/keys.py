@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/keys.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ РАСШИРЕННАЯ)
 # Описание: Централизованная фабрика для генерации всех ключей Redis.
-# ИСПРАВЛЕНИЕ: Добавлены ключи для Крипто-Центра.
+# ИСПРАВЛЕНИЕ: Добавлены ключи для индекса username <-> user_id.
 # =================================================================================
 
 class KeyFactory:
@@ -15,18 +15,21 @@ class KeyFactory:
     @staticmethod
     def all_users_set() -> str:
         return "users:all"
+        
+    @staticmethod
+    def username_to_id_map() -> str:
+        """HASH для сопоставления username -> user_id."""
+        return "map:username_to_id"
 
-    # --- Профиль интересов пользователя (для Крипто-Центра) ---
+    # --- Профиль интересов ... и другие ключи ...
     @staticmethod
     def user_interest_profile(user_id: int) -> str:
         return f"user:interest_profile:{user_id}"
 
-    # --- История диалогов ---
     @staticmethod
     def conversation_history(user_id: int, chat_id: int) -> str:
         return f"conversation:{user_id}:{chat_id}"
 
-    # --- Достижения ---
     @staticmethod
     def user_achievements(user_id: int) -> str:
         return f"achievements:{user_id}"
@@ -35,7 +38,6 @@ class KeyFactory:
     def user_event_counters(user_id: int) -> str:
         return f"achievements:counters:{user_id}"
 
-    # --- Игра ---
     @staticmethod
     def user_game_profile(user_id: int) -> str:
         return f"game:profile:{user_id}"
@@ -56,7 +58,6 @@ class KeyFactory:
     def game_leaderboard() -> str:
         return "game:leaderboard"
 
-    # --- Рынок ---
     @staticmethod
     def market_listings_by_price() -> str:
         return "market:listings:price"
@@ -65,7 +66,6 @@ class KeyFactory:
     def market_listing_data(listing_id: str) -> str:
         return f"market:listing:{listing_id}"
 
-    # --- Новости и Крипто-Центр ---
     @staticmethod
     def news_deduplication_set() -> str:
         return "news:dedup_hashes"
@@ -82,7 +82,6 @@ class KeyFactory:
     def user_airdrop_progress(user_id: int, airdrop_id: str) -> str:
         return f"crypto_center:progress:{user_id}:{airdrop_id}"
 
-    # --- ASIC ---
     @staticmethod
     def asic_hash(normalized_name: str) -> str:
         return f"asic:{normalized_name}"

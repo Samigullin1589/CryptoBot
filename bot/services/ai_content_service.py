@@ -1,9 +1,8 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
-# Описание: Сервис для Gemini, использующий актуальную версию библиотеки
-#           и корректно инициализирующий модель без конфликтующих параметров.
-# ИСПРАВЛЕНИЕ: Убран параметр 'tools' из конструктора модели для
-#              устранения критической ошибки инициализации.
+# Описание: Сервис для Gemini, использующий актуальную версию библиотеки.
+# ИСПРАВЛЕНИЕ: Исправлен способ передачи system_instruction для
+#              совместимости с API библиотеки и устранения TypeError.
 # ===============================================================
 
 import logging
@@ -38,11 +37,7 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # ИСПРАВЛЕНО: Убран параметр `tools`. Модели 'pro' и 'flash'
-            # используют поиск Google автоматически, когда это необходимо.
-            # Явная передача этого параметра в данной версии библиотеки вызывает ошибку.
             self.client = genai.GenerativeModel(self.config.model_name)
-            
             logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name}.")
         except Exception as e:
             logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.", exc_info=True)
@@ -109,10 +104,16 @@ class AIContentService:
         chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
 
         try:
+            # ИСПРАВЛЕНО: Создаем экземпляр модели с нужной системной инструкцией
+            # именно для этой задачи, как того требует API.
+            consultant_model = genai.GenerativeModel(
+                self.config.model_name,
+                system_instruction=system_prompt
+            )
+
             response = await self._make_request(
-                self.client,
-                contents=chat_history,
-                system_instruction=system_prompt,
+                consultant_model,
+                contents=chat_history
             )
             return self._extract_text_from_response(response) or "AI не смог сформировать ответ."
         except Exception as e:

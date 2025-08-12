@@ -1,6 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/user_helpers.py (НОВЫЙ ФАЙЛ)
 # Описание: Вспомогательные функции для работы с пользователями.
+# ИСПРАВЛЕНИЕ: Добавлена логика поиска пользователя по @username.
 # =================================================================================
 import logging
 from typing import Optional
@@ -15,17 +16,14 @@ logger = logging.getLogger(__name__)
 async def extract_target_user(message: Message, user_service: UserService) -> Optional[User]:
     """
     Извлекает целевого пользователя из сообщения.
-    Поддерживает три сценария:
-    1. Ответ на сообщение (reply).
-    2. Упоминание через @username или по user_id.
-    3. Сам автор сообщения (если другие сценарии не сработали).
+    Поддерживает сценарии: ответ (reply), упоминание (@username) или ID.
     """
     # Сценарий 1: Ответ на сообщение
     if message.reply_to_message and message.reply_to_message.from_user:
         return await user_service.get_user(message.reply_to_message.from_user.id)
 
     # Сценарий 2: Упоминание или ID в тексте команды
-    args = message.text.split(maxsplit=1)
+    args = message.text.split()
     if len(args) > 1:
         target_arg = args[1]
         
@@ -33,13 +31,9 @@ async def extract_target_user(message: Message, user_service: UserService) -> Op
         if target_arg.isdigit():
             return await user_service.get_user(int(target_arg))
         
-        # Поиск по @username
+        # ИСПРАВЛЕНО: Поиск по @username теперь работает
         if target_arg.startswith('@'):
-            # В aiogram нет прямого способа найти ID по username,
-            # поэтому этот сценарий будет работать, если бот "видел"
-            # пользователя ранее и сохранил его username.
-            # Для надежности лучше использовать ID или reply.
-            logger.warning("Поиск по @username не является надежным методом.")
+            return await user_service.get_user_by_username(target_arg)
 
     # Если ничего не найдено, возвращаем None
     return None

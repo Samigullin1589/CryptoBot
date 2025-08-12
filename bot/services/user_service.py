@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
-# Описание: Сервис управления пользователями с корректной сериализацией
-# вложенных Pydantic моделей для Redis HASH.
-# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
+# Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - С ПОИСКОМ ПО USERNAME)
+# Описание: Сервис управления пользователями с поддержкой индекса username <-> user_id.
+# ИСПРАВЛЕНИЕ: Добавлена логика для поиска пользователя по его имени.
 # =================================================================================
 import json
 import logging
@@ -13,9 +12,8 @@ from aiogram.types import User as TelegramUser
 from redis.asyncio import Redis
 from pydantic import BaseModel
 
-from bot.utils.models import User, UserRole, VerificationData
+from bot.utils.models import User, UserRole
 from bot.utils.keys import KeyFactory
-# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
 from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -29,9 +27,6 @@ class UserService:
         self.history_max_size = settings.ai.history_max_size
 
     async def get_user(self, user_id: int) -> Optional[User]:
-        """
-        Получает данные пользователя из Redis HASH и корректно десериализует вложенные JSON.
-        """
         user_key = self.keys.user_profile(user_id)
         user_data_dict = await self.redis.hgetall(user_key)
         
@@ -40,55 +35,66 @@ class UserService:
         
         try:
             # Преобразуем строковые значения к их правильным типам
-            if 'id' in user_data_dict:
-                user_data_dict['id'] = int(user_data_dict['id'])
-            if 'role' in user_data_dict:
-                user_data_dict['role'] = int(user_data_dict['role'])
-            if 'electricity_cost' in user_data_dict:
-                user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
-            
+            if 'id' in user_data_dict: user_data_dict['id'] = int(user_data_dict['id'])
+            if 'role' in user_data_dict: user_data_dict['role'] = int(user_data_dict['role'])
+            if 'electricity_cost' in user_data_dict: user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
             if 'verification_data' in user_data_dict and isinstance(user_data_dict['verification_data'], str):
                 user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
             
             return User.model_validate(user_data_dict)
-        except (json.JSONDecodeError, TypeError, Exception) as e:
-            logger.error(f"Ошибка при десериализации HASH-данных для пользователя {user_id}: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка десериализации HASH для пользователя {user_id}: {e}")
             return None
 
-    async def save_user(self, user: User) -> None:
+    async def save_user(self, user: User, old_username: Optional[str] = None) -> None:
         """
-        Сохраняет модель пользователя в Redis HASH, корректно сериализуя вложенные модели.
+        Сохраняет модель пользователя в Redis HASH и обновляет индекс username -> user_id.
         """
         user_key = self.keys.user_profile(user.id)
         user_data_to_save = user.model_dump()
         
         final_mapping = {}
         for key, value in user_data_to_save.items():
-            if isinstance(value, dict) or isinstance(value, list) or isinstance(value, BaseModel):
+            if isinstance(value, (dict, list, BaseModel)):
                 final_mapping[key] = json.dumps(value)
             elif value is not None:
                 final_mapping[key] = str(value)
 
-        await self.redis.hset(user_key, mapping=final_mapping)
+        # Атомарная операция для обновления профиля и индекса
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.hset(user_key, mapping=final_mapping)
+            
+            # Логика обновления индекса username -> id
+            current_username = user.username.lower() if user.username else None
+            old_username_lower = old_username.lower() if old_username else None
+
+            # Если юзернейм изменился или появился, а старый был
+            if current_username != old_username_lower and old_username_lower:
+                pipe.hdel(self.keys.username_to_id_map(), old_username_lower)
+            
+            # Если новый юзернейм есть, добавляем его в индекс
+            if current_username:
+                pipe.hset(self.keys.username_to_id_map(), current_username, user.id)
+            
+            await pipe.execute()
 
     async def get_or_create_user(self, tg_user: TelegramUser) -> Tuple[User, bool]:
         """
-        Получает пользователя из базы данных. Если его нет, создает нового
-        и сохраняет его. Также обновляет данные, если они изменились.
+        Получает пользователя. Если нет - создает. Если данные изменились - обновляет.
         """
         existing_user = await self.get_user(tg_user.id)
         if existing_user:
             update_needed = False
-            if existing_user.username != tg_user.username:
+            old_username = existing_user.username
+            
+            if existing_user.username != tg_user.username or existing_user.first_name != tg_user.full_name:
                 existing_user.username = tg_user.username
-                update_needed = True
-            if existing_user.first_name != tg_user.full_name:
                 existing_user.first_name = tg_user.full_name
                 update_needed = True
                 
             if update_needed:
                 logger.info(f"Обновлены данные для пользователя {tg_user.id} (@{tg_user.username}).")
-                await self.save_user(existing_user)
+                await self.save_user(existing_user, old_username=old_username)
             return existing_user, False
         
         new_user = User(
@@ -105,6 +111,15 @@ class UserService:
         logger.info(f"Зарегистрирован новый пользователь {tg_user.id} (@{tg_user.username}).")
         return new_user, True
 
+    async def get_user_by_username(self, username: str) -> Optional[User]:
+        """[НОВЫЙ МЕТОД] Находит пользователя по его @username."""
+        username_lower = username.lower().lstrip('@')
+        user_id = await self.redis.hget(self.keys.username_to_id_map(), username_lower)
+        if user_id:
+            return await self.get_user(int(user_id))
+        return None
+    
+    # ... (остальные методы без изменений) ...
     async def get_all_user_ids(self) -> List[int]:
         user_ids_raw = await self.redis.smembers(self.keys.all_users_set())
         return [int(user_id) for user_id in user_ids_raw]
@@ -137,9 +152,7 @@ class UserService:
             await pipe.execute()
             
     async def set_user_electricity_cost(self, user_id: int, cost: float) -> None:
-        """Сохраняет стоимость электроэнергии для пользователя."""
-        user = await self.get_user(user_id)
+        user, _ = await self.get_or_create_user(TelegramUser(id=user_id, is_bot=False, first_name="Unknown"))
         if user:
             user.electricity_cost = cost
             await self.save_user(user)
-            logger.info(f"Стоимость э/э для пользователя {user_id} обновлена на {cost}.")
