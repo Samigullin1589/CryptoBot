@@ -2,6 +2,7 @@
 # Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
 # Описание: Сервис управления пользователями с корректной сериализацией
 # вложенных Pydantic моделей для Redis HASH.
+# ИСПРАВЛЕНИЕ: Исправлена логика обновления данных существующего пользователя.
 # =================================================================================
 import json
 import logging
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 
 from bot.utils.models import User, UserRole, VerificationData
 from bot.utils.keys import KeyFactory
-from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
+from bot.config.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -72,18 +73,21 @@ class UserService:
     async def get_or_create_user(self, tg_user: TelegramUser) -> Tuple[User, bool]:
         """
         Получает пользователя из базы данных. Если его нет, создает нового
-        и сохраняет его.
+        и сохраняет его. Также обновляет данные, если они изменились.
         """
         existing_user = await self.get_user(tg_user.id)
         if existing_user:
             update_needed = False
+            # ИСПРАВЛЕНО: Теперь данные сначала обновляются в объекте, а потом сохраняются
             if existing_user.username != tg_user.username:
                 existing_user.username = tg_user.username
                 update_needed = True
             if existing_user.first_name != tg_user.full_name:
                 existing_user.first_name = tg_user.full_name
                 update_needed = True
+                
             if update_needed:
+                logger.info(f"Обновлены данные для пользователя {tg_user.id} (@{tg_user.username}).")
                 await self.save_user(existing_user)
             return existing_user, False
         

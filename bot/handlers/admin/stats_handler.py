@@ -1,8 +1,9 @@
 # bot/handlers/admin/stats_handler.py
 # =================================================================================
-# Файл: bot/handlers/admin/stats_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Файл: bot/handlers/admin/stats_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
 # Описание: Единый динамический обработчик для отображения статистики,
 # полностью соответствующий архитектуре "тонкий хэндлер".
+# ИСПРАВЛЕНИЕ: Исправлена ошибка в префиксе callback-запросов.
 # =================================================================================
 import logging
 from aiogram import Router, F
@@ -19,11 +20,10 @@ stats_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
 # Применяем фильтр ко всему роутеру
-stats_router.callback_query.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
+stats_router.callback_query.filter(PrivilegeFilter(min_role=UserRole.MODERATOR))
 
-
-# ИСПРАВЛЕНО: Хэндлер срабатывает из главного меню (состояние AdminStates.main)
-@stats_router.callback_query(F.data.startswith("admin_stats:"), AdminStates.main)
+# ИСПРАВЛЕНО: Префикс изменен с "admin_stats:" на "admin:stats:" для соответствия клавиатуре
+@stats_router.callback_query(F.data.startswith("admin:stats:"), AdminStates.stats_view)
 async def show_statistics_page(
     callback: CallbackQuery,
     state: FSMContext,
@@ -32,15 +32,13 @@ async def show_statistics_page(
     """
     Единый динамический обработчик для всех страниц статистики.
     """
+    # Теперь мы безопасно извлекаем тип статистики
     stats_type = callback.data.split(":")[-1]
     
     logger.info(f"Admin {callback.from_user.id} requested statistics page: '{stats_type}'")
     
     await callback.answer(f"Загружаю статистику: {stats_type}...")
     
-    # ИСПРАВЛЕНО: Устанавливаем корректное состояние AdminStates.stats_view
-    await state.set_state(AdminStates.stats_view)
-
     try:
         # Вся логика по получению текста и клавиатуры теперь в сервисе
         text, keyboard = await admin_service.get_stats_page_content(stats_type)

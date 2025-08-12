@@ -1,7 +1,8 @@
 # ===============================================================
-# Файл: bot/handlers/admin/admin_menu.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Файл: bot/handlers/admin/admin_menu.py (ПРОДАКШН-ВЕРСИЯ 2025 - ПОЛНАЯ НАВИГАЦИЯ)
 # Описание: Управляет навигацией по админ-панели.
 # Полностью интегрирован с PrivilegeFilter, FSM и AdminService.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий обработчик для входа в меню статистики.
 # ===============================================================
 import logging
 from aiogram import Router, F
@@ -13,9 +14,10 @@ from bot.filters.access_filters import PrivilegeFilter, UserRole
 from bot.services.admin_service import AdminService
 from bot.states.admin_states import AdminStates
 from bot.texts.admin_texts import ADMIN_MENU_TEXT, SUPER_ADMIN_ONLY_TEXT
+from bot.keyboards.admin_keyboards import get_stats_menu_keyboard, get_back_to_admin_menu_keyboard
 
 admin_router = Router(name=__name__)
-# --- УЛУЧШЕНИЕ: Применяем фильтр ко всем хэндлерам в этом роутере ---
+# Применяем фильтр ко всем хэндлерам в этом роутере
 admin_router.message.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 admin_router.callback_query.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 
@@ -26,18 +28,17 @@ logger = logging.getLogger(__name__)
 @admin_router.message(Command("admin"))
 async def admin_start_handler(message: Message, state: FSMContext, admin_service: AdminService):
     """Обработчик команды /admin. Отображает главное меню."""
-    await state.set_state(AdminStates.main_menu)
-    # ActionTrackingMiddleware уже залогировал команду /admin
+    await state.set_state(AdminStates.main)
     
     menu_text, menu_keyboard = await admin_service.get_main_menu_content(message.from_user.id)
     await message.answer(menu_text, reply_markup=menu_keyboard)
 
 # --- Обработчик возврата в главное меню ---
 
-@admin_router.callback_query(F.data == "admin:main_menu")
+@admin_router.callback_query(F.data == "admin:menu")
 async def admin_menu_callback(call: CallbackQuery, state: FSMContext, admin_service: AdminService):
     """Возвращает пользователя в главное меню админки."""
-    await state.set_state(AdminStates.main_menu)
+    await state.set_state(AdminStates.main)
     await call.answer()
     
     menu_text, menu_keyboard = await admin_service.get_main_menu_content(call.from_user.id)
@@ -46,19 +47,28 @@ async def admin_menu_callback(call: CallbackQuery, state: FSMContext, admin_serv
         await call.message.edit_text(menu_text, reply_markup=menu_keyboard)
     except Exception as e:
         logger.warning(f"Не удалось отредактировать сообщение для admin_menu: {e}")
-        # Удаляем старое и отправляем новое, если редактирование не удалось
         await call.message.delete()
         await call.message.answer(menu_text, reply_markup=menu_keyboard)
 
+# --- НОВЫЙ ОБРАБОТЧИК ДЛЯ МЕНЮ СТАТИСТИКИ ---
+@admin_router.callback_query(F.data == "admin:stats_menu", AdminStates.main)
+async def admin_stats_menu_handler(call: CallbackQuery, state: FSMContext):
+    """
+    Показывает меню выбора категорий статистики.
+    """
+    await call.answer()
+    await state.set_state(AdminStates.stats_view)
+    text = "<b>📊 Статистика Бота</b>\n\nВыберите категорию для просмотра:"
+    await call.message.edit_text(text, reply_markup=get_stats_menu_keyboard())
+
 # --- Функции управления системой (для SUPER_ADMIN) ---
 
-@admin_router.callback_query(F.data == "admin_system:clear_asic_cache", PrivilegeFilter(min_role=UserRole.SUPER_ADMIN))
+@admin_router.callback_query(F.data == "admin:system:clear_asic_cache", PrivilegeFilter(min_role=UserRole.SUPER_ADMIN))
 async def clear_asic_cache_callback(call: CallbackQuery, admin_service: AdminService):
     """Обрабатывает нажатие кнопки 'Очистить кэш ASIC'."""
     await call.answer("⏳ Очищаю кэш...", show_alert=False)
     
     try:
-        # --- УЛУЧШЕНИЕ: Вызываем сервис без лишних зависимостей ---
         deleted_count = await admin_service.clear_asic_cache()
         
         if deleted_count > 0:
