@@ -21,46 +21,35 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# Импортируем все необходимые пакеты с роутерами
+# Импортируем ЦЕЛЫЕ пакеты с обработчиками
 from bot.handlers import admin, game, public, tools, threats
 
 logger = logging.getLogger(__name__)
 
-def register_routers(dp: Dispatcher):
+
+def register_all_routers(dp: Dispatcher):
     """
     Централизованно регистрирует все роутеры приложения.
-    Такой подход упрощает управление и масштабирование.
+    Такой подход упрощает управление, предотвращает ошибки импорта и масштабируется.
     """
-    # Админские роутеры
-    dp.include_router(admin.admin_menu.admin_router)
-    dp.include_router(admin.verification_admin_handler.router)
-    dp.include_router(admin.stats_handler.stats_router)
-    dp.include_router(admin.moderation_handler.moderation_router)
-    dp.include_router(admin.game_admin_handler.router)
+    # Регистрируем роутеры из каждого модуля
+    for router in admin.__all__:
+        dp.include_router(getattr(admin, router))
+        
+    for router in game.__all__:
+        dp.include_router(getattr(game, router))
 
-    # Публичные роутеры
-    dp.include_router(public.common_handler.router)
-    dp.include_router(public.menu_handlers.router)
-    dp.include_router(public.price_handler.router)
-    dp.include_router(public.asic_handler.router)
-    dp.include_router(public.news_handler.router)
-    dp.include_router(public.quiz_handler.router)
-    dp.include_router(public.market_info_handler.router)
-    dp.include_router(public.crypto_center_handler.router)
-    dp.include_router(public.verification_public_handler.router)
-    dp.include_router(public.achievements_handler.router)
-    dp.include_router(public.market_handler.router) # Обработчик рынка
+    for router in public.__all__:
+        dp.include_router(getattr(public, router))
+        
+    for router in tools.__all__:
+        dp.include_router(getattr(tools, router))
 
-    # Игровые роутеры
-    dp.include_router(game.mining_game_handler.game_router)
-
-    # Инструменты
-    dp.include_router(tools.calculator_handler.calculator_router)
-
-    # Обработка угроз (должен быть в конце, чтобы ловить все, что не поймали другие)
+    # Обработчик угроз регистрируется последним
     dp.include_router(threats.threat_handler.threat_router)
-
+    
     logger.info("Все роутеры успешно зарегистрированы.")
+
 
 async def set_bot_commands(bot: Bot):
     """Устанавливает команды, видимые пользователям в меню Telegram."""
@@ -74,6 +63,7 @@ async def set_bot_commands(bot: Bot):
     await bot.set_my_commands(commands, BotCommandScopeDefault())
     logger.info("Команды бота успешно установлены.")
 
+
 async def on_startup(bot: Bot, deps: Deps):
     """Выполняет действия при старте бота."""
     logger.info("Запуск процедур on_startup...")
@@ -85,6 +75,7 @@ async def on_startup(bot: Bot, deps: Deps):
     if deps.admin_service:
         await deps.admin_service.notify_admins("✅ Бот успешно запущен!")
     logger.info("Процедуры on_startup завершены.")
+
 
 async def on_shutdown(bot: Bot, deps: Deps):
     """Выполняет действия при остановке бота, гарантируя чистое закрытие ресурсов."""
@@ -102,9 +93,10 @@ async def on_shutdown(bot: Bot, deps: Deps):
         logger.info("Сессия бота закрыта.")
     logger.info("Процедуры on_shutdown завершены. Бот остановлен.")
 
+
 async def main():
     """Главная точка входа для приложения бота."""
-    setup_logging(level=settings.log_level, format="json") # JSON-логи для продакшена
+    setup_logging(level=settings.log_level, format="json") # JSON-логи для production
     
     redis_pool = redis.from_url(str(settings.REDIS_URL), encoding="utf-8", decode_responses=True)
     storage = RedisStorage(redis=redis_pool)
@@ -112,7 +104,7 @@ async def main():
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=storage)
 
-    register_routers(dp)
+    register_all_routers(dp)
 
     async with ClientSession() as http_session:
         deps = await Deps.build(
@@ -132,8 +124,8 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
 
         logger.info("Запуск процесса опроса Telegram...")
-        # Передаем контейнер зависимостей во все обработчики
         await dp.start_polling(bot, deps=deps)
+
 
 if __name__ == "__main__":
     try:
