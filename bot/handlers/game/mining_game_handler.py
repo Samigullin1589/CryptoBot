@@ -2,16 +2,18 @@
 # Файл: bot/handlers/game/mining_game_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
 # Описание: "Тонкий" обработчик, использующий FSM для оптимизации
 # и надежные идентификаторы в колбэках.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # ===============================================================
 import logging
 from aiogram import F, Router, Bot, types
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 from bot.services.mining_game_service import MiningGameService
 from bot.services.asic_service import AsicService
-from bot.states.game_states import MiningGameStates # <-- ИСПРАВЛЕН ИМПОРТ
+from bot.states.game_states import MiningGameStates
 from bot.keyboards.mining_keyboards import (
     get_mining_menu_keyboard, get_shop_keyboard, get_my_farm_keyboard,
     get_withdraw_keyboard
@@ -153,18 +155,4 @@ async def handle_electricity_menu(call: CallbackQuery, game_service: MiningGameS
 async def handle_select_tariff(call: CallbackQuery, game_service: MiningGameService):
     """Выбирает тариф."""
     tariff_name = call.data.split(":")[-1]
-    alert_text = await game_service.select_tariff(call.from_user.id, tariff_name)
-    await call.answer(alert_text, show_alert=True)
-    text, keyboard = await game_service.get_electricity_menu(call.from_user.id)
-    await call.message.edit_text(text, reply_markup=keyboard)
-
-
-@game_router.callback_query(F.data.startswith("game_tariff_buy:"))
-async def handle_buy_tariff(call: CallbackQuery, game_service: MiningGameService):
-    """Покупает тариф."""
-    tariff_name = call.data.split(":")[-1]
-    alert_text = await game_service.buy_tariff(call.from_user.id, tariff_name)
-    await call.answer(alert_text, show_alert=True)
-    if "🎉" in alert_text:
-        text, keyboard = await game_service.get_electricity_menu(call.from_user.id)
-        await call.message.edit_text(text, reply_markup=keyboard)
+    alert_text = await
