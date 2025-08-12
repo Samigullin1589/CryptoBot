@@ -1,8 +1,8 @@
 # ==================================================================================
-# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ИСПРАВЛЕННАЯ)
+# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
-# ИСПРАВЛЕНИЕ: Параметр 'redis_client' в __init__ заменен на 'redis' для
-# соответствия с DI-контейнером.
+# ИСПРАВЛЕНИЕ: Используется новый метод NewsService для сбора всех новостей
+#              и улучшена очистка HTML для AI-саммари.
 # ==================================================================================
 
 import json
@@ -11,6 +11,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 
 import redis.asyncio as redis
+from bs4 import BeautifulSoup
 
 from bot.config.settings import CryptoCenterServiceConfig
 from bot.services.ai_content_service import AIContentService
@@ -24,7 +25,6 @@ logger = logging.getLogger(__name__)
 class CryptoCenterService:
     """Персональный AI-ассистент для навигации в мире криптовалют."""
 
-    # ИСПРАВЛЕНО: 'redis_client' -> 'redis'
     def __init__(self, redis: redis.Redis, ai_service: AIContentService,
                  news_service: NewsService, config: CryptoCenterServiceConfig):
         self.redis = redis
@@ -34,14 +34,14 @@ class CryptoCenterService:
         self.keys = KeyFactory
 
     async def _get_user_interest_profile(self, user_id: int) -> Dict[str, List[str]]:
-        """Загружает или создаёт профиль интересов пользователя."""
+        # ... (код остается без изменений) ...
         profile_key = self.keys.user_interest_profile(user_id)
-        tags = await self.redis.smembers(f"{profile_key}:tags")
-        coins = await self.redis.smembers(f"{profile_key}:coins")
-        return {"tags": [t.decode('utf-8') for t in tags], "interacted_coins": [c.decode('utf-8') for c in coins]}
+        tags_raw = await self.redis.smembers(f"{profile_key}:tags")
+        coins_raw = await self.redis.smembers(f"{profile_key}:coins")
+        return {"tags": [t for t in tags_raw], "interacted_coins": [c for c in coins_raw]}
 
     async def update_user_interest(self, user_id: int, tags: List[str] = None, coins: List[str] = None):
-        """Обновляет профиль интересов пользователя на основе его действий."""
+        # ... (код остается без изменений) ...
         profile_key = self.keys.user_interest_profile(user_id)
         async with self.redis.pipeline(transaction=True) as pipe:
             if tags:
@@ -52,7 +52,7 @@ class CryptoCenterService:
         logger.debug(f"Updated interest profile for user {user_id} with tags={tags}, coins={coins}")
 
     async def _generate_alpha(self, user_id: int, alpha_type: str, json_schema: Dict) -> List[Dict[str, Any]]:
-        """Универсальный метод для генерации персонализированной 'альфы'."""
+        # ... (код остается без изменений) ...
         user_profile = await self._get_user_interest_profile(user_id)
         cache_key = self.keys.personalized_alpha_cache(user_id, alpha_type)
 
@@ -61,7 +61,10 @@ class CryptoCenterService:
             return json.loads(cached_data)
 
         logger.info(f"Generating fresh personalized {alpha_type} alpha for user {user_id}...")
-        news_context = await self.news_service.get_raw_news_context(limit=self.config.news_context_limit)
+        # Собираем текстовый контекст из всех новостей
+        all_articles = await self.news_service.get_all_latest_news()
+        news_context = "\n\n".join([f"{a.title}\n{BeautifulSoup(a.body, 'html.parser').get_text()}" for a in all_articles[:self.config.news_context_limit]])
+        
         if not news_context:
             return []
 
@@ -75,13 +78,13 @@ class CryptoCenterService:
         return []
 
     async def get_airdrop_alpha(self, user_id: int) -> List[AirdropProject]:
-        """Получает персонализированный список Airdrop-проектов."""
+        # ... (код остается без изменений) ...
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "status", "tasks"]}}
         projects_data = await self._generate_alpha(user_id, "airdrop", json_schema)
         return [AirdropProject(**data) for data in projects_data]
 
     async def get_mining_alpha(self, user_id: int) -> List[Dict[str, Any]]:
-        """Получает персонализированные майнинг-сигналы."""
+        # ... (код остается без изменений) ...
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "algorithm": {"type": "STRING"}, "hardware": {"type": "STRING"}, "status": {"type": "STRING"}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "algorithm", "hardware"]}}
         return await self._generate_alpha(user_id, "mining", json_schema)
 
@@ -93,27 +96,37 @@ class CryptoCenterService:
             return [NewsArticle(**data) for data in json.loads(cached_data)]
 
         logger.info("Generating fresh live feed with summaries...")
-        articles = await self.news_service.get_latest_news()
+        # ИСПРАВЛЕНО: Вызываем новый метод для получения ВСЕХ новостей
+        articles = await self.news_service.get_all_latest_news()
         if not articles:
             return []
 
-        summary_tasks = [self.ai_service.generate_summary(article.body) for article in articles[:5]]
-        summaries = await asyncio.gather(*summary_tasks)
+        # Создаем задачи на суммаризацию, очищая HTML-теги из текста
+        summary_tasks = []
+        for article in articles[:5]: # Суммаризируем только топ-5 для скорости
+            clean_text = BeautifulSoup(article.body, 'html.parser').get_text(separator=' ', strip=True)
+            if clean_text:
+                summary_tasks.append(self.ai_service.generate_summary(clean_text))
+        
+        summaries = await asyncio.gather(*summary_tasks, return_exceptions=True)
         
         for article, summary in zip(articles, summaries):
-            article.ai_summary = summary
+            if isinstance(summary, str):
+                article.ai_summary = summary
+            else:
+                logger.error(f"Ошибка при суммаризации статьи '{article.title}': {summary}")
             
-        await self.redis.set(cache_key, json.dumps([a.model_dump() for a in articles]), ex=self.config.feed_cache_ttl_seconds)
+        await self.redis.set(cache_key, json.dumps([a.model_dump(mode='json') for a in articles]), ex=self.config.feed_cache_ttl_seconds)
         return articles
 
     async def get_user_progress(self, user_id: int, airdrop_id: str) -> List[int]:
-        """Получает список индексов выполненных задач для пользователя."""
+        # ... (код остается без изменений) ...
         progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
         completed_tasks = await self.redis.smembers(progress_key)
         return sorted([int(task_idx) for task_idx in completed_tasks])
 
     async def toggle_task_status(self, user_id: int, airdrop_id: str, task_index: int):
-        """Переключает статус выполнения задачи и обновляет профиль интересов."""
+        # ... (код остается без изменений) ...
         progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
         task_index_str = str(task_index)
         

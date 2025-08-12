@@ -1,16 +1,19 @@
 # =================================================================================
-# Файл: bot/services/news_service.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Динамический сервис для получения новостей из источников,
-# определенных в конфигурации, а не в коде.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт `asyncio` для устранения NameError.
+# Файл: bot/services/news_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - С АГРЕГАЦИЕЙ)
+# Описание: Динамический сервис для получения новостей из источников.
+# ИСПРАВЛЕНИЕ: Добавлен новый метод get_all_latest_news для
+#              сбора новостей со всех источников одновременно.
 # =================================================================================
 
 from __future__ import annotations
 import logging
 import json
-import asyncio # <-- ИСПРАВЛЕНО: Добавлен необходимый импорт
+import asyncio
+import feedparser
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urlparse
+from datetime import datetime
+from time import mktime
 
 import aiohttp
 import backoff
@@ -48,7 +51,6 @@ class NewsService:
 
     @staticmethod
     def _generate_source_info(url: str) -> Tuple[Optional[str], Optional[str]]:
-        """Генерирует ключ и читаемое имя из URL."""
         try:
             parsed_url = urlparse(url)
             domain = parsed_url.netloc
@@ -60,57 +62,54 @@ class NewsService:
             return None, None
 
     def get_all_sources(self) -> Dict[str, str]:
-        """Возвращает словарь {ключ: имя} для всех настроенных источников."""
         return self.source_names
 
     def _get_cache_key(self, source_key: str) -> str:
-        return f"cache:news:v2:{source_key}"
+        return f"cache:news:v3:{source_key}"
 
     @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=3, logger=logger)
-    async def _fetch_feed(self, url: str) -> Optional[str]:
-        """Загружает RSS-ленту с ретраями."""
+    async def _fetch_feed_content(self, url: str) -> Optional[str]:
         logger.info(f"Загрузка новостной ленты с: {url}")
-        async with self.http_session.get(url, timeout=10) as response:
+        async with self.http_session.get(url, timeout=15) as response:
             response.raise_for_status()
             return await response.text()
 
-    def _parse_feed(self, feed_content: str) -> List[NewsArticle]:
-        """Парсит XML-контент RSS-ленты и возвращает список статей."""
-        soup = BeautifulSoup(feed_content, 'xml')
-        items = soup.find_all('item', limit=self.config.news_limit_per_source)
+    def _parse_feed(self, feed_content: str, source_name: str) -> List[NewsArticle]:
+        parsed_feed = feedparser.parse(feed_content)
         articles = []
-        for item in items:
-            title = item.title.text.strip() if item.title else "Без заголовка"
-            link = item.link.text.strip() if item.link else ""
-            pub_date_tag = item.find('pubDate')
-            pub_date = pub_date_tag.text if pub_date_tag else None
-            
-            articles.append(NewsArticle(title=title, url=link, published_at=pub_date))
+        for entry in parsed_feed.entries[:self.config.news_limit_per_source]:
+            published_timestamp = 0
+            if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                published_timestamp = int(mktime(entry.published_parsed))
+
+            articles.append(NewsArticle(
+                title=entry.title.strip(),
+                url=entry.link.strip(),
+                body=entry.get('summary', ''),
+                source=source_name,
+                timestamp=published_timestamp
+            ))
         return articles
 
     async def get_latest_news(self, source_key: str) -> Optional[List[NewsArticle]]:
-        """
-        Получает последние новости из указанного источника.
-        Сначала проверяет кэш, затем запрашивает и парсит ленту.
-        """
         if source_key not in self.news_feeds:
             logger.error(f"Запрошен неизвестный источник новостей: {source_key}")
             return None
 
         cache_key = self._get_cache_key(source_key)
-        cached_news = await self.redis.get(cache_key)
-        if cached_news:
+        if cached_news := await self.redis.get(cache_key):
             logger.info(f"Новости для '{source_key}' найдены в кэше.")
             news_data = json.loads(cached_news)
             return [NewsArticle.model_validate(article) for article in news_data]
 
         try:
             feed_url = self.news_feeds[source_key]
-            feed_content = await self._fetch_feed(feed_url)
+            feed_content = await self._fetch_feed_content(feed_url)
             if not feed_content:
                 return None
             
-            articles = self._parse_feed(feed_content)
+            source_name = self.source_names.get(source_key, "Unknown")
+            articles = self._parse_feed(feed_content, source_name)
             
             articles_to_cache = [article.model_dump(mode='json') for article in articles]
             await self.redis.set(cache_key, json.dumps(articles_to_cache), ex=self.config.cache_ttl_seconds)
@@ -121,3 +120,25 @@ class NewsService:
         except Exception as e:
             logger.error(f"Не удалось получить новости для '{source_key}': {e}", exc_info=True)
             return None
+
+    async def get_all_latest_news(self) -> List[NewsArticle]:
+        """
+        [НОВЫЙ МЕТОД] Асинхронно собирает новости со всех источников,
+        объединяет их и сортирует по дате.
+        """
+        logger.info("Сбор новостей со всех источников...")
+        tasks = [self.get_latest_news(source_key) for source_key in self.news_feeds.keys()]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        all_articles = []
+        for res in results:
+            if isinstance(res, list):
+                all_articles.extend(res)
+            elif isinstance(res, Exception):
+                logger.error(f"Ошибка при сборе новостей из одного из источников: {res}")
+        
+        # Сортируем все новости по времени публикации (от новых к старым)
+        all_articles.sort(key=lambda x: x.timestamp, reverse=True)
+        
+        logger.info(f"Собрано {len(all_articles)} новостей со всех источников.")
+        return all_articles
