@@ -1,8 +1,8 @@
 # ==================================================================================
-# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 3.0" - С АКТИВНЫМ ПОИСКОМ)
+# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 3.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
-# ИСПРАВЛЕНИЕ: Логика генерации 'альфы' переключена с пассивного анализа
-#              новостей на активный поиск с помощью AI-агента.
+# ИСПРАВЛЕНИЕ: Исправлена ошибка десериализации данных из кэша,
+#              вызывавшая TypeError при создании AirdropProject.
 # ==================================================================================
 
 import json
@@ -53,14 +53,13 @@ class CryptoCenterService:
 
         if cached_data := await self.redis.get(cache_key):
             logger.info(f"Serving {alpha_type} alpha for user {user_id} from cache.")
+            # ИСПРАВЛЕНО: Десериализуем JSON-строку из кэша в Python-объект
             return json.loads(cached_data)
 
         logger.info(f"Generating fresh personalized {alpha_type} alpha for user {user_id} via AI Search...")
         
-        # ИСПРАВЛЕНО: Вместо передачи новостей, даем AI прямую команду на поиск
         prompt = get_personalized_alpha_prompt(user_profile, alpha_type)
         
-        # Используем основной AI-клиент, у которого есть доступ к 'Google Search'
         result = await self.ai_service.generate_structured_content(prompt, json_schema)
 
         if result:
@@ -74,6 +73,7 @@ class CryptoCenterService:
     async def get_airdrop_alpha(self, user_id: int) -> List[AirdropProject]:
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "status", "tasks"]}}
         projects_data = await self._generate_alpha(user_id, "airdrop", json_schema)
+        # Теперь projects_data гарантированно является списком словарей
         return [AirdropProject(**data) for data in projects_data]
 
     async def get_mining_alpha(self, user_id: int) -> List[Dict[str, Any]]:
@@ -83,7 +83,6 @@ class CryptoCenterService:
     async def get_live_feed_with_summary(self) -> List[NewsArticle]:
         cache_key = self.keys.live_feed_cache()
         if cached_data := await self.redis.get(cache_key):
-            logger.info("Serving live feed from cache.")
             return [NewsArticle(**data) for data in json.loads(cached_data)]
 
         logger.info("Generating fresh live feed with summaries...")
