@@ -1,7 +1,8 @@
 # =================================================================================
-# Файл: bot/handlers/public/verification_public_handler.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ)
-# Описание: Обработчики для публичных команд верификации с продуманной
-# логикой и улучшенным пользовательским опытом.
+# Файл: bot/handlers/public/verification_public_handler.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ - УЛУЧШЕННЫЙ)
+# Описание: Обработчики для публичных команд верификации.
+# ИСПРАВЛЕНИЕ: Улучшена логика команды /check для корректной
+#              обработки случаев, когда целевой пользователь не найден.
 # =================================================================================
 import logging
 from aiogram import Router
@@ -18,28 +19,45 @@ logger = logging.getLogger(__name__)
 @router.message(Command("check"))
 async def handle_check_command(message: Message, deps: Deps):
     """
-    Обрабатывает команду /check для проверки статуса пользователя.
-    Поддерживает 3 сценария: проверка себя, проверка по reply, проверка по mention/ID.
+    Обрабатывает команду /check.
+    - Если есть аргумент (@username/ID) или reply - ищет цель.
+    - Если цель не найдена - сообщает об этом.
+    - Если аргументов нет - проверяет автора команды.
     """
+    args = message.text.split()
     target_user = await extract_target_user(message, deps.user_service)
-    
-    if not target_user:
-        logger.info(f"Цель для /check не найдена, проверяем автора: {message.from_user.id}")
-        target_user, _ = await deps.user_service.get_or_create_user(message.from_user)
 
-    if not target_user:
-        await message.answer("Не удалось определить пользователя для проверки. Попробуйте снова.")
+    # Случай 1: Целевой пользователь успешно найден (по reply, ID или @username)
+    if target_user:
+        response_text = deps.verification_service.format_check_message(target_user)
+        await message.answer(response_text, disable_web_page_preview=True)
         return
-        
-    response_text = deps.verification_service.format_check_message(target_user)
-    await message.answer(response_text, disable_web_page_preview=True)
 
-# ИСПРАВЛЕНО: Команда приведена к нижнему регистру
+    # Случай 2: Был указан аргумент (ID/@username), но пользователь не найден
+    if len(args) > 1:
+        await message.reply(
+            "❌ **Пользователь не найден.**\n\n"
+            "Я не могу найти пользователя по указанному ID или @username. "
+            "Вероятнее всего, этот человек еще ни разу не взаимодействовал со мной. "
+            "Попросите его запустить бота командой /start."
+        )
+        return
+
+    # Случай 3: Аргументы не указаны, проверяем автора команды
+    logger.info(f"Цель для /check не указана, проверяем автора: {message.from_user.id}")
+    author_user, _ = await deps.user_service.get_or_create_user(message.from_user)
+    if author_user:
+        response_text = deps.verification_service.format_check_message(author_user)
+        await message.answer(response_text, disable_web_page_preview=True)
+    else:
+        # Этот случай практически невозможен, но является защитой
+        await message.answer("Не удалось определить пользователя для проверки.")
+
+
 @router.message(Command("infoverif"))
 async def handle_info_verif_command(message: Message, deps: Deps):
     """
-    Отправляет подробную информацию о том, как и зачем проходить верификацию,
-    с кнопкой для связи с администратором.
+    Отправляет подробную информацию о том, как и зачем проходить верификацию.
     """
     admin_id = deps.settings.admin_ids[0] if deps.settings.admin_ids else None
     
