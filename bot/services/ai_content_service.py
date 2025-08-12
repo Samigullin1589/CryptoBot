@@ -123,13 +123,11 @@ class AIContentService:
 
         system_prompt = get_consultant_prompt()
 
-        # Формируем контент для запроса, включая системный промпт и историю
-        request_contents = history + [{"role": "user", "parts": [{"text": user_question}]}]
-        
-        # Устанавливаем системную инструкцию отдельно
-        final_history = [item for item in request_contents if item.get('role') != 'system']
+        # Формируем контент для запроса, включая историю
+        final_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
 
         try:
+            # Передаем системную инструкцию и историю в одном запросе
             response = await self._make_request(
                 self.client,
                 contents=final_history,
