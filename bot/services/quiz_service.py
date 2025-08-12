@@ -1,14 +1,15 @@
 # ===============================================================
 # Файл: bot/services/quiz_service.py (ВЕРСИЯ "Distinguished Engineer")
 # Описание: Сервис для генерации вопросов для крипто-викторины.
-# ИСПРАВЛЕНИЕ: Устранена ошибка KeyError при загрузке резервных вопросов.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # ===============================================================
 import logging
 import random
 import json
 from typing import Tuple, List, Optional, Dict, Any
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 from bot.services.ai_content_service import AIContentService
 from bot.texts.ai_prompts import get_quiz_question_prompt, get_quiz_json_schema
 
@@ -25,7 +26,6 @@ class QuizService:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                # ИСПРАВЛЕНО: Загружаем список из ключа 'questions'
                 questions = data.get("questions", [])
                 logger.info(f"Успешно загружено {len(questions)} резервных вопросов из {path}")
                 return questions
