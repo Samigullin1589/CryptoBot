@@ -1,75 +1,85 @@
 # =================================================================================
-# Файл: bot/handlers/public/market_info_handler.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
-# Описание: Обрабатывает запросы на получение общих рыночных данных.
-# ИСПРАВЛЕНИЕ: Добавлена отказоустойчивость для API халвинга.
+# Файл: bot/handlers/public/market_info_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Обрабатывает запросы на получение общих рыночных данных,
+#           корректно используя MarketDataService и современные форматтеры.
 # =================================================================================
 import logging
-from datetime import datetime
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from bot.utils.dependencies import Deps
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
-from bot.utils.http_client import make_request
+from bot.utils.formatters import format_halving_info, format_network_status
+from bot.utils.plotting import generate_fng_image
+from aiogram.types import BufferedInputFile
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
 @router.callback_query(F.data == "nav:fear_index")
-async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, **kwargs):
-    """Получает и отображает индекс страха и жадности."""
-    await call.answer("Загружаю индекс...")
+async def handle_fear_greed_index(call: CallbackQuery, deps: Deps):
+    """
+    Получает, генерирует и отображает изображение индекса страха и жадности.
+    """
+    await call.answer("Загружаю и генерирую индекс...")
     try:
-        data = await make_request(deps.http_session, str(deps.settings.endpoints.fear_and_greed_api))
-        if not data or 'data' not in data or not data['data']:
-            raise ValueError("Invalid data from Fear & Greed API")
-        value = int(data['data'][0]['value'])
-        classification = data['data'][0]['value_classification']
-        emoji = {"Extreme Fear": "😱", "Fear": "😨", "Neutral": "😐", "Greed": "😏", "Extreme Greed": "🤑"}.get(classification, "")
-        text = f"😱 <b>Индекс страха и жадности:</b> {value} {emoji}\n\n<i>Состояние рынка: {classification}</i>"
-        await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+        data = await deps.market_data_service.get_fear_and_greed_index()
+        if not data:
+            raise ValueError("API индекса страха и жадности не вернул данных.")
+
+        value = int(data['value'])
+        classification = data['value_classification']
+        
+        # Генерируем изображение
+        image_bytes = generate_fng_image(value, classification)
+        photo = BufferedInputFile(image_bytes, filename="fng_index.png")
+        
+        # Удаляем старое текстовое сообщение и отправляем новое с картинкой
+        await call.message.delete()
+        await call.message.answer_photo(
+            photo=photo,
+            caption=f"😱 <b>Индекс страха и жадности:</b> {value}\n<i>Состояние рынка: {classification}</i>",
+            reply_markup=get_back_to_main_menu_keyboard()
+        )
+
     except Exception as e:
-        logger.error(f"Ошибка получения индекса страха и жадности: {e}")
-        await call.answer("Не удалось загрузить данные.", show_alert=True)
+        logger.error(f"Ошибка получения индекса страха и жадности: {e}", exc_info=True)
+        await call.answer("Не удалось загрузить данные индекса. Попробуйте позже.", show_alert=True)
 
 @router.callback_query(F.data == "nav:halving")
-async def handle_halving_info(call: CallbackQuery, deps: Deps, **kwargs):
-    """Получает и отображает информацию о халвинге Bitcoin."""
+async def handle_halving_info(call: CallbackQuery, deps: Deps):
+    """
+    Получает и отображает информацию о халвинге Bitcoin, используя MarketDataService.
+    """
     await call.answer("Загружаю данные о халвинге...")
     try:
-        data = await make_request(deps.http_session, str(deps.settings.endpoints.mempool_space_difficulty))
+        data = await deps.market_data_service.get_halving_info()
         if not data:
-            raise ValueError("Invalid data from Mempool Space API")
-            
-        progress = data.get('progressPercent', 0)
-        remaining_blocks = data.get('remainingBlocks', 0)
+            raise ValueError("API для халвинга не вернул валидных данных.")
         
-        # ИСПРАВЛЕНО: Добавлена проверка на существование ключа
-        estimated_date_str = "неизвестно"
-        next_retarget_timestamp = data.get('nextRetargetTimeEstimate')
-        if next_retarget_timestamp:
-            estimated_date_str = datetime.fromtimestamp(next_retarget_timestamp).strftime('%d.%m.%Y')
-
-        text = (f"⏳ <b>Халвинг Bitcoin</b>\n\n"
-                f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
-                f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
-                f"Ориентировочная дата: <b>{estimated_date_str}</b>")
+        # Используем специализированный форматтер для чистоты кода
+        text = format_halving_info(data)
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+
     except Exception as e:
         logger.error(f"Ошибка получения данных о халвинге: {e}", exc_info=True)
-        await call.answer("Не удалось загрузить данные.", show_alert=True)
+        await call.answer("Не удалось загрузить данные о халвинге.", show_alert=True)
 
 @router.callback_query(F.data == "nav:btc_status")
-async def handle_btc_status(call: CallbackQuery, deps: Deps, **kwargs):
-    """Получает и отображает текущий статус сети Bitcoin."""
+async def handle_btc_status(call: CallbackQuery, deps: Deps):
+    """
+    Получает и отображает текущий статус сети Bitcoin, используя MarketDataService.
+    """
     await call.answer("Загружаю статус сети...")
     try:
-        hashrate_ths = await make_request(deps.http_session, str(deps.settings.endpoints.blockchain_info_hashrate), response_type="text")
-        if not hashrate_ths:
-            raise ValueError("Invalid data from Blockchain Info API")
-        hashrate_ehs = float(hashrate_ths) / 1_000_000 # TH/s -> EH/s
-        text = f"📡 <b>Статус сети Bitcoin</b>\n\nХешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
+        data = await deps.market_data_service.get_btc_network_status()
+        if not data:
+            raise ValueError("Сервис не вернул данные о статусе сети BTC.")
+
+        # Используем специализированный форматтер
+        text = format_network_status(data)
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+
     except Exception as e:
-        logger.error(f"Ошибка получения статуса сети BTC: {e}")
-        await call.answer("Не удалось загрузить данные.", show_alert=True)
+        logger.error(f"Ошибка получения статуса сети BTC: {e}", exc_info=True)
+        await call.answer("Не удалось загрузить данные о статусе сети.", show_alert=True)
