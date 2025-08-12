@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ОБЪЕДИНЕННАЯ)
 # Описание: Вспомогательные функции для форматирования данных в текст.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая функция format_calculation_result
-# для устранения критической ошибки ImportError в calculator_handler.
+# ИСПРАВЛЕНИЕ: Исправлена логика парсинга даты в функции format_halving_info
+#              для корректной обработки ответа API.
 # =================================================================================
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -94,13 +94,19 @@ def format_halving_info(halving_data: Dict[str, Any]) -> str:
     """Форматирует информацию о халвинге Bitcoin."""
     progress = halving_data.get('progressPercent', 0)
     remaining_blocks = halving_data.get('remainingBlocks', 0)
-    estimated_date = halving_data.get('estimated_date', 'неизвестно')
+    
+    # ИСПРАВЛЕНО: Используем правильный ключ 'nextRetargetTimeEstimate' и конвертируем Unix timestamp
+    estimated_timestamp = halving_data.get('nextRetargetTimeEstimate')
+    if estimated_timestamp:
+        estimated_date = datetime.fromtimestamp(estimated_timestamp, tz=timezone.utc).strftime('%d.%m.%Y')
+    else:
+        estimated_date = 'неизвестно'
     
     return (
         f"⏳ <b>Халвинг Bitcoin</b>\n\n"
         f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
         f"Осталось блоков: <b>{remaining_blocks:,}</b>\n"
-        f"Ориентировочная дата: <b>{estimated_date}</b>"
+        f"Ориентировочная дата следующей корректировки сложности: <b>{estimated_date}</b>"
     )
 
 def format_network_status(network_data: Dict[str, Any]) -> str:
@@ -112,7 +118,7 @@ def format_network_status(network_data: Dict[str, Any]) -> str:
         f"Хешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
     )
 
-# --- Форматтер для калькулятора (ВОССТАНОВЛЕНО) ---
+# --- Форматтер для калькулятора ---
 
 def format_calculation_result(result: CalculationResult) -> str:
     """Форматирует Pydantic-модель CalculationResult в читаемый текст."""
