@@ -1,8 +1,8 @@
 # ===============================================================
-# Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
+# Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: "Тонкий" обработчик для "Калькулятора доходности".
-# ИСПРАВЛЕНИЕ: Сигнатуры функций приведены в соответствие с
-# DI-контейнером `Deps` для корректной работы с центральным навигатором.
+# ИСПРАВЛЕНИЕ: Убран устаревший аргумент 'state' из декоратора
+#              для совместимости с aiogram 3.x.
 # ===============================================================
 import logging
 from typing import Union
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 # --- Запуск и отмена калькулятора ---
 
-# ИСПРАВЛЕНО: Сигнатура изменена для приема Union[Message, CallbackQuery] как 'call'
 @calculator_router.callback_query(F.data == "nav:calculator")
 @calculator_router.message(F.text == "⛏️ Калькулятор")
 async def start_profit_calculator(call: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
@@ -47,9 +46,15 @@ async def start_profit_calculator(call: Union[Message, CallbackQuery], state: FS
     
     await state.set_state(CalculatorStates.waiting_for_currency)
 
-@calculator_router.callback_query(F.data == "calc_action:cancel", state="*")
+# ИСПРАВЛЕНО: Убран аргумент state="*"
+@calculator_router.callback_query(F.data == "calc_action:cancel")
 async def cancel_calculator(call: CallbackQuery, state: FSMContext):
-    """Отменяет сценарий калькулятора."""
+    """Отменяет сценарий калькулятора в любом состоянии."""
+    current_state = await state.get_state()
+    if current_state is None:
+        await call.answer()
+        return
+
     await state.clear()
     await call.message.edit_text("✅ Расчет отменен.")
     await call.answer()
