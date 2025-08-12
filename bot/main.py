@@ -21,32 +21,69 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# Импортируем ЦЕЛЫЕ пакеты с обработчиками
-from bot.handlers import admin, game, public, tools, threats
+# Импортируем все необходимые роутеры напрямую
+from bot.handlers.admin.admin_menu import admin_router
+from bot.handlers.admin.verification_admin_handler import router as verification_admin_router
+from bot.handlers.admin.stats_handler import stats_router
+from bot.handlers.admin.moderation_handler import moderation_router
+from bot.handlers.admin.game_admin_handler import router as game_admin_router
+
+from bot.handlers.public.common_handler import router as common_router
+from bot.handlers.public.menu_handlers import router as menu_router
+from bot.handlers.public.price_handler import router as price_router
+from bot.handlers.public.asic_handler import router as asic_router
+from bot.handlers.public.news_handler import router as news_router
+from bot.handlers.public.quiz_handler import router as quiz_router
+from bot.handlers.public.market_info_handler import router as market_info_router
+from bot.handlers.public.market_handler import router as market_router
+from bot.handlers.public.crypto_center_handler import router as crypto_center_router
+from bot.handlers.public.verification_public_handler import router as verification_public_router
+from bot.handlers.public.achievements_handler import router as achievements_router
+from bot.handlers.public.game_handler import router as game_router
+
+from bot.handlers.game.mining_game_handler import game_router as mining_game_router
+
+from bot.handlers.tools.calculator_handler import calculator_router
+
+from bot.handlers.threats.threat_handler import threat_router
+
 
 logger = logging.getLogger(__name__)
 
-
 def register_all_routers(dp: Dispatcher):
     """
-    Централизованно регистрирует все роутеры приложения.
-    Такой подход упрощает управление, предотвращает ошибки импорта и масштабируется.
+    Централизованно и явно регистрирует все роутеры приложения.
+    Такой подход исключает ошибки, связанные с неполными __init__.py файлами.
     """
-    # Регистрируем роутеры из каждого модуля
-    for router_name in admin.__all__:
-        dp.include_router(getattr(admin, router_name))
-        
-    for router_name in game.__all__:
-        dp.include_router(getattr(game, router_name))
+    # Админские роутеры
+    dp.include_router(admin_router)
+    dp.include_router(verification_admin_router)
+    dp.include_router(stats_router)
+    dp.include_router(moderation_router)
+    dp.include_router(game_admin_router)
 
-    for router_name in public.__all__:
-        dp.include_router(getattr(public, router_name))
-        
-    for router_name in tools.__all__:
-        dp.include_router(getattr(tools, router_name))
+    # Публичные роутеры
+    dp.include_router(common_router)
+    dp.include_router(menu_router)
+    dp.include_router(price_router)
+    dp.include_router(asic_router)
+    dp.include_router(news_router)
+    dp.include_router(quiz_router)
+    dp.include_router(market_info_router)
+    dp.include_router(crypto_center_router)
+    dp.include_router(verification_public_router)
+    dp.include_router(achievements_router)
+    dp.include_router(market_router)
+    dp.include_router(game_router)
 
-    # Обработчик угроз регистрируется последним
-    dp.include_router(threats.threat_handler.threat_router)
+    # Игровые роутеры
+    dp.include_router(mining_game_router)
+
+    # Инструменты
+    dp.include_router(calculator_router)
+
+    # Обработка угроз (должен быть в конце)
+    dp.include_router(threat_router)
     
     logger.info("Все роутеры успешно зарегистрированы.")
 
@@ -96,7 +133,7 @@ async def on_shutdown(bot: Bot, deps: Deps):
 
 async def main():
     """Главная точка входа для приложения бота."""
-    setup_logging(level=settings.log_level, format="json") # JSON-логи для production
+    setup_logging(level=settings.log_level, format="json")
     
     redis_pool = redis.from_url(str(settings.REDIS_URL), encoding="utf-8", decode_responses=True)
     storage = RedisStorage(redis=redis_pool)
