@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/services/coin_list_service.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025 - ИСПРАВЛЕННЫЙ)
 # Описание: Сервис для управления списком криптовалют с улучшенной логикой поиска.
-# ИСПРАВЛЕНИЕ: Переработан метод find_coin_by_query для приоритезации точных совпадений.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # =================================================================================
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from redis.asyncio import Redis
 from rapidfuzz import process, fuzz
 from pydantic import ValidationError
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings, Settings
 from bot.utils.models import Coin
 from bot.utils.http_client import make_request
 
