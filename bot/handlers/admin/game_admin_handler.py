@@ -1,6 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/admin/game_admin_handler.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ПОЛНАЯ И ОКОНЧАТЕЛЬНАЯ)
 # Описание: Обработчики для администрирования игровой части бота.
+# ИСПРАВЛЕНИЕ: Исправлено имя импортируемого класса состояний для устранения ImportError.
 # =================================================================================
 
 import logging
@@ -8,15 +9,17 @@ from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
-from bot.filters.access_filters import PrivilegeFilter
+from bot.filters.access_filters import PrivilegeFilter, UserRole
 from bot.services.admin_service import AdminService
 from bot.keyboards.admin_keyboards import get_game_admin_menu_keyboard, get_back_to_game_admin_menu_keyboard, GAME_ADMIN_CALLBACK_PREFIX
-from bot.states.admin_states import GameAdminStates
+# ИСПРАВЛЕНО: Импортируем правильное имя класса 'GameAdmin'
+from bot.states.admin_states import GameAdmin
 
 logger = logging.getLogger(__name__)
 router = Router()
-router.message.filter(PrivilegeFilter("ADMIN"))
-router.callback_query.filter(PrivilegeFilter("ADMIN"))
+# Применяем фильтр ко всему роутеру
+router.message.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
+router.callback_query.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 
 @router.callback_query(F.data == f"{GAME_ADMIN_CALLBACK_PREFIX}:menu")
 async def game_admin_menu_handler(callback: types.CallbackQuery, admin_service: AdminService, state: FSMContext):
@@ -31,13 +34,13 @@ async def game_admin_menu_handler(callback: types.CallbackQuery, admin_service: 
 @router.callback_query(F.data == f"{GAME_ADMIN_CALLBACK_PREFIX}:balance_start")
 async def change_balance_start_handler(callback: types.CallbackQuery, state: FSMContext):
     """Начинает сценарий изменения баланса."""
-    await state.set_state(GameAdminStates.entering_user_id_for_balance)
+    await state.set_state(GameAdmin.entering_user_id_for_balance)
     text = "Введите User ID пользователя, которому вы хотите изменить баланс."
     keyboard = get_back_to_game_admin_menu_keyboard()
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
-@router.message(StateFilter(GameAdminStates.entering_user_id_for_balance))
+@router.message(StateFilter(GameAdmin.entering_user_id_for_balance))
 async def change_balance_enter_id_handler(message: types.Message, state: FSMContext):
     """Обрабатывает ввод User ID."""
     try:
@@ -47,12 +50,12 @@ async def change_balance_enter_id_handler(message: types.Message, state: FSMCont
         return
     
     await state.update_data(target_user_id=user_id)
-    await state.set_state(GameAdminStates.entering_balance_amount)
+    await state.set_state(GameAdmin.entering_balance_amount)
     await message.answer("Теперь введите сумму для изменения баланса. \n"
                          "Используйте положительное число для начисления (e.g., `1000`) "
                          "и отрицательное для списания (e.g., `-500`).")
 
-@router.message(StateFilter(GameAdminStates.entering_balance_amount))
+@router.message(StateFilter(GameAdmin.entering_balance_amount))
 async def change_balance_enter_amount_handler(message: types.Message, state: FSMContext, admin_service: AdminService):
     """Обрабатывает ввод суммы и завершает операцию."""
     try:
