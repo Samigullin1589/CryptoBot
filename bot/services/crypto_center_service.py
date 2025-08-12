@@ -1,8 +1,8 @@
 # ==================================================================================
-# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 3.0" - С АКТИВНЫМ ПОИСКОМ)
 # Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
-# ИСПРАВЛЕНИЕ: Используется новый метод NewsService для сбора всех новостей
-#              и улучшена очистка HTML для AI-саммари.
+# ИСПРАВЛЕНИЕ: Логика генерации 'альфы' переключена с пассивного анализа
+#              новостей на активный поиск с помощью AI-агента.
 # ==================================================================================
 
 import json
@@ -34,25 +34,20 @@ class CryptoCenterService:
         self.keys = KeyFactory
 
     async def _get_user_interest_profile(self, user_id: int) -> Dict[str, List[str]]:
-        # ... (код остается без изменений) ...
         profile_key = self.keys.user_interest_profile(user_id)
         tags_raw = await self.redis.smembers(f"{profile_key}:tags")
         coins_raw = await self.redis.smembers(f"{profile_key}:coins")
         return {"tags": [t for t in tags_raw], "interacted_coins": [c for c in coins_raw]}
 
     async def update_user_interest(self, user_id: int, tags: List[str] = None, coins: List[str] = None):
-        # ... (код остается без изменений) ...
         profile_key = self.keys.user_interest_profile(user_id)
         async with self.redis.pipeline(transaction=True) as pipe:
-            if tags:
-                pipe.sadd(f"{profile_key}:tags", *tags)
-            if coins:
-                pipe.sadd(f"{profile_key}:coins", *coins)
+            if tags: pipe.sadd(f"{profile_key}:tags", *tags)
+            if coins: pipe.sadd(f"{profile_key}:coins", *coins)
             await pipe.execute()
-        logger.debug(f"Updated interest profile for user {user_id} with tags={tags}, coins={coins}")
 
     async def _generate_alpha(self, user_id: int, alpha_type: str, json_schema: Dict) -> List[Dict[str, Any]]:
-        # ... (код остается без изменений) ...
+        """Универсальный метод для генерации персонализированной 'альфы' с помощью AI-поиска."""
         user_profile = await self._get_user_interest_profile(user_id)
         cache_key = self.keys.personalized_alpha_cache(user_id, alpha_type)
 
@@ -60,50 +55,44 @@ class CryptoCenterService:
             logger.info(f"Serving {alpha_type} alpha for user {user_id} from cache.")
             return json.loads(cached_data)
 
-        logger.info(f"Generating fresh personalized {alpha_type} alpha for user {user_id}...")
-        # Собираем текстовый контекст из всех новостей
-        all_articles = await self.news_service.get_all_latest_news()
-        news_context = "\n\n".join([f"{a.title}\n{BeautifulSoup(a.body, 'html.parser').get_text()}" for a in all_articles[:self.config.news_context_limit]])
+        logger.info(f"Generating fresh personalized {alpha_type} alpha for user {user_id} via AI Search...")
         
-        if not news_context:
-            return []
-
-        prompt = get_personalized_alpha_prompt(news_context, user_profile, alpha_type)
+        # ИСПРАВЛЕНО: Вместо передачи новостей, даем AI прямую команду на поиск
+        prompt = get_personalized_alpha_prompt(user_profile, alpha_type)
+        
+        # Используем основной AI-клиент, у которого есть доступ к 'Google Search'
         result = await self.ai_service.generate_structured_content(prompt, json_schema)
 
         if result:
-            logger.info(f"AI analysis for user {user_id} resulted in {len(result)} {alpha_type} opportunities.")
+            logger.info(f"AI Search for user {user_id} found {len(result)} {alpha_type} opportunities.")
             await self.redis.set(cache_key, json.dumps(result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
             return result
+        
+        logger.warning(f"AI Search for user {user_id} returned no valid {alpha_type} opportunities.")
         return []
 
     async def get_airdrop_alpha(self, user_id: int) -> List[AirdropProject]:
-        # ... (код остается без изменений) ...
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "status", "tasks"]}}
         projects_data = await self._generate_alpha(user_id, "airdrop", json_schema)
         return [AirdropProject(**data) for data in projects_data]
 
     async def get_mining_alpha(self, user_id: int) -> List[Dict[str, Any]]:
-        # ... (код остается без изменений) ...
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "algorithm": {"type": "STRING"}, "hardware": {"type": "STRING"}, "status": {"type": "STRING"}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "algorithm", "hardware"]}}
         return await self._generate_alpha(user_id, "mining", json_schema)
 
     async def get_live_feed_with_summary(self) -> List[NewsArticle]:
-        """Получает новостную ленту с AI-саммари."""
         cache_key = self.keys.live_feed_cache()
         if cached_data := await self.redis.get(cache_key):
             logger.info("Serving live feed from cache.")
             return [NewsArticle(**data) for data in json.loads(cached_data)]
 
         logger.info("Generating fresh live feed with summaries...")
-        # ИСПРАВЛЕНО: Вызываем новый метод для получения ВСЕХ новостей
         articles = await self.news_service.get_all_latest_news()
         if not articles:
             return []
 
-        # Создаем задачи на суммаризацию, очищая HTML-теги из текста
         summary_tasks = []
-        for article in articles[:5]: # Суммаризируем только топ-5 для скорости
+        for article in articles[:5]:
             clean_text = BeautifulSoup(article.body, 'html.parser').get_text(separator=' ', strip=True)
             if clean_text:
                 summary_tasks.append(self.ai_service.generate_summary(clean_text))
@@ -120,13 +109,11 @@ class CryptoCenterService:
         return articles
 
     async def get_user_progress(self, user_id: int, airdrop_id: str) -> List[int]:
-        # ... (код остается без изменений) ...
         progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
         completed_tasks = await self.redis.smembers(progress_key)
         return sorted([int(task_idx) for task_idx in completed_tasks])
 
     async def toggle_task_status(self, user_id: int, airdrop_id: str, task_index: int):
-        # ... (код остается без изменений) ...
         progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
         task_index_str = str(task_index)
         

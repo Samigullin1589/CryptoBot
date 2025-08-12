@@ -1,8 +1,7 @@
 # ===============================================================
 # Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: "Тонкий" обработчик для "Калькулятора доходности".
-# ИСПРАВЛЕНИЕ: Убран устаревший аргумент 'state' из декоратора
-#              для совместимости с aiogram 3.x.
+# ИСПРАВЛЕНИЕ: Добавлена клавиатура навигации к сообщению с результатом.
 # ===============================================================
 import logging
 from typing import Union
@@ -10,13 +9,10 @@ from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from bot.services.asic_service import AsicService
-from bot.services.mining_service import MiningService
-from bot.services.market_data_service import MarketDataService
 from bot.states.mining_states import CalculatorStates
 from bot.keyboards.mining_keyboards import (
     get_calculator_cancel_keyboard, get_currency_selection_keyboard,
-    get_asic_selection_keyboard
+    get_asic_selection_keyboard, get_calculator_result_keyboard
 )
 from bot.utils.dependencies import Deps
 from bot.utils.models import AsicMiner, CalculationInput
@@ -25,45 +21,27 @@ from bot.utils.formatters import format_calculation_result
 calculator_router = Router()
 logger = logging.getLogger(__name__)
 
-# --- Запуск и отмена калькулятора ---
-
 @calculator_router.callback_query(F.data == "nav:calculator")
-@calculator_router.message(F.text == "⛏️ Калькулятор")
-async def start_profit_calculator(call: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
-    """Запускает сценарий калькулятора доходности."""
+async def start_profit_calculator(call: CallbackQuery, state: FSMContext, deps: Deps, **kwargs):
     await state.clear()
     await deps.admin_service.track_action(call.from_user.id, "nav:calculator")
     
     text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
-    keyboard = get_currency_selection_keyboard()
-    
-    target_message = call if isinstance(call, Message) else call.message
-    if isinstance(call, CallbackQuery):
-        await call.answer()
-        await target_message.edit_text(text, reply_markup=keyboard)
-    else:
-        await target_message.answer(text, reply_markup=keyboard)
-    
+    await call.message.edit_text(text, reply_markup=get_currency_selection_keyboard())
     await state.set_state(CalculatorStates.waiting_for_currency)
+    await call.answer()
 
-# ИСПРАВЛЕНО: Убран аргумент state="*"
 @calculator_router.callback_query(F.data == "calc_action:cancel")
 async def cancel_calculator(call: CallbackQuery, state: FSMContext):
-    """Отменяет сценарий калькулятора в любом состоянии."""
     current_state = await state.get_state()
     if current_state is None:
-        await call.answer()
-        return
-
+        return await call.answer()
     await state.clear()
     await call.message.edit_text("✅ Расчет отменен.")
     await call.answer()
 
-# --- Шаги сценария FSM ---
-
 @calculator_router.callback_query(F.data.startswith("calc_currency:"), CalculatorStates.waiting_for_currency)
 async def process_currency_selection(call: CallbackQuery, state: FSMContext):
-    """Обрабатывает выбор валюты."""
     await call.answer()
     currency = call.data.split(":")[1]
     await state.update_data(currency=currency)
@@ -79,7 +57,6 @@ async def process_currency_selection(call: CallbackQuery, state: FSMContext):
 
 @calculator_router.message(CalculatorStates.waiting_for_electricity_cost)
 async def process_electricity_cost(message: Message, state: FSMContext, deps: Deps):
-    """Обрабатывает ввод стоимости электроэнергии."""
     try:
         cost = float(message.text.replace(',', '.').strip())
         if cost < 0: raise ValueError
@@ -92,12 +69,7 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
     
     cost_usd = cost
     if user_data.get("currency") == "rub":
-        await msg.edit_text("⏳ Получаю актуальный курс USD/RUB...")
-        # Заглушка, так как метод не реализован
-        rate_usd_rub = 95.0
-        if not rate_usd_rub:
-            await msg.edit_text("❌ Не удалось получить курс валют. Попробуйте позже.", reply_markup=get_calculator_cancel_keyboard())
-            return
+        rate_usd_rub = 95.0 # Заглушка, можно заменить на вызов API
         cost_usd = cost / rate_usd_rub
     
     await msg.edit_text("⏳ Загружаю список оборудования...")
@@ -118,7 +90,6 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
 
 @calculator_router.callback_query(F.data.startswith("calc_page:"), CalculatorStates.waiting_for_asic_selection)
 async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
-    """Обрабатывает пагинацию в списке ASIC."""
     await call.answer()
     page = int(call.data.split(":")[1])
     user_data = await state.get_data()
@@ -127,18 +98,15 @@ async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
     keyboard = get_asic_selection_keyboard(asic_list, page=page)
     await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
 
-
 @calculator_router.callback_query(F.data.startswith("calc_select_asic:"), CalculatorStates.waiting_for_asic_selection)
 async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
-    """Обрабатывает выбор ASIC из списка."""
     await call.answer()
     asic_index = int(call.data.split(":")[1])
     user_data = await state.get_data()
     asic_list = [AsicMiner(**data) for data in user_data.get("asic_list_json", [])]
 
     if asic_index >= len(asic_list):
-        await call.answer("❌ Ошибка выбора. Список мог обновиться. Попробуйте снова.", show_alert=True)
-        return
+        return await call.answer("❌ Ошибка выбора. Список мог обновиться. Попробуйте снова.", show_alert=True)
         
     await state.update_data(selected_asic_json=asic_list[asic_index].model_dump())
     
@@ -150,7 +118,6 @@ async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
 
 @calculator_router.message(CalculatorStates.waiting_for_pool_commission)
 async def process_pool_commission(message: Message, state: FSMContext, deps: Deps):
-    """Обрабатывает ввод комиссии пула и выполняет финальный расчет."""
     try:
         commission_percent = float(message.text.replace(',', '.').strip())
         if not (0 <= commission_percent < 100): raise ValueError
@@ -179,5 +146,6 @@ async def process_pool_commission(message: Message, state: FSMContext, deps: Dep
 
     result_text = format_calculation_result(result)
     
-    await msg.edit_text(result_text, disable_web_page_preview=True)
+    # ИСПРАВЛЕНО: Добавляем клавиатуру к сообщению с результатом
+    await msg.edit_text(result_text, reply_markup=get_calculator_result_keyboard(), disable_web_page_preview=True)
     await state.clear()
