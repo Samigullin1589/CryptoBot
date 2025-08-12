@@ -1,8 +1,7 @@
 # =================================================================================
-# Файл: bot/middlewares/throttling_middleware.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/middlewares/throttling_middleware.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Middleware для защиты от флуда, адаптированный для aiogram 3+.
-# ИСПРАВЛЕНИЕ: LUA-скрипт переведен на миллисекунды (PEX) для поддержки
-# дробных значений rate_limit.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # =================================================================================
 from typing import Callable, Dict, Any, Awaitable, Optional
 
@@ -10,9 +9,10 @@ from aiogram import BaseMiddleware
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import Update, User
 
-from bot.config.config import settings # <-- ИСПРАВЛЕН ИМПОРТ
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 
-# ИСПРАВЛЕНО: LUA-скрипт теперь использует PEX для работы с миллисекундами
+# LUA-скрипт теперь использует PEX для работы с миллисекундами
 THROTTLE_LUA_SCRIPT = """
     -- KEYS[1]: ключ для пользователя
     -- KEYS[2]: ключ для чата
@@ -63,7 +63,6 @@ class ThrottlingMiddleware(BaseMiddleware):
         if self.script_sha is None:
             self.script_sha = await self.storage.redis.script_load(THROTTLE_LUA_SCRIPT)
 
-        # ИСПРАВЛЕНО: Передаем лимиты в миллисекундах
         is_throttled = await self.storage.redis.evalsha(
             self.script_sha,
             2,
