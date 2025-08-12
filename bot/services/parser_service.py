@@ -1,11 +1,12 @@
 # ===============================================================
-# Файл: bot/services/parser_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/services/parser_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
 # Описание: Отказоустойчивый сервис для парсинга данных с внешних
-# источников с встроенной логикой повторных запросов.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'asyncio'.
+# источников с улучшенной логикой обхода защиты.
+# ИСПРАВЛЕНИЕ: Добавлены полные браузерные заголовки для обхода
+#              ошибки 406 и обновлен селектор для AsicMinerValue.
 # ===============================================================
 import logging
-import asyncio # <--- ИСПРАВЛЕНО: Добавлен недостающий импорт
+import asyncio
 from typing import List, Dict, Any, Optional
 
 import aiohttp
@@ -37,12 +38,19 @@ class ParserService:
         f"HTTP request failed after {details['tries']} tries. Giving up. Error: {details.get('exception')}"
     ))
     async def _fetch(self, url: str, response_type: str = 'json') -> Optional[Any]:
-        """Выполняет HTTP-запрос с логикой повторных попыток."""
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        async with self.session.get(url, headers=headers, timeout=15) as response:
+        """Выполняет HTTP-запрос с логикой повторных попыток и полными заголовками."""
+        # ИСПРАВЛЕНО: Отправляем полный набор заголовков, имитируя браузер
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
+        }
+        async with self.session.get(url, headers=headers, timeout=20) as response:
             response.raise_for_status()
             if response_type == 'json':
-                return await response.json()
+                return await response.json(content_type=None)
             return await response.text()
 
     async def fetch_from_whattomine(self) -> List[AsicMiner]:
@@ -90,9 +98,15 @@ class ParserService:
             if not html_content: return []
 
             soup = BeautifulSoup(html_content, 'lxml')
-            table_body = soup.select_one('table#miners tbody')
+            # ИСПРАВЛЕНО: Используем более надежный селектор для поиска таблицы
+            table = soup.select_one('div.table-responsive > table.table-hover')
+            if not table:
+                logger.warning("Парсер: Не найдена таблица 'div.table-responsive > table.table-hover' в HTML от AsicMinerValue.")
+                return []
+            
+            table_body = table.find('tbody')
             if not table_body:
-                logger.warning("Парсер: Не найдена таблица #miners в HTML от AsicMinerValue.")
+                logger.warning("Парсер: Не найден tbody в таблице от AsicMinerValue.")
                 return []
 
             asics = []
