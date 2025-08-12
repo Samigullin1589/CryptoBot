@@ -2,7 +2,7 @@
 # Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - АРХИТЕКТУРНО ИСПРАВЛЕННАЯ)
 # Описание: Сервис управления пользователями с корректной сериализацией
 # вложенных Pydantic моделей для Redis HASH.
-# ИСПРАВЛЕНИЕ: Исправлена логика обновления данных существующего пользователя.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # =================================================================================
 import json
 import logging
@@ -15,7 +15,8 @@ from pydantic import BaseModel
 
 from bot.utils.models import User, UserRole, VerificationData
 from bot.utils.keys import KeyFactory
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,6 @@ class UserService:
         existing_user = await self.get_user(tg_user.id)
         if existing_user:
             update_needed = False
-            # ИСПРАВЛЕНО: Теперь данные сначала обновляются в объекте, а потом сохраняются
             if existing_user.username != tg_user.username:
                 existing_user.username = tg_user.username
                 update_needed = True
