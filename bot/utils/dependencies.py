@@ -1,6 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - УСИЛЕННАЯ)
 # Описание: DI-контейнер с логированием инициализации и асинхронной настройкой сервисов.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт класса Settings для устранения NameError.
 # =================================================================================
 
 import logging
@@ -11,6 +12,8 @@ from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
 from bot.config.config import settings
+# ИСПРАВЛЕНО: Добавлен импорт класса Settings
+from bot.config.settings import Settings
 from bot.utils.keys import KeyFactory
 
 # Импортируем все сервисы
