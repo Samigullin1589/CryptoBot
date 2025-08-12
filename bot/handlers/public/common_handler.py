@@ -1,6 +1,10 @@
 # =================================================================================
-# Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Обрабатывает общие команды и текстовый ввод.
+# Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УМНАЯ)
+# Описание: Обрабатывает общие команды и текстовый ввод, корректно
+#           различая нажатия на текстовые кнопки и запросы к AI.
+# ИСПРАВЛЕНИЕ: Добавлена логика для обработки текстовых сообщений,
+#              совпадающих с кнопками главного меню, чтобы избежать
+#              ложного срабатывания AI-консультанта.
 # =================================================================================
 import logging
 from typing import Union, Dict, Any
@@ -19,16 +23,36 @@ from bot.utils.formatters import format_price_info
 from bot.utils.text_utils import sanitize_html
 from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS, get_referral_success_text
 
+# Импортируем навигатор, чтобы перенаправлять на него текстовые команды
+from . import menu_handlers
+from bot.keyboards.callback_factories import MenuCallback
+
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# Кастомный фильтр для определения, когда нужно вызывать AI
+# --- Словарь текстовых команд, соответствующих кнопкам меню ---
+TEXT_COMMAND_MAP = {
+    "💹 Курс": "price", "⚙️ Топ ASIC": "asics",
+    "⛏️ Калькулятор": "calculator", "📰 Новости": "news",
+    "😱 Индекс Страха": "fear_index", "⏳ Халвинг": "halving",
+    "📡 Статус BTC": "btc_status", "🧠 Викторина": "quiz",
+    "💎 Виртуальный Майнинг": "game", "💎 Крипто-Центр": "crypto_center"
+}
+
 class AITriggerFilter(BaseFilter):
     async def __call__(self, message: Message, bot: Bot) -> bool:
+        # AI не должен срабатывать на команды
+        if not message.text or message.text.startswith('/'):
+            return False
+        
+        # AI не должен срабатывать на текст, который дублирует кнопки меню
+        if message.text in TEXT_COMMAND_MAP:
+            return False
+
         bot_info = await bot.get_me()
         if message.chat.type == ChatType.PRIVATE:
             return True
-        if message.text and f"@{bot_info.username}" in message.text:
+        if f"@{bot_info.username}" in message.text:
             return True
         if message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id:
             return True
@@ -49,22 +73,10 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
     if is_new_user and command.args:
         try:
             referrer_id = int(command.args)
-            # ВРЕМЕННО ОТКЛЮЧЕНО, так как метод process_referral не реализован в UserService
-            # bonus_credited = await deps.user_service.process_referral(
-            #     new_user_id=user.id,
-            #     referrer_id=referrer_id
-            # )
-            # if bonus_credited:
-            #     bonus_amount = 50.0 # Пример
-            #     await deps.bot.send_message(
-            #         referrer_id,
-            #         get_referral_success_text(float(bonus_amount))
-            #     )
             logger.info(f"Новый пользователь {user.id} пришел по реферальной ссылке от {referrer_id}")
+            # Логика начисления бонуса рефереру (если будет реализована)
         except (ValueError, TypeError):
             logger.warning(f"Некорректный deeplink-аргумент '{command.args}' от пользователя {user.id}")
-        except Exception as e:
-            logger.error(f"Ошибка обработки реферала для {user.id} от '{command.args}': {e}")
     
     if is_new_user:
         text = (f"👋 <b>Привет, {user.full_name}!</b>\n\n"
@@ -80,10 +92,9 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
 
 @router.message(Command("help"))
 async def handle_help(message: Message):
-    """Отправляет справочное сообщение по команде /help."""
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
-# --- УПРАВЛЕНИЕ ОНБОРДИНГОМ ЧЕРЕЗ FSM ---
+# --- УПРАВЛЕНИЕ ОНБОРДИНГОМ ---
 @router.callback_query(F.data.startswith("onboarding:"))
 async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
     await call.answer()
@@ -109,25 +120,46 @@ async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
 
 # --- ОБРАБОТКА ПРОИЗВОЛЬНОГО ТЕКСТА ---
 
-@router.message(F.text, ~F.text.startswith('/'))
-async def handle_text_message(message: Message, state: FSMContext, deps: Deps):
+# ИСПРАВЛЕНО: Новый обработчик для текстовых сообщений, совпадающих с кнопками
+@router.message(F.text.in_(TEXT_COMMAND_MAP))
+async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps):
     """
-    Многоуровневый обработчик текста: сначала ищет цену, если не находит - передает AI.
+    Если текст сообщения совпадает с кнопкой меню, эмулируем нажатие на callback-кнопку.
     """
-    # Уровень 2: AI-Консультант
-    ai_filter = AITriggerFilter()
-    if await ai_filter(message, deps.bot):
-        user_id = message.from_user.id
-        chat_id = message.chat.id
-        user_text = message.text.strip()
-        
-        temp_msg = await message.reply("🤖 Думаю...")
-        
-        history = await deps.user_service.get_conversation_history(user_id, chat_id)
-        ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
-        await deps.user_service.add_to_conversation_history(user_id, chat_id, user_text, ai_answer)
-        
-        response_text = (f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
-                         f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}")
-        
-        await temp_msg.edit_text(response_text, disable_web_page_preview=True)
+    action = TEXT_COMMAND_MAP[message.text]
+    # Создаем "фейковый" CallbackQuery, чтобы передать его в навигатор
+    fake_callback_query = types.CallbackQuery(
+        id="fake_cq",
+        from_user=message.from_user,
+        chat_instance="fake_chat",
+        message=message,
+        data=MenuCallback(level=0, action=action).pack()
+    )
+    await menu_handlers.main_menu_navigator(
+        call=fake_callback_query,
+        callback_data=MenuCallback(level=0, action=action),
+        state=state,
+        deps=deps
+    )
+
+# Обработчик для AI срабатывает только если фильтр AITriggerFilter вернет True
+@router.message(AITriggerFilter())
+async def handle_text_for_ai(message: Message, state: FSMContext, deps: Deps):
+    """
+    Обрабатывает текстовые сообщения, которые не являются командами или кнопками,
+    и передает их AI-консультанту.
+    """
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    user_text = message.text.strip()
+    
+    temp_msg = await message.reply("🤖 Думаю...")
+    
+    history = await deps.user_service.get_conversation_history(user_id, chat_id)
+    ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
+    await deps.user_service.add_to_conversation_history(user_id, chat_id, user_text, ai_answer)
+    
+    response_text = (f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
+                     f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}")
+    
+    await temp_msg.edit_text(response_text, disable_web_page_preview=True)
