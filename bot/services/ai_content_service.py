@@ -1,7 +1,9 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете.
-# ИСПРАВЛЕНИЕ: Устранена критическая синтаксическая ошибка импорта.
+# ИСПРАВЛЕНИЕ: Устранена критическая синтаксическая ошибка импорта и способ передачи
+#              инструмента поиска приведен в соответствие с актуальной
+#              документацией Google AI SDK.
 # ===============================================================
 
 import logging
@@ -16,9 +18,6 @@ from google.api_core import exceptions as google_exceptions
 from bot.config.config import settings
 from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
 from bot.config.settings import AIConfig
-
-# Корректный способ импортировать инструмент поиска, предоставленный средой выполнения
-from Google Search import search as Google Search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +39,10 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # Настраиваем модель с поддержкой вызова инструментов (для поиска)
+            # ИСПРАВЛЕНО: Инструмент поиска передается как строка "Google Search"
             self.client = genai.GenerativeModel(
                 self.config.model_name,
-                tools=[Google Search_tool]
+                tools=["Google Search"]
             )
             logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name} с функцией поиска.")
         except Exception as e:
