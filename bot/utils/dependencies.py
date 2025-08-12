@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - УСИЛЕННАЯ)
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: DI-контейнер с логированием инициализации и асинхронной настройкой сервисов.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт класса Settings для устранения NameError.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для устранения циклической зависимости.
 # =================================================================================
 
 import logging
@@ -11,9 +11,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-from bot.config.config import settings
-# ИСПРАВЛЕНО: Добавлен импорт класса Settings
-from bot.config.settings import Settings
+# ИСПРАВЛЕНО: Импортируем 'settings' и 'Settings' из нового единого источника
+from bot.config.settings import settings, Settings
 from bot.utils.keys import KeyFactory
 
 # Импортируем все сервисы
