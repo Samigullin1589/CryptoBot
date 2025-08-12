@@ -68,10 +68,10 @@ async def change_balance_enter_amount_handler(message: types.Message, state: FSM
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
     
-    # new_balance = await admin_service.change_user_game_balance(target_user_id, amount)
     # ПРИМЕЧАНИЕ: метод change_user_game_balance не реализован в AdminService.
-    # Для теста можно вернуть любое число.
-    new_balance = 1000.0 
+    # Вам нужно будет добавить его реализацию.
+    # new_balance = await admin_service.change_user_game_balance(target_user_id, amount)
+    new_balance = 1000.0 # Временная заглушка для теста
     await state.clear()
     
     if new_balance is not None:
