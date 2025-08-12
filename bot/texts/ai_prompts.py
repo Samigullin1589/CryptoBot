@@ -1,8 +1,7 @@
 # ===============================================================
 # Файл: bot/texts/ai_prompts.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНАЯ)
 # Описание: Централизованное хранилище для всех промптов, используемых AI.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая функция get_personalized_alpha_prompt.
-# Старые, неперсонализированные промпты удалены для чистоты кода.
+# ИСПРАВЛЕНИЕ: Промпт консультанта обновлен для поддержки поиска.
 # ===============================================================
 from typing import Dict, Any, List
 
@@ -14,14 +13,18 @@ def get_summary_prompt(text_to_summarize: str) -> str:
         f"Be concise and informative. Here is the article: \n\n{text_to_summarize}"
     )
 
-def get_consultant_prompt(user_question: str) -> str:
-    """Системный промпт для AI-консультанта."""
+def get_consultant_prompt() -> str:
+    """Системный промпт для AI-консультанта с функцией поиска."""
     return (
-        "You are a helpful and friendly crypto assistant bot. Your name is CryptoBot. "
-        "Answer the user's question clearly and concisely in Russian. "
-        "Do not give financial advice. You can use emojis to make the conversation more engaging. "
-        "Your primary knowledge is in cryptocurrencies and mining. Avoid answering questions on other topics. "
-        f"Here is the user's question: {user_question}"
+        "You are 'CryptoBot Co-Pilot', a world-class expert engineer in cryptocurrency and ASIC mining. "
+        "Your primary capability is to answer user questions accurately and helpfully in Russian. "
+        "You have access to a real-time Google search tool. You MUST use it for any questions that require up-to-date information (like prices, market caps, news, project statuses) or for topics you are not familiar with. "
+        "Your knowledge base reflects mid-2025 market conditions. "
+        "Structure your answers with clear headings (<b>bold text</b>), bullet points, and `code` blocks for technical terms. "
+        "Always start by directly addressing the user's question. "
+        "Conclude your answer with a '<b>Вывод:</b>' section. "
+        "NEVER give financial advice. If a user asks for it, provide objective data and comparisons, and include a disclaimer that this is not financial advice. "
+        "If a question is unrelated to crypto, blockchain, or finance, politely decline to answer."
     )
 
 def get_quiz_question_prompt() -> str:
@@ -33,17 +36,10 @@ def get_quiz_question_prompt() -> str:
         "Вопрос и ответы должны быть на русском языке. Ответы не должны быть слишком очевидными."
     )
 
-# ИСПРАВЛЕНО: Добавлена единая функция для генерации персонализированных промптов.
 def get_personalized_alpha_prompt(news_context: str, user_profile: Dict[str, List[str]], alpha_type: str) -> str:
     """
     Создает персонализированный промпт для поиска 'альфы' (ценной информации).
-
-    :param news_context: Строка с последними новостями для анализа.
-    :param user_profile: Словарь с интересами пользователя (теги и монеты).
-    :param alpha_type: Тип искомой информации ('airdrop' или 'mining').
-    :return: Финальный промпт для AI.
     """
-    # 1. Формируем строку с профилем пользователя
     tags = user_profile.get('tags')
     coins = user_profile.get('interacted_coins')
     
@@ -55,7 +51,6 @@ def get_personalized_alpha_prompt(news_context: str, user_profile: Dict[str, Lis
 
     profile_str = ", ".join(profile_parts) if profile_parts else "общие интересы в криптовалюте"
 
-    # 2. Выбираем конкретную задачу на основе alpha_type
     if alpha_type == "airdrop":
         task_description = (
             "Твоя конкретная задача — найти 3 самых перспективных проекта без токена, у которых вероятен airdrop. "
@@ -72,7 +67,6 @@ def get_personalized_alpha_prompt(news_context: str, user_profile: Dict[str, Lis
     else:
         task_description = "Проанализируй новости на предмет общих инвестиционных возможностей."
 
-    # 3. Собираем финальный промпт
     final_prompt = (
         "Ты — элитный крипто-аналитик. Твоя задача — найти персонализированные инвестиционные возможности, основываясь на профиле интересов пользователя и свежем новостном контексте. "
         "ВСЕ ТЕКСТОВЫЕ ДАННЫЕ в твоем ответе ДОЛЖНЫ БЫТЬ НА РУССКОМ ЯЗЫКЕ.\n\n"
@@ -83,54 +77,3 @@ def get_personalized_alpha_prompt(news_context: str, user_profile: Dict[str, Lis
     )
     
     return final_prompt
-
-# --- Функции для получения JSON-схем остаются без изменений ---
-
-def get_airdrop_json_schema() -> Dict:
-    """JSON-схема для Airdrop-возможностей."""
-    return {
-        "type": "ARRAY",
-        "items": {
-            "type": "OBJECT",
-            "properties": {
-                "id": {"type": "STRING"},
-                "name": {"type": "STRING"},
-                "description": {"type": "STRING"},
-                "status": {"type": "STRING"},
-                "tasks": {"type": "ARRAY", "items": {"type": "STRING"}},
-                "guide_url": {"type": "STRING"}
-            },
-            "required": ["id", "name", "description", "status", "tasks"]
-        }
-    }
-
-def get_mining_json_schema() -> Dict:
-    """JSON-схема для майнинг-возможностей."""
-    return {
-        "type": "ARRAY",
-        "items": {
-            "type": "OBJECT",
-            "properties": {
-                "id": {"type": "STRING"},
-                "name": {"type": "STRING"},
-                "description": {"type": "STRING"},
-                "algorithm": {"type": "STRING"},
-                "hardware": {"type": "STRING"},
-                "status": {"type": "STRING"},
-                "guide_url": {"type": "STRING"}
-            },
-            "required": ["id", "name", "description", "algorithm", "hardware"]
-        }
-    }
-
-def get_quiz_json_schema() -> Dict:
-    """JSON-схема для вопроса викторины."""
-    return {
-        "type": "OBJECT",
-        "properties": {
-            "question": {"type": "STRING"},
-            "options": {"type": "ARRAY", "items": {"type": "STRING"}},
-            "correct_option_index": {"type": "INTEGER"}
-        },
-        "required": ["question", "options", "correct_option_index"]
-    }

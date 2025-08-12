@@ -79,6 +79,7 @@ class AIContentService:
         )
         
         try:
+            # Для структурированного вывода используем модель без поиска, чтобы гарантировать JSON
             base_model = genai.GenerativeModel(self.config.model_name)
             response = await self._make_request(
                 base_model,
