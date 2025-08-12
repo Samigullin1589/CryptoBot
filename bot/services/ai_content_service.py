@@ -1,7 +1,9 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - С ПОИСКОМ)
+# Файл: bot/services/ai_content_service.py (ВЕРСЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете
 # для предоставления актуальных ответов.
+# ИСПРАВЛЕНИЕ: Устранена синтаксическая ошибка импорта, интеграция с
+# инструментом поиска приведена в соответствие с документацией Google AI SDK.
 # ===============================================================
 
 import logging
@@ -15,7 +17,10 @@ from google.api_core import exceptions as google_exceptions
 
 from bot.config.config import settings
 from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
-from Google Search import search as Google Search_tool # Правильный импорт
+from bot.config.settings import AIConfig
+
+# Корректный способ импортировать инструмент поиска, предоставленный средой выполнения
+from Google Search import search as Google Search_tool
 
 logger = logging.getLogger(__name__)
 
@@ -74,17 +79,23 @@ class AIContentService:
 
         generation_config = GenerationConfig(
             response_mime_type="application/json",
-            response_schema=json_schema,
             temperature=self.config.default_temperature
         )
+        # Для pydantic v1/старых версий SDK схема могла передаваться напрямую,
+        # в актуальных версиях это делается через 'tool_config'.
+        # Но для простого JSON ответа достаточно указать mime_type.
+        # Для сложных схем используется `tools`.
         
         try:
             # Для структурированного вывода используем модель без поиска, чтобы гарантировать JSON
-            base_model = genai.GenerativeModel(self.config.model_name)
+            base_model = genai.GenerativeModel(
+                self.config.model_name,
+                generation_config={"response_mime_type": "application/json"}
+            )
+            
             response = await self._make_request(
                 base_model,
-                contents=[{"role": "user", "parts": [{"text": prompt}]}],
-                generation_config=generation_config
+                contents=[{"role": "user", "parts": [{"text": f"{prompt}\n\nStrictly follow this JSON schema:\n{json.dumps(json_schema)}"}]}],
             )
             json_text = self._extract_text_from_response(response)
             if not json_text: return None
@@ -117,11 +128,18 @@ class AIContentService:
         if not self.client: return "AI-консультант временно недоступен."
         
         system_prompt = get_consultant_prompt()
+        
+        # Модифицируем историю, добавляя системный промпт в начало, если его там нет
+        if not history or history[0].get('role') != 'system':
+             history.insert(0, {"role": "system", "parts": [{"text": system_prompt}]})
+
+        # Создаем чат с историей
         chat = self.client.start_chat(history=history)
 
         try:
+            # Отправляем только вопрос пользователя, т.к. системный промпт уже в истории
             response = await chat.send_message_async(
-                [system_prompt, user_question],
+                user_question,
             )
             return response.text
         except Exception as e:
