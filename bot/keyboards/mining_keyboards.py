@@ -1,9 +1,8 @@
 # ===============================================================
-# Файл: bot/keyboards/mining_keyboards.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
+# Файл: bot/keyboards/mining_keyboards.py (ПРОДАКШН-ВЕРСЯ 2025 - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Генераторы клавиатур для игры "Виртуальный Майнинг" и Калькулятора.
-# ИСПРАВЛЕНИЕ: Добавлены недостающие функции get_calculator_cancel_keyboard,
-# get_currency_selection_keyboard и get_asic_selection_keyboard для
-# устранения критической ошибки ImportError.
+# ИСПРАВЛЕНИЕ: Функция get_mining_menu_keyboard теперь корректно
+#              принимает аргумент is_session_active и отображает кнопки.
 # ===============================================================
 
 from typing import List
@@ -17,14 +16,24 @@ PAGE_SIZE = 5 # Количество асиков на одной страниц
 
 # --- Клавиатуры для игры "Виртуальный Майнинг" ---
 
-def get_mining_menu_keyboard() -> InlineKeyboardMarkup:
+def get_mining_menu_keyboard(is_session_active: bool) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру главного меню игры, динамически отображая
+    кнопку начала сессии.
+    """
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏪 Магазин", callback_data="game_nav:shop")
+    
+    # ИСПРАВЛЕНО: Кнопка "Начать сессию" появляется только если сессии нет
+    if not is_session_active:
+        builder.button(text="▶️ Начать сессию", callback_data="game_nav:shop") # Ведет в магазин для выбора ASIC
+    
     builder.button(text="🏠 Моя ферма", callback_data="game_nav:my_farm")
     builder.button(text="💡 Электричество", callback_data="game_nav:electricity")
     builder.button(text="🤝 Пригласить друга", callback_data="game_action:invite")
     builder.button(text="⬅️ Назад в меню", callback_data="nav:main_menu")
-    builder.adjust(2, 2, 1)
+    
+    # Адаптивная раскладка
+    builder.adjust(1 if not is_session_active else 2, 2, 1)
     return builder.as_markup()
 
 def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMarkup:
@@ -34,21 +43,26 @@ def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMa
     
     for asic in asics[start_offset:end_offset]:
         asic_id = normalize_asic_name(asic.name)
+        # В кнопке можно выводить цену, если она будет добавлена в модель
+        profit_str = f"{asic.profitability:,.2f}$/день" if asic.profitability else ""
         builder.button(
-            text=f"✅ {asic.name} - {asic.profitability:,.2f}$/день",
+            text=f"Купить {asic.name} {profit_str}",
             callback_data=f"game_action:start:{asic_id}"
         )
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(("⬅️", f"game_shop_page:{page - 1}"))
-    if end_offset < len(asics):
-        nav_buttons.append(("➡️", f"game_shop_page:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"game_shop_page:{page - 1}"))
     
-    for text, callback_data in nav_buttons:
-        builder.button(text=text, callback_data=callback_data)
+    total_pages = (len(asics) + PAGE_SIZE - 1) // PAGE_SIZE
+    if total_pages > 1:
+         nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="do_nothing"))
 
-    builder.button(text="⬅️ Назад в меню", callback_data="nav:mining_game")
+    if end_offset < len(asics):
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"game_shop_page:{page + 1}"))
+    
+    builder.row(*nav_buttons)
+    builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="nav:mining_game"))
     builder.adjust(1)
     return builder.as_markup()
 
@@ -71,7 +85,7 @@ def get_electricity_menu_keyboard(tariffs: dict, user_tariffs: List[str], curren
             status = " (Выбран)" if name == current_tariff else " (Доступен)"
             callback = f"game_tariff_select:{name}"
         else:
-            status = f" ({info['unlock_price']} монет)"
+            status = f" ({info.get('unlock_price', 0)} монет)"
             callback = f"game_tariff_buy:{name}"
         builder.button(text=f"{name}{status}", callback_data=callback)
     
@@ -79,16 +93,14 @@ def get_electricity_menu_keyboard(tariffs: dict, user_tariffs: List[str], curren
     builder.adjust(1)
     return builder.as_markup()
 
-# --- Клавиатуры для Калькулятора доходности (ВОССТАНОВЛЕНО) ---
+# --- Клавиатуры для Калькулятора доходности ---
 
 def get_calculator_cancel_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру с кнопкой отмены для FSM калькулятора."""
     builder = InlineKeyboardBuilder()
     builder.button(text="❌ Отмена", callback_data="calc_action:cancel")
     return builder.as_markup()
 
 def get_currency_selection_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру для выбора валюты в калькуляторе."""
     builder = InlineKeyboardBuilder()
     builder.button(text="USD ($)", callback_data="calc_currency:usd")
     builder.button(text="RUB (₽)", callback_data="calc_currency:rub")
@@ -97,7 +109,6 @@ def get_currency_selection_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 def get_asic_selection_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для выбора ASIC в калькуляторе с пагинацией."""
     builder = InlineKeyboardBuilder()
     start_offset = page * PAGE_SIZE
     end_offset = start_offset + PAGE_SIZE
