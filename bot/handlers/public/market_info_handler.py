@@ -2,10 +2,13 @@
 # Файл: bot/handlers/public/market_info_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Обрабатывает запросы на получение общих рыночных данных,
 #           корректно используя MarketDataService и современные форматтеры.
+# ИСПРАВЛЕНИЕ: Добавлен аргумент 'state' в сигнатуры функций для
+#              совместимости с центральным навигатором.
 # =================================================================================
 import logging
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
+from aiogram.fsm.context import FSMContext
 
 from bot.utils.dependencies import Deps
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
@@ -16,8 +19,9 @@ from aiogram.types import BufferedInputFile
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
+# ИСПРАВЛЕНО: Добавлен state: FSMContext
 @router.callback_query(F.data == "nav:fear_index")
-async def handle_fear_greed_index(call: CallbackQuery, deps: Deps):
+async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMContext):
     """
     Получает, генерирует и отображает изображение индекса страха и жадности.
     """
@@ -46,8 +50,9 @@ async def handle_fear_greed_index(call: CallbackQuery, deps: Deps):
         logger.error(f"Ошибка получения индекса страха и жадности: {e}", exc_info=True)
         await call.answer("Не удалось загрузить данные индекса. Попробуйте позже.", show_alert=True)
 
+# ИСПРАВЛЕНО: Добавлен state: FSMContext
 @router.callback_query(F.data == "nav:halving")
-async def handle_halving_info(call: CallbackQuery, deps: Deps):
+async def handle_halving_info(call: CallbackQuery, deps: Deps, state: FSMContext):
     """
     Получает и отображает информацию о халвинге Bitcoin, используя MarketDataService.
     """
@@ -65,8 +70,9 @@ async def handle_halving_info(call: CallbackQuery, deps: Deps):
         logger.error(f"Ошибка получения данных о халвинге: {e}", exc_info=True)
         await call.answer("Не удалось загрузить данные о халвинге.", show_alert=True)
 
+# ИСПРАВЛЕНО: Добавлен state: FSMContext
 @router.callback_query(F.data == "nav:btc_status")
-async def handle_btc_status(call: CallbackQuery, deps: Deps):
+async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
     """
     Получает и отображает текущий статус сети Bitcoin, используя MarketDataService.
     """
