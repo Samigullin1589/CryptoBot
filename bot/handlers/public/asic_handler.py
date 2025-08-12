@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/public/asic_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Полнофункциональный обработчик для раздела ASIC,
-# интегрированный в DI-архитектуру.
+# Описание: Полнофункциональный обработчик для раздела ASIC.
+# ИСПРАВЛЕНИЕ: Исправлена логика FSM для корректной работы кнопки "Назад к списку".
 # =================================================================================
 import logging
 from datetime import datetime, timezone
@@ -19,7 +19,7 @@ from bot.utils.formatters import format_asic_passport
 logger = logging.getLogger(__name__)
 router = Router(name="asic_handler")
 
-# --- ОСНОВНЫЕ ОБРАБОТЧИКИ ---
+# --- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ОТОБРАЖЕНИЯ СПИСКА ---
 
 async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
     """Отображает страницу с топом ASIC-майнеров, используя FSM для хранения страницы."""
@@ -27,11 +27,16 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
     target_message = update.message if is_callback else update
 
     if is_callback:
-        await target_message.edit_text("⏳ Загружаю актуальный список ASIC...")
+        # Для возврата из паспорта нужно редактировать, а не показывать alert
+        if (await state.get_state()) == AsicExplorerStates.showing_passport:
+            await target_message.edit_text("⏳ Возвращаю к списку ASIC...")
+        else:
+            await update.answer("⏳ Загружаю актуальный список ASIC...")
     else:
         await update.answer("⏳ Загружаю актуальный список ASIC...")
-
-    user_id = update.from_user.id
+        
+    await state.set_state(AsicExplorerStates.showing_top)
+    
     fsm_data = await state.get_data()
     page = fsm_data.get("page", 1)
 
@@ -54,24 +59,27 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
             f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago_str} мин. назад.</i>")
     
     keyboard = get_top_asics_keyboard(top_miners, page)
-
     await target_message.edit_text(text, reply_markup=keyboard)
 
 
-# ИСПРАВЛЕНО: Сигнатура изменена для приема Union[Message, CallbackQuery] как 'call'
-@router.message(F.text == "⚙️ Топ ASIC")
+# --- ОБРАБОТЧИКИ ---
+
 @router.callback_query(F.data == "nav:asics")
-async def top_asics_start(call: Union[Message, CallbackQuery], state: FSMContext, deps: Deps, **kwargs):
+async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps, **kwargs):
     """Входная точка для просмотра топа ASIC."""
-    if isinstance(call, CallbackQuery): await call.answer()
+    await call.answer()
     await state.set_state(AsicExplorerStates.showing_top)
     await state.update_data(page=1)
     await show_top_asics_page(call, state, deps)
 
-@router.callback_query(F.data.startswith("asic_page:"), AsicExplorerStates.showing_top)
+# ИСПРАВЛЕНО: Обработчик теперь срабатывает в обоих состояниях
+@router.callback_query(
+    F.data.startswith("asic_page:"),
+    AsicExplorerStates.showing_top,
+    AsicExplorerStates.showing_passport
+)
 async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):
-    """Обрабатывает пагинацию в меню топа ASIC."""
-    await call.answer()
+    """Обрабатывает пагинацию и возврат к списку ASIC."""
     page = int(call.data.split(":")[1])
     await state.update_data(page=page)
     await show_top_asics_page(call, state, deps)
@@ -95,8 +103,6 @@ async def asic_passport_handler(call: CallbackQuery, state: FSMContext, deps: De
     await state.set_state(AsicExplorerStates.showing_passport)
     text = format_asic_passport(asic, user_profile.electricity_cost)
     await call.message.edit_text(text, reply_markup=get_asic_passport_keyboard(page))
-
-# --- Логика калькулятора ---
 
 @router.callback_query(F.data == "asic_action:set_cost", AsicExplorerStates.showing_top)
 async def prompt_for_electricity_cost(call: CallbackQuery, state: FSMContext):
@@ -125,5 +131,5 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
     await deps.user_service.set_user_electricity_cost(message.from_user.id, cost)
     await message.answer(f"✅ Ваша цена электроэнергии <b>${cost:.4f}/кВт·ч</b> сохранена! Пересчитываю топ...")
     
-    await state.set_state(AsicExplorerStates.showing_top)
+    # Для вызова show_top_asics_page нужен объект Message или CallbackQuery
     await show_top_asics_page(message, state, deps)
