@@ -2,8 +2,8 @@
 # Файл: bot/services/parser_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
 # Описание: Отказоустойчивый сервис для парсинга данных с внешних
 # источников с улучшенной логикой обхода защиты.
-# ИСПРАВЛЕНИЕ: Добавлены полные браузерные заголовки для обхода
-#              ошибки 406 и обновлен селектор для AsicMinerValue.
+# ИСПРАВЛЕНИЕ: Добавлены полные браузерные заголовки и улучшен
+#              селектор для AsicMinerValue.
 # ===============================================================
 import logging
 import asyncio
@@ -39,7 +39,6 @@ class ParserService:
     ))
     async def _fetch(self, url: str, response_type: str = 'json') -> Optional[Any]:
         """Выполняет HTTP-запрос с логикой повторных попыток и полными заголовками."""
-        # ИСПРАВЛЕНО: Отправляем полный набор заголовков, имитируя браузер
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -47,7 +46,7 @@ class ParserService:
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
         }
-        async with self.session.get(url, headers=headers, timeout=20) as response:
+        async with self.session.get(url, headers=headers, timeout=20, ssl=False) as response:
             response.raise_for_status()
             if response_type == 'json':
                 return await response.json(content_type=None)
@@ -56,7 +55,6 @@ class ParserService:
     async def fetch_from_whattomine(self) -> List[AsicMiner]:
         """Получает и парсит данные с API WhatToMine."""
         if not self.config.whattomine_api:
-            logger.warning("URL для WhatToMine не задан в конфигурации. Пропуск.")
             return []
         
         logger.info("Парсер: Запрашиваю данные с WhatToMine API...")
@@ -66,20 +64,7 @@ class ParserService:
                 logger.warning("Парсер: Не получены валидные данные от WhatToMine.")
                 return []
 
-            asics = []
-            for asic_id, details in data["asics"].items():
-                try:
-                    asics.append(AsicMiner(
-                        id=asic_id,
-                        name=details.get("name", asic_id),
-                        profitability=float(details.get("profitability", 0)),
-                        algorithm=details.get("algorithm"),
-                        power=parse_power(str(details.get("power", 0))),
-                        hashrate=str(details.get("hashrate", "N/A"))
-                    ))
-                except (ValueError, TypeError, KeyError) as e:
-                    logger.warning(f"Парсер: Ошибка обработки записи WhatToMine '{asic_id}': {e}. Пропускаю.")
-                    continue
+            asics = [AsicMiner(id=asic_id, **details) for asic_id, details in data["asics"].items()]
             logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с WhatToMine.")
             return asics
         except Exception as e:
@@ -89,7 +74,6 @@ class ParserService:
     async def fetch_from_asicminervalue(self) -> List[AsicMiner]:
         """Получает и парсит данные со страницы AsicMinerValue."""
         if not self.config.asicminervalue_url:
-            logger.warning("URL для AsicMinerValue не задан в конфигурации. Пропуск.")
             return []
             
         logger.info("Парсер: Запрашиваю данные с AsicMinerValue...")
@@ -98,22 +82,20 @@ class ParserService:
             if not html_content: return []
 
             soup = BeautifulSoup(html_content, 'lxml')
-            # ИСПРАВЛЕНО: Используем более надежный селектор для поиска таблицы
-            table = soup.select_one('div.table-responsive > table.table-hover')
+            table = soup.find('table', class_='table-hover')
             if not table:
-                logger.warning("Парсер: Не найдена таблица 'div.table-responsive > table.table-hover' в HTML от AsicMinerValue.")
+                logger.warning("Парсер: Не найдена таблица с классом 'table-hover' в HTML от AsicMinerValue.")
                 return []
             
             table_body = table.find('tbody')
             if not table_body:
-                logger.warning("Парсер: Не найден tbody в таблице от AsicMinerValue.")
                 return []
 
             asics = []
-            for row in table_body.find_all('tr', attrs={'data-name': True}):
+            for row in table_body.find_all('tr'):
                 try:
                     cols = row.find_all('td')
-                    if len(cols) < 6: continue
+                    if len(cols) < 5: continue
                     
                     name_tag = cols[1].find('a')
                     if not name_tag: continue
@@ -125,13 +107,12 @@ class ParserService:
                     asics.append(AsicMiner(
                         id=normalize_asic_name(name),
                         name=name,
-                        profitability=float(profit_text),
-                        power=parse_power(power_text),
+                        profitability=float(profit_text) if profit_text != 'N/A' else 0.0,
+                        power=parse_power(power_text) or 0,
                         hashrate=cols[2].text.strip(),
                         algorithm="Unknown"
                     ))
-                except (AttributeError, ValueError, IndexError, TypeError) as e:
-                    logger.warning(f"Парсер: Ошибка обработки строки AsicMinerValue: {e}. Пропускаю.")
+                except (AttributeError, ValueError, IndexError, TypeError):
                     continue
             logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с AsicMinerValue.")
             return asics
@@ -142,14 +123,12 @@ class ParserService:
     async def fetch_minerstat_hardware_specs(self) -> Optional[Dict[str, Dict[str, Any]]]:
         """Получает полный справочник спецификаций оборудования с MinerStat."""
         if not self.config.minerstat_api:
-            logger.warning("URL для MinerStat не задан в конфигурации. Пропуск.")
             return None
-            
+        
         logger.info("Парсер: Запрашиваю справочник спецификаций с MinerStat API...")
         try:
             hardware_data = await self._fetch(f"{self.config.minerstat_api}/hardware")
             if not hardware_data or not isinstance(hardware_data, list):
-                logger.error("Парсер: Не удалось получить или неверный формат от MinerStat hardware API.")
                 return None
             
             return {

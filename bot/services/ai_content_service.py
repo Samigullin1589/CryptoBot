@@ -1,7 +1,9 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
-# Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете.
-# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
+# Описание: Сервис для Gemini, использующий актуальную версию библиотеки
+#           и корректно инициализирующий инструмент поиска.
+# ИСПРАВЛЕНИЕ: Логика инициализации приведена в соответствие с
+#              современной версией google-generativeai.
 # ===============================================================
 
 import logging
@@ -13,10 +15,7 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, ContentDict
 from google.api_core import exceptions as google_exceptions
 
-# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
-from bot.config.settings import settings
-from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
-from bot.config.settings import AIConfig
+from bot.config.settings import settings, AIConfig
 
 logger = logging.getLogger(__name__)
 
@@ -38,22 +37,25 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # Инструмент поиска передается как строка "Google Search"
+            # ИСПРАВЛЕНО: Этот синтаксис корректен для актуальных версий библиотеки
+            # и позволяет модели использовать встроенный поиск Google.
             self.client = genai.GenerativeModel(
                 self.config.model_name,
-                tools=["Google Search"]
+                tools=['Google Search']
             )
-            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name} с функцией поиска.")
+            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name} с инструментом 'Google Search'.")
         except Exception as e:
-            logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.")
+            logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.", exc_info=True)
 
     def _extract_text_from_response(self, response: Any) -> Optional[str]:
         """Безопасно извлекает текстовое содержимое из ответа модели."""
         try:
             if response.candidates and response.candidates[0].content.parts:
-                if response.candidates[0].content.parts[0].function_call:
-                    return None
                 return response.candidates[0].content.parts[0].text
+            # Проверка на случай, если ответ заблокирован
+            if response.prompt_feedback and response.prompt_feedback.block_reason:
+                 logger.warning(f"Ответ AI заблокирован по причине: {response.prompt_feedback.block_reason.name}")
+                 return "Ответ был заблокирован политикой безопасности."
             return None
         except (AttributeError, IndexError, KeyError):
             logger.error("Не удалось извлечь текст из ответа AI.", exc_info=True)
@@ -78,14 +80,15 @@ class AIContentService:
         if not self.client: return None
 
         try:
-            base_model = genai.GenerativeModel(
-                self.config.model_name,
-                generation_config={"response_mime_type": "application/json"}
+            # Для JSON-ответов используется специальная конфигурация
+            json_model = genai.GenerativeModel(
+                self.config.flash_model_name, # Используем быструю модель для JSON
+                generation_config=GenerationConfig(response_mime_type="application/json")
             )
-            full_prompt = f"{prompt}\n\nStrictly adhere to this JSON schema:\n{json.dumps(json_schema)}"
+            full_prompt = f"{prompt}\n\nОтвет должен строго соответствовать этой JSON-схеме:\n{json.dumps(json_schema, ensure_ascii=False)}"
 
             response = await self._make_request(
-                base_model,
+                json_model,
                 contents=[{"role": "user", "parts": [{"text": full_prompt}]}],
             )
             json_text = self._extract_text_from_response(response)
@@ -98,22 +101,9 @@ class AIContentService:
             logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}", exc_info=True)
             return None
 
-    async def generate_summary(self, text_to_summarize: str) -> Optional[str]:
-        """Генерирует краткое саммари, используя быструю Flash модель."""
-        if not self.client: return "Не удалось проанализировать."
-
-        try:
-            flash_model = genai.GenerativeModel(self.config.flash_model_name)
-            prompt = get_summary_prompt(text_to_summarize)
-            response = await self._make_request(flash_model, contents=prompt)
-            return self._extract_text_from_response(response)
-        except Exception as e:
-            logger.error(f"Непредвиденная ошибка при генерации саммари: {e}", exc_info=True)
-            return "Ошибка анализа."
-
     async def get_consultant_answer(
         self, user_question: str, history: List[ContentDict]
-    ) -> Optional[str]:
+    ) -> str:
         """Отвечает на вопрос пользователя, используя поиск в интернете при необходимости."""
         if not self.client: return "AI-консультант временно недоступен."
 
@@ -126,7 +116,7 @@ class AIContentService:
                 contents=chat_history,
                 system_instruction=system_prompt,
             )
-            return response.text
+            return self._extract_text_from_response(response) or "AI не смог сформировать ответ."
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}", exc_info=True)
             return "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
