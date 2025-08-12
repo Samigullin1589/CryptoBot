@@ -1,5 +1,5 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
+# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете
 # для предоставления актуальных ответов.
 # ИСПРАВЛЕНИЕ: Устранена синтаксическая ошибка импорта, интеграция с
@@ -33,7 +33,7 @@ RETRYABLE_EXCEPTIONS = (
 
 class AIContentService:
     """Центральный сервис для генерации контента, построенный на Google AI SDK с функцией поиска."""
-    
+
     def __init__(self, api_key: str, config: AIConfig):
         self.config = config
         self.client: Optional[genai.GenerativeModel] = None
@@ -77,25 +77,19 @@ class AIContentService:
         """Генерирует структурированный JSON."""
         if not self.client: return None
 
-        generation_config = GenerationConfig(
-            response_mime_type="application/json",
-            temperature=self.config.default_temperature
-        )
-        # Для pydantic v1/старых версий SDK схема могла передаваться напрямую,
-        # в актуальных версиях это делается через 'tool_config'.
-        # Но для простого JSON ответа достаточно указать mime_type.
-        # Для сложных схем используется `tools`.
-        
         try:
             # Для структурированного вывода используем модель без поиска, чтобы гарантировать JSON
             base_model = genai.GenerativeModel(
                 self.config.model_name,
                 generation_config={"response_mime_type": "application/json"}
             )
-            
+
+            # Передаем схему в самом промпте для большей надежности
+            full_prompt = f"{prompt}\n\nStrictly follow this JSON schema:\n{json.dumps(json_schema)}"
+
             response = await self._make_request(
                 base_model,
-                contents=[{"role": "user", "parts": [{"text": f"{prompt}\n\nStrictly follow this JSON schema:\n{json.dumps(json_schema)}"}]}],
+                contents=[{"role": "user", "parts": [{"text": full_prompt}]}],
             )
             json_text = self._extract_text_from_response(response)
             if not json_text: return None
@@ -110,11 +104,11 @@ class AIContentService:
     async def generate_summary(self, text_to_summarize: str) -> Optional[str]:
         """Генерирует краткое саммари, используя быструю Flash модель."""
         if not self.client: return "Не удалось проанализировать."
-        
+
         try:
             flash_model = genai.GenerativeModel(self.config.flash_model_name)
             prompt = get_summary_prompt(text_to_summarize)
-            
+
             response = await self._make_request(flash_model, contents=prompt)
             return self._extract_text_from_response(response)
         except Exception as e:
@@ -126,20 +120,20 @@ class AIContentService:
     ) -> Optional[str]:
         """Отвечает на вопрос пользователя, используя поиск в интернете при необходимости."""
         if not self.client: return "AI-консультант временно недоступен."
-        
-        system_prompt = get_consultant_prompt()
-        
-        # Модифицируем историю, добавляя системный промпт в начало, если его там нет
-        if not history or history[0].get('role') != 'system':
-             history.insert(0, {"role": "system", "parts": [{"text": system_prompt}]})
 
-        # Создаем чат с историей
-        chat = self.client.start_chat(history=history)
+        system_prompt = get_consultant_prompt()
+
+        # Формируем контент для запроса, включая системный промпт и историю
+        request_contents = history + [{"role": "user", "parts": [{"text": user_question}]}]
+        
+        # Устанавливаем системную инструкцию отдельно
+        final_history = [item for item in request_contents if item.get('role') != 'system']
 
         try:
-            # Отправляем только вопрос пользователя, т.к. системный промпт уже в истории
-            response = await chat.send_message_async(
-                user_question,
+            response = await self._make_request(
+                self.client,
+                contents=final_history,
+                system_instruction=system_prompt,
             )
             return response.text
         except Exception as e:
