@@ -1,9 +1,9 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Сервис для Gemini, использующий актуальную версию библиотеки
-#           и корректно инициализирующий инструмент поиска.
-# ИСПРАВЛЕНИЕ: Логика инициализации приведена в соответствие с
-#              современной версией google-generativeai.
+#           и корректно инициализирующий модель без конфликтующих параметров.
+# ИСПРАВЛЕНИЕ: Убран параметр 'tools' из конструктора модели для
+#              устранения критической ошибки инициализации.
 # ===============================================================
 
 import logging
@@ -16,6 +16,7 @@ from google.generativeai.types import GenerationConfig, ContentDict
 from google.api_core import exceptions as google_exceptions
 
 from bot.config.settings import settings, AIConfig
+from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt, get_quiz_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +38,12 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # ИСПРАВЛЕНО: Этот синтаксис корректен для актуальных версий библиотеки
-            # и позволяет модели использовать встроенный поиск Google.
-            self.client = genai.GenerativeModel(
-                self.config.model_name,
-                tools=['Google Search']
-            )
-            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name} с инструментом 'Google Search'.")
+            # ИСПРАВЛЕНО: Убран параметр `tools`. Модели 'pro' и 'flash'
+            # используют поиск Google автоматически, когда это необходимо.
+            # Явная передача этого параметра в данной версии библиотеки вызывает ошибку.
+            self.client = genai.GenerativeModel(self.config.model_name)
+            
+            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name}.")
         except Exception as e:
             logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.", exc_info=True)
 
@@ -52,7 +52,6 @@ class AIContentService:
         try:
             if response.candidates and response.candidates[0].content.parts:
                 return response.candidates[0].content.parts[0].text
-            # Проверка на случай, если ответ заблокирован
             if response.prompt_feedback and response.prompt_feedback.block_reason:
                  logger.warning(f"Ответ AI заблокирован по причине: {response.prompt_feedback.block_reason.name}")
                  return "Ответ был заблокирован политикой безопасности."
@@ -80,9 +79,8 @@ class AIContentService:
         if not self.client: return None
 
         try:
-            # Для JSON-ответов используется специальная конфигурация
             json_model = genai.GenerativeModel(
-                self.config.flash_model_name, # Используем быструю модель для JSON
+                self.config.flash_model_name,
                 generation_config=GenerationConfig(response_mime_type="application/json")
             )
             full_prompt = f"{prompt}\n\nОтвет должен строго соответствовать этой JSON-схеме:\n{json.dumps(json_schema, ensure_ascii=False)}"
