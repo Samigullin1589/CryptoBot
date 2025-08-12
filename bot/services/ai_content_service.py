@@ -1,8 +1,8 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
+# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ОКОНЧАТЕЛЬНО ИСПРАВЛЕННАЯ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете
 # для предоставления актуальных ответов.
-# ИСПРАВЛЕНИЕ: Устранена синтаксическая ошибка импорта, интеграция с
+# ИСПРАВЛЕНИЕ: Устранена критическая синтаксическая ошибка импорта, интеграция с
 # инструментом поиска приведена в соответствие с документацией Google AI SDK.
 # ===============================================================
 
@@ -52,7 +52,7 @@ class AIContentService:
         """Безопасно извлекает текстовое содержимое из ответа модели."""
         try:
             # Проверяем, есть ли function_call, что означает, что модель хочет использовать инструмент
-            if response.candidates[0].content.parts[0].function_call:
+            if response.candidates and response.candidates[0].content.parts[0].function_call:
                 return None # Возвращаем None, чтобы показать, что нужен еще один шаг
             return response.candidates[0].content.parts[0].text
         except (AttributeError, IndexError, KeyError):
@@ -85,7 +85,7 @@ class AIContentService:
             )
 
             # Передаем схему в самом промпте для большей надежности
-            full_prompt = f"{prompt}\n\nStrictly follow this JSON schema:\n{json.dumps(json_schema)}"
+            full_prompt = f"{prompt}\n\nStrictly adhere to this JSON schema:\n{json.dumps(json_schema)}"
 
             response = await self._make_request(
                 base_model,
@@ -98,7 +98,7 @@ class AIContentService:
             logger.error(f"Не удалось распарсить JSON из ответа AI: {json_text[:200]}... Ошибка: {e}")
             return None
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}")
+            logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}", exc_info=True)
             return None
 
     async def generate_summary(self, text_to_summarize: str) -> Optional[str]:
@@ -112,7 +112,7 @@ class AIContentService:
             response = await self._make_request(flash_model, contents=prompt)
             return self._extract_text_from_response(response)
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка при генерации саммари: {e}")
+            logger.error(f"Непредвиденная ошибка при генерации саммари: {e}", exc_info=True)
             return "Ошибка анализа."
 
     async def get_consultant_answer(
@@ -122,18 +122,15 @@ class AIContentService:
         if not self.client: return "AI-консультант временно недоступен."
 
         system_prompt = get_consultant_prompt()
-
-        # Формируем контент для запроса, включая историю
-        final_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
+        chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
 
         try:
-            # Передаем системную инструкцию и историю в одном запросе
             response = await self._make_request(
                 self.client,
-                contents=final_history,
+                contents=chat_history,
                 system_instruction=system_prompt,
             )
             return response.text
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}", exc_info=True)
-            return "Произошла ошибка, попробуйте позже."
+            return "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
