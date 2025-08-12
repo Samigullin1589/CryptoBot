@@ -1,9 +1,7 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Улучшенный сервис для Gemini, способный выполнять поиск в интернете.
-# ИСПРАВЛЕНИЕ: Устранена критическая синтаксическая ошибка импорта и способ передачи
-#              инструмента поиска приведен в соответствие с актуальной
-#              документацией Google AI SDK.
+# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
 # ===============================================================
 
 import logging
@@ -15,7 +13,8 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, ContentDict
 from google.api_core import exceptions as google_exceptions
 
-from bot.config.config import settings
+# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
+from bot.config.settings import settings
 from bot.texts.ai_prompts import get_summary_prompt, get_consultant_prompt
 from bot.config.settings import AIConfig
 
@@ -39,7 +38,7 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # ИСПРАВЛЕНО: Инструмент поиска передается как строка "Google Search"
+            # Инструмент поиска передается как строка "Google Search"
             self.client = genai.GenerativeModel(
                 self.config.model_name,
                 tools=["Google Search"]
