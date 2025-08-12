@@ -1,9 +1,10 @@
 # =================================================================================
-# Файл: bot/config/settings.py (ФИНАЛЬНАЯ ВЕРСИЯ - С ИСПРАВЛЕННЫМИ ЭНДПОИНТАМИ)
+# Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлен эндпоинт для получения высоты блока Bitcoin.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'logging'.
 # =================================================================================
 
+import logging
 from typing import List, Dict, Any, Optional
 from pydantic import (BaseModel, Field, RedisDsn, HttpUrl, SecretStr,
                       ValidationError, field_validator, ConfigDict)
@@ -65,7 +66,6 @@ class EndpointsConfig(BaseModel):
     whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
     asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
     minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
-    # ИСПРАВЛЕНО: Добавлен новый эндпоинт
     mempool_space_tip_height: HttpUrl = "https://mempool.space/api/blocks/tip/height"
 
 class ThreatFilterConfig(BaseModel):
@@ -157,8 +157,11 @@ class Settings(BaseSettings):
         env_nested_delimiter='__'
     )
 
+# --- СОЗДАНИЕ ЕДИНСТВЕННОГО ЭКЗЕМПЛЯРА НАСТРОЕК ---
 try:
     settings = Settings()
+    # Настраиваем базовый логгер, чтобы видеть сообщение о загрузке
+    logging.basicConfig(level=logging.INFO)
     logging.info("Конфигурация успешно загружена и валидирована.")
 except ValidationError as e:
     logging.critical(f"КРИТИЧЕСКАЯ ОШИБКА ВАЛИДАЦИИ НАСТРОЕК. Проверьте ваш .env файл и переменные окружения.\n{e}")
