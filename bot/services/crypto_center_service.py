@@ -1,8 +1,8 @@
 # ==================================================================================
 # Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 3.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
-# ИСПРАВЛЕНИЕ: Исправлена ошибка десериализации данных из кэша,
-#              вызывавшая TypeError при создании AirdropProject.
+# ИСПРАВЛЕНИЕ: Добавлена защитная логика для обработки потенциально
+#              дважды закодированных JSON-ответов от AI или кэша.
 # ==================================================================================
 
 import json
@@ -53,16 +53,25 @@ class CryptoCenterService:
 
         if cached_data := await self.redis.get(cache_key):
             logger.info(f"Serving {alpha_type} alpha for user {user_id} from cache.")
-            # ИСПРАВЛЕНО: Десериализуем JSON-строку из кэша в Python-объект
-            return json.loads(cached_data)
-
+            try:
+                # ИСПРАВЛЕНО: Добавлена проверка на случай двойного кодирования JSON
+                projects_data = json.loads(cached_data)
+                if isinstance(projects_data, str):
+                    projects_data = json.loads(projects_data)
+                return projects_data
+            except json.JSONDecodeError:
+                logger.error("Failed to decode cached data, fetching fresh.")
+        
         logger.info(f"Generating fresh personalized {alpha_type} alpha for user {user_id} via AI Search...")
         
         prompt = get_personalized_alpha_prompt(user_profile, alpha_type)
-        
         result = await self.ai_service.generate_structured_content(prompt, json_schema)
 
         if result:
+            if isinstance(result, str):
+                try: result = json.loads(result)
+                except json.JSONDecodeError: return []
+            
             logger.info(f"AI Search for user {user_id} found {len(result)} {alpha_type} opportunities.")
             await self.redis.set(cache_key, json.dumps(result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
             return result
@@ -73,7 +82,11 @@ class CryptoCenterService:
     async def get_airdrop_alpha(self, user_id: int) -> List[AirdropProject]:
         json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "status", "tasks"]}}
         projects_data = await self._generate_alpha(user_id, "airdrop", json_schema)
-        # Теперь projects_data гарантированно является списком словарей
+        
+        if not isinstance(projects_data, list):
+             logger.error(f"Airdrop alpha data is not a list: {projects_data}")
+             return []
+        
         return [AirdropProject(**data) for data in projects_data]
 
     async def get_mining_alpha(self, user_id: int) -> List[Dict[str, Any]]:
