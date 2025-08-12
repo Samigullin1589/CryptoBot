@@ -21,32 +21,55 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# Импортируем ЦЕЛЫЕ пакеты с обработчиками
-from bot.handlers import admin, game, public, tools, threats
+# Импортируем все необходимые пакеты с роутерами
+from bot.handlers.admin import admin_menu, verification_admin_handler, stats_handler, moderation_handler, game_admin_handler
+from bot.handlers.public import (
+    common_handler, menu_handlers, price_handler, asic_handler,
+    news_handler, quiz_handler, market_info_handler, market_handler,
+    crypto_center_handler, verification_public_handler, achievements_handler, game_handler
+)
+from bot.handlers.game import mining_game_handler
+from bot.handlers.tools import calculator_handler
+from bot.handlers.threats import threat_handler
+
 
 logger = logging.getLogger(__name__)
-
 
 def register_all_routers(dp: Dispatcher):
     """
     Централизованно регистрирует все роутеры приложения.
-    Такой подход упрощает управление, предотвращает ошибки импорта и масштабируется.
+    Такой подход упрощает управление и предотвращает ошибки импорта.
     """
-    # Регистрируем роутеры из каждого модуля
-    for router in admin.__all__:
-        dp.include_router(getattr(admin, router))
-        
-    for router in game.__all__:
-        dp.include_router(getattr(game, router))
+    # Админские роутеры
+    dp.include_router(admin_menu.admin_router)
+    dp.include_router(verification_admin_handler.router)
+    dp.include_router(stats_handler.stats_router)
+    dp.include_router(moderation_handler.moderation_router)
+    dp.include_router(game_admin_handler.router)
 
-    for router in public.__all__:
-        dp.include_router(getattr(public, router))
-        
-    for router in tools.__all__:
-        dp.include_router(getattr(tools, router))
+    # Публичные роутеры
+    dp.include_router(common_handler.router)
+    dp.include_router(menu_handlers.router)
+    dp.include_router(price_handler.router)
+    dp.include_router(asic_handler.router)
+    dp.include_router(news_handler.router)
+    dp.include_router(quiz_handler.router)
+    dp.include_router(market_info_handler.router)
+    dp.include_router(crypto_center_handler.router)
+    dp.include_router(verification_public_handler.router)
+    dp.include_router(achievements_handler.router)
+    dp.include_router(market_handler.router)
+    dp.include_router(game_handler.router)
 
-    # Обработчик угроз регистрируется последним
-    dp.include_router(threats.threat_handler.threat_router)
+
+    # Игровые роутеры
+    dp.include_router(mining_game_handler.game_router)
+
+    # Инструменты
+    dp.include_router(calculator_handler.calculator_router)
+
+    # Обработка угроз (должен быть в конце)
+    dp.include_router(threat_handler.threat_router)
     
     logger.info("Все роутеры успешно зарегистрированы.")
 

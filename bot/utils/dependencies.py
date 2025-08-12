@@ -1,6 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСЯ "Distinguished Engineer" - УСИЛЕННАЯ)
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - УСИЛЕННАЯ)
 # Описание: DI-контейнер с логированием инициализации и асинхронной настройкой сервисов.
+# ИСПРАВЛЕНИЕ: Полностью переработан для устранения SyntaxError и повышения надежности.
 # =================================================================================
 
 import logging
@@ -10,7 +11,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
-from bot.config.settings import Settings
+from bot.config.config import settings
 from bot.utils.keys import KeyFactory
 
 # Импортируем все сервисы
@@ -77,24 +78,85 @@ class Deps(BaseModel):
         try:
             # Инициализация базовых сервисов
             user_service = UserService(redis=redis_pool)
-            admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
-            ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)
-            news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
-            parser_service = ParserService(http_session=http_session, config=settings.endpoints)
-            quiz_service = QuizService(ai_content_service=ai_content_service)
-            event_service = MiningEventService(config=settings.events)
-            coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
+            logger.info("UserService инициализирован.")
             
+            admin_service = AdminService(redis=redis_pool, settings=settings, bot=bot)
+            logger.info("AdminService инициализирован.")
+
+            ai_content_service = AIContentService(api_key=settings.GEMINI_API_KEY.get_secret_value(), config=settings.ai)
+            logger.info("AIContentService инициализирован.")
+
+            news_service = NewsService(redis=redis_pool, http_session=http_session, config=settings.news_service)
+            logger.info("NewsService инициализирован.")
+
+            parser_service = ParserService(http_session=http_session, config=settings.endpoints)
+            logger.info("ParserService инициализирован.")
+
+            quiz_service = QuizService(ai_content_service=ai_content_service)
+            logger.info("QuizService инициализирован.")
+
+            event_service = MiningEventService(config=settings.events)
+            logger.info("MiningEventService инициализирован.")
+            
+            coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
+            logger.info("CoinListService инициализирован.")
+
             # Инициализация сервисов, зависящих от других
             market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, settings=settings, coin_list_service=coin_list_service)
+            logger.info("MarketDataService инициализирован.")
+
             achievement_service = AchievementService(redis=redis_pool, config=settings.achievements, market_data_service=market_data_service)
+            logger.info("AchievementService инициализирован.")
+
             security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
+            logger.info("SecurityService инициализирован.")
+
             asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
+            logger.info("AsicService инициализирован.")
+
             price_service = PriceService(redis=redis_pool, config=settings.price_service, market_data_service=market_data_service)
+            logger.info("PriceService инициализирован.")
+
             crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
+            logger.info("CryptoCenterService инициализирован.")
+
             market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
+            logger.info("AsicMarketService инициализирован.")
             
             scheduler_instance = AsyncIOScheduler(timezone="UTC")
+            logger.info("AsyncIOScheduler инициализирован.")
+
             mining_game_service = MiningGameService(
                 redis=redis_pool, scheduler=scheduler_instance, settings=settings, user_service=user_service,
-                market_service=market_service, event_service=event
+                market_service=market_service, event_service=event_service,
+                achievement_service=achievement_service, bot=bot
+            )
+            logger.info("MiningGameService инициализирован.")
+
+            verification_service = VerificationService(user_service=user_service)
+            logger.info("VerificationService инициализирован.")
+
+            # Асинхронная настройка сервисов, которым это необходимо
+            logger.info("Запуск асинхронной настройки сервисов...")
+            await market_service.setup()
+            await mining_game_service.setup()
+            logger.info("Асинхронная настройка сервисов завершена.")
+
+            deps_instance = cls(
+                settings=settings, http_session=http_session, redis_pool=redis_pool,
+                scheduler=scheduler_instance, bot=bot, user_service=user_service,
+                admin_service=admin_service, ai_content_service=ai_content_service,
+                news_service=news_service, parser_service=parser_service,
+                quiz_service=quiz_service, event_service=event_service,
+                achievement_service=achievement_service, market_data_service=market_data_service,
+                security_service=security_service, coin_list_service=coin_list_service,
+                asic_service=asic_service, price_service=price_service,
+                crypto_center_service=crypto_center_service, market_service=market_service,
+                mining_game_service=mining_game_service, verification_service=verification_service
+            )
+            logger.info("Контейнер зависимостей (Deps) успешно собран.")
+            return deps_instance
+
+        except Exception as e:
+            logger.critical(f"Критическая ошибка при сборке контейнера зависимостей: {e}", exc_info=True)
+            raise
