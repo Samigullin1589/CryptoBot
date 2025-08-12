@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/admin/game_admin_handler.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Обработчики для администрирования игровой части бота.
-# ИСПРАВЛЕНИЕ: Исправлена опечатка в имени состояния для устранения AttributeError.
+# ИСПРАВЛЕНИЕ: Исправлены все опечатки в именах состояний для устранения AttributeError.
 # =================================================================================
 
 import logging
@@ -33,14 +33,12 @@ async def game_admin_menu_handler(callback: types.CallbackQuery, admin_service: 
 @router.callback_query(F.data == f"{GAME_ADMIN_CALLBACK_PREFIX}:balance_start")
 async def change_balance_start_handler(callback: types.CallbackQuery, state: FSMContext):
     """Начинает сценарий изменения баланса."""
-    # ИСПРАВЛЕНО: Убрана опечатка 'entering...' -> 'enter...'
     await state.set_state(GameAdmin.enter_user_id_for_balance)
     text = "Введите User ID пользователя, которому вы хотите изменить баланс."
     keyboard = get_back_to_game_admin_menu_keyboard()
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
-# ИСПРАВЛЕНО: Убрана опечатка 'entering...' -> 'enter...'
 @router.message(StateFilter(GameAdmin.enter_user_id_for_balance))
 async def change_balance_enter_id_handler(message: types.Message, state: FSMContext):
     """Обрабатывает ввод User ID."""
@@ -51,12 +49,14 @@ async def change_balance_enter_id_handler(message: types.Message, state: FSMCont
         return
     
     await state.update_data(target_user_id=user_id)
-    await state.set_state(GameAdmin.entering_balance_amount)
+    # ИСПРАВЛЕНО: Убрана опечатка 'entering...' -> 'enter...'
+    await state.set_state(GameAdmin.enter_balance_amount)
     await message.answer("Теперь введите сумму для изменения баланса. \n"
                          "Используйте положительное число для начисления (e.g., `1000`) "
                          "и отрицательное для списания (e.g., `-500`).")
 
-@router.message(StateFilter(GameAdmin.entering_balance_amount))
+# ИСПРАВЛЕНО: Убрана опечатка 'entering...' -> 'enter...'
+@router.message(StateFilter(GameAdmin.enter_balance_amount))
 async def change_balance_enter_amount_handler(message: types.Message, state: FSMContext, admin_service: AdminService):
     """Обрабатывает ввод суммы и завершает операцию."""
     try:
@@ -68,9 +68,10 @@ async def change_balance_enter_amount_handler(message: types.Message, state: FSM
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
     
-    # Предполагается, что в AdminService есть метод change_user_game_balance
     # new_balance = await admin_service.change_user_game_balance(target_user_id, amount)
-    new_balance = 1000.0 # Временная заглушка, пока метод не реализован
+    # ПРИМЕЧАНИЕ: метод change_user_game_balance не реализован в AdminService.
+    # Для теста можно вернуть любое число.
+    new_balance = 1000.0 
     await state.clear()
     
     if new_balance is not None:
