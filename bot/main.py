@@ -2,7 +2,7 @@
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
 # Описание: Точка входа с улучшенной архитектурой, роутингом и процедурой
 #           завершения работы для максимальной стабильности.
-# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для устранения циклической зависимости.
+# ИСПРАВЛЕНИЕ: Изменен порядок регистрации роутеров для корректной работы FSM.
 # =================================================================================
 
 import asyncio
@@ -15,7 +15,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
-# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
 from bot.config.settings import settings
 from bot.utils.dependencies import Deps
 from bot.utils.logging_setup import setup_logging
@@ -55,17 +54,23 @@ logger = logging.getLogger(__name__)
 def register_all_routers(dp: Dispatcher):
     """
     Централизованно и явно регистрирует все роутеры приложения.
-    Такой подход исключает ошибки, связанные с неполными __init__.py файлами.
+    Порядок регистрации важен: более специфичные роутеры (с FSM) должны
+    идти раньше более общих.
     """
-    # Админские роутеры
+    # Админские роутеры (имеют свои фильтры, порядок не так критичен)
     dp.include_router(admin_router)
     dp.include_router(verification_admin_router)
     dp.include_router(stats_router)
     dp.include_router(moderation_router)
     dp.include_router(game_admin_router)
 
-    # Публичные роутеры
-    dp.include_router(common_router)
+    # ИСПРАВЛЕНО: Роутеры с FSM и конкретными сценариями регистрируются ПЕРЕД общими.
+    # Игровые роутеры
+    dp.include_router(mining_game_router)
+    # Инструменты
+    dp.include_router(calculator_router)
+
+    # Публичные роутеры (обработчик общего текста в common_router должен быть почти в конце)
     dp.include_router(menu_router)
     dp.include_router(price_router)
     dp.include_router(asic_router)
@@ -77,17 +82,14 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(achievements_router)
     dp.include_router(market_router)
     dp.include_router(game_router)
+    
+    # Общий обработчик текста и команд /start, /help регистрируется одним из последних
+    dp.include_router(common_router)
 
-    # Игровые роутеры
-    dp.include_router(mining_game_router)
-
-    # Инструменты
-    dp.include_router(calculator_router)
-
-    # Обработка угроз (должен быть в конце)
+    # Обработка угроз (должен быть самым последним, чтобы ловить все, что не подошло выше)
     dp.include_router(threat_router)
     
-    logger.info("Все роутеры успешно зарегистрированы.")
+    logger.info("Все роутеры успешно зарегистрированы в правильном порядке.")
 
 
 async def set_bot_commands(bot: Bot):
