@@ -1,8 +1,8 @@
 # ===============================================================
-# Файл: bot/services/mining_service.py (ПРОДАКШН-ВЕРСИЯ 2025)
+# Файл: bot/services/mining_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Сервис для выполнения расчетов доходности майнинга.
-# Полностью переработан: использует Pydantic-модели для
-# ввода/вывода, отделяя логику вычислений от форматирования.
+# ИСПРАВЛЕНИЕ: Исправлены вызовы методов MarketDataService для
+#              соответствия новой архитектуре и устранения AttributeError.
 # ===============================================================
 
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # --- Константы для расчетов ---
 SECONDS_IN_DAY = 86400.0
-BTC_BLOCK_TIME_SECONDS = 600.0  # Среднее время блока Bitcoin
+BTC_BLOCK_TIME_SECONDS = 600.0
 DAYS_IN_MONTH = 30.44
 DAYS_IN_YEAR = 365.25
 
@@ -68,21 +68,20 @@ class MiningService:
             return None
 
         # Шаг 1: Асинхронно получаем все необходимые рыночные данные
+        # ИСПРАВЛЕНО: Вызываем новые, правильные методы
         results = await asyncio.gather(
             self.market_data.get_btc_price_usd(),
             self.market_data.get_network_hashrate_ths(),
             self.market_data.get_block_reward_btc(),
-            # Примечание: get_usd_rub_rate() будет реализован в MarketDataService
-            # self.market_data.get_usd_rub_rate(), 
             return_exceptions=True
         )
         
         btc_price_usd, network_hashrate_ths, block_reward_btc = results
-        # Временная заглушка, пока метод не будет реализован
-        usd_rub_rate = 95.0 
+        usd_rub_rate = 95.0  # Заглушка, можно заменить на вызов API курса валют
 
         # Шаг 2: Валидация полученных данных
-        if any(isinstance(res, Exception) or res is None for res in [btc_price_usd, network_hashrate_ths, block_reward_btc]):
+        required_data = [btc_price_usd, network_hashrate_ths, block_reward_btc]
+        if any(isinstance(res, Exception) or res is None for res in required_data):
             logger.error(f"Failed to fetch market data for calculation. Results: {results}")
             return None
 
@@ -117,7 +116,3 @@ class MiningService:
         
         logger.info(f"Calculation successful. Net profit: ${net_profit_usd_daily:.2f}/day.")
         return result_model
-
-    # В будущем здесь можно добавить методы для других алгоритмов,
-    # например, calculate_kaspa_profitability, которые будут использовать
-    # другие данные от MarketDataService (например, revenue per TH/s).
