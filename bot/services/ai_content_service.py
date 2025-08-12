@@ -94,8 +94,8 @@ class AIContentService:
             json_text = self._extract_text_from_response(response)
             if not json_text: return None
             return json.loads(json_text)
-        except json.JSONDecodeError:
-            logger.error(f"Не удалось распарсить JSON из ответа AI: {json_text[:200]}...")
+        except json.JSONDecodeError as e:
+            logger.error(f"Не удалось распарсить JSON из ответа AI: {json_text[:200]}... Ошибка: {e}")
             return None
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}")
