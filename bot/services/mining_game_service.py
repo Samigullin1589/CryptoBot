@@ -1,7 +1,8 @@
 # =================================================================================
 # Файл: bot/services/mining_game_service.py (ФИНАЛЬНАЯ ИНТЕГРИРОВАННАЯ ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Главный сервис-оркестратор для игровой механики, полностью
-# синхронизированный с единой моделью `User` и новой `UserGameProfile`.
+# Описание: Главный сервис-оркестратор для игровой механики.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий метод start_session_with_new_asic
+#              для корректной работы магазина.
 # =================================================================================
 
 import time
@@ -15,7 +16,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup
 
-# ИСПРАВЛЕНО: Добавлен импорт класса Settings для корректной работы type hints
 from bot.config.settings import Settings
 from bot.services.user_service import UserService
 from bot.services.market_service import AsicMarketService
@@ -94,7 +94,7 @@ class MiningGameService:
         return [AsicMiner.model_validate_json(asic_str) for asic_str in asics_json]
 
     async def start_session(self, user_id: int, asic_id: str) -> str:
-        """Запускает майнинг-сессию для указанного ASIC."""
+        """Запускает майнинг-сессию для указанного ASIC из ангара."""
         if await self.redis.exists(self.keys.active_session(user_id)):
             return "❌ У вас уже есть активная сессия майнинга!"
         
@@ -121,6 +121,20 @@ class MiningGameService:
         logger.info(f"User {user_id} started session with ASIC ID {asic_id}. Ends at {end_time}.")
         return (f"✅ Сессия майнинга на <b>{asic.name}</b> запущена!\n\n"
                 f"Она автоматически завершится через <b>{self.settings.game.session_duration_minutes / 60:.0f} часов</b>.")
+
+    # ИСПРАВЛЕНО: Добавлен недостающий метод
+    async def start_session_with_new_asic(self, user_id: int, asic: AsicMiner) -> str:
+        """
+        Добавляет новый ASIC в ангар пользователя и сразу запускает сессию.
+        Используется при "покупке" в магазине.
+        """
+        # В текущей логике цена ASIC не учитывается, он просто добавляется.
+        hangar_key = self.keys.user_hangar(user_id)
+        await self.redis.hset(hangar_key, asic.id, asic.model_dump_json())
+        logger.info(f"User {user_id} acquired new ASIC '{asic.name}' from shop.")
+        
+        # После добавления в ангар, вызываем стандартный метод запуска сессии.
+        return await self.start_session(user_id, asic.id)
 
     async def end_session(self, user_id: int) -> Optional[MiningSessionResult]:
         """Завершает майнинг-сессию, вызывается планировщиком."""
