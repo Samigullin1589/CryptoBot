@@ -1,8 +1,7 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ВОССТАНОВЛЕНИЕ)
 # Описание: Сервис для Gemini, использующий актуальную версию библиотеки.
-# ИСПРАВЛЕНИЕ: Исправлен способ передачи system_instruction для
-#              совместимости с API библиотеки и устранения TypeError.
+# ИСПРАВЛЕНИЕ: Восстановлен недостающий метод generate_summary.
 # ===============================================================
 
 import logging
@@ -27,7 +26,7 @@ RETRYABLE_EXCEPTIONS = (
 )
 
 class AIContentService:
-    """Центральный сервис для генерации контента, построенный на Google AI SDK с функцией поиска."""
+    """Центральный сервис для генерации контента, построенный на Google AI SDK."""
 
     def __init__(self, api_key: str, config: AIConfig):
         self.config = config
@@ -72,49 +71,43 @@ class AIContentService:
     ) -> Optional[Dict[str, Any]]:
         """Генерирует структурированный JSON."""
         if not self.client: return None
-
         try:
             json_model = genai.GenerativeModel(
                 self.config.flash_model_name,
                 generation_config=GenerationConfig(response_mime_type="application/json")
             )
             full_prompt = f"{prompt}\n\nОтвет должен строго соответствовать этой JSON-схеме:\n{json.dumps(json_schema, ensure_ascii=False)}"
-
-            response = await self._make_request(
-                json_model,
-                contents=[{"role": "user", "parts": [{"text": full_prompt}]}],
-            )
+            response = await self._make_request(json_model, contents=[{"role": "user", "parts": [{"text": full_prompt}]}])
             json_text = self._extract_text_from_response(response)
             if not json_text: return None
             return json.loads(json_text)
-        except json.JSONDecodeError as e:
-            logger.error(f"Не удалось распарсить JSON из ответа AI: {json_text[:200]}... Ошибка: {e}")
-            return None
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}", exc_info=True)
             return None
+    
+    # ИСПРАВЛЕНО: Восстановлен недостающий метод
+    async def generate_summary(self, text_to_summarize: str) -> str:
+        """Генерирует краткое саммари, используя быструю Flash модель."""
+        if not self.client: return "Не удалось проанализировать."
+        try:
+            flash_model = genai.GenerativeModel(self.config.flash_model_name)
+            prompt = get_summary_prompt(text_to_summarize)
+            response = await self._make_request(flash_model, contents=prompt)
+            return self._extract_text_from_response(response) or "Не удалось создать саммари."
+        except Exception as e:
+            logger.error(f"Непредвиденная ошибка при генерации саммари: {e}", exc_info=True)
+            return "Ошибка анализа."
 
     async def get_consultant_answer(
         self, user_question: str, history: List[ContentDict]
     ) -> str:
         """Отвечает на вопрос пользователя, используя поиск в интернете при необходимости."""
         if not self.client: return "AI-консультант временно недоступен."
-
-        system_prompt = get_consultant_prompt()
-        chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
-
         try:
-            # ИСПРАВЛЕНО: Создаем экземпляр модели с нужной системной инструкцией
-            # именно для этой задачи, как того требует API.
-            consultant_model = genai.GenerativeModel(
-                self.config.model_name,
-                system_instruction=system_prompt
-            )
-
-            response = await self._make_request(
-                consultant_model,
-                contents=chat_history
-            )
+            system_prompt = get_consultant_prompt()
+            chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
+            consultant_model = genai.GenerativeModel(self.config.model_name, system_instruction=system_prompt)
+            response = await self._make_request(consultant_model, contents=chat_history)
             return self._extract_text_from_response(response) or "AI не смог сформировать ответ."
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}", exc_info=True)

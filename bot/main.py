@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
-# Описание: Точка входа с улучшенной архитектурой, роутингом и процедурой
-#           завершения работы для максимальной стабильности.
-# ИСПРАВЛЕНИЕ: Изменен порядок регистрации роутеров для корректной работы FSM.
+# Описание: Точка входа с улучшенной архитектурой и роутингом.
+# ИСПРАВЛЕНИЕ: Переход на прямые импорты роутеров для устранения
+#              циклических зависимостей.
 # =================================================================================
 
 import asyncio
@@ -22,13 +22,16 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# Импортируем все необходимые роутеры напрямую
+# ИСПРАВЛЕНО: Роутеры импортируются напрямую из своих модулей, а не из __init__.py
+
+# Админские роутеры
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.admin.verification_admin_handler import router as verification_admin_router
 from bot.handlers.admin.stats_handler import stats_router
 from bot.handlers.admin.moderation_handler import moderation_router
 from bot.handlers.admin.game_admin_handler import router as game_admin_router
 
+# Публичные роутеры
 from bot.handlers.public.common_handler import router as common_router
 from bot.handlers.public.menu_handlers import router as menu_router
 from bot.handlers.public.price_handler import router as price_router
@@ -42,35 +45,32 @@ from bot.handlers.public.verification_public_handler import router as verificati
 from bot.handlers.public.achievements_handler import router as achievements_router
 from bot.handlers.public.game_handler import router as game_router
 
+# Игровые роутеры
 from bot.handlers.game.mining_game_handler import game_router as mining_game_router
 
+# Инструменты
 from bot.handlers.tools.calculator_handler import calculator_router
 
+# Угрозы
 from bot.handlers.threats.threat_handler import threat_router
 
 
 logger = logging.getLogger(__name__)
 
 def register_all_routers(dp: Dispatcher):
-    """
-    Централизованно и явно регистрирует все роутеры приложения.
-    Порядок регистрации важен: более специфичные роутеры (с FSM) должны
-    идти раньше более общих.
-    """
-    # Админские роутеры (имеют свои фильтры, порядок не так критичен)
+    """Централизованно и явно регистрирует все роутеры приложения."""
+    # Админские роутеры
     dp.include_router(admin_router)
     dp.include_router(verification_admin_router)
     dp.include_router(stats_router)
     dp.include_router(moderation_router)
     dp.include_router(game_admin_router)
 
-    # ИСПРАВЛЕНО: Роутеры с FSM и конкретными сценариями регистрируются ПЕРЕД общими.
-    # Игровые роутеры
+    # Роутеры с FSM и конкретными сценариями
     dp.include_router(mining_game_router)
-    # Инструменты
     dp.include_router(calculator_router)
 
-    # Публичные роутеры (обработчик общего текста в common_router должен быть почти в конце)
+    # Основные публичные роутеры
     dp.include_router(menu_router)
     dp.include_router(price_router)
     dp.include_router(asic_router)
@@ -83,17 +83,16 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(market_router)
     dp.include_router(game_router)
     
-    # Общий обработчик текста и команд /start, /help регистрируется одним из последних
+    # Общий обработчик текста и команд /start, /help
     dp.include_router(common_router)
 
-    # Обработка угроз (должен быть самым последним, чтобы ловить все, что не подошло выше)
+    # Обработка угроз (самый последний)
     dp.include_router(threat_router)
     
     logger.info("Все роутеры успешно зарегистрированы в правильном порядке.")
 
 
 async def set_bot_commands(bot: Bot):
-    """Устанавливает команды, видимые пользователям в меню Telegram."""
     commands = [
         BotCommand(command="start", description="🚀 Перезапустить бота"),
         BotCommand(command="help", description="ℹ️ Помощь по боту"),
@@ -106,7 +105,6 @@ async def set_bot_commands(bot: Bot):
 
 
 async def on_startup(bot: Bot, deps: Deps):
-    """Выполняет действия при старте бота."""
     logger.info("Запуск процедур on_startup...")
     await set_bot_commands(bot)
     await deps.coin_list_service.update_coin_list()
@@ -119,7 +117,6 @@ async def on_startup(bot: Bot, deps: Deps):
 
 
 async def on_shutdown(bot: Bot, deps: Deps):
-    """Выполняет действия при остановке бота, гарантируя чистое закрытие ресурсов."""
     logger.info("Запуск процедур on_shutdown...")
     if deps.admin_service:
         await deps.admin_service.notify_admins("❗️ Бот останавливается!")
@@ -136,7 +133,6 @@ async def on_shutdown(bot: Bot, deps: Deps):
 
 
 async def main():
-    """Главная точка входа для приложения бота."""
     setup_logging(level=settings.log_level, format="json")
     
     redis_pool = redis.from_url(str(settings.REDIS_URL), encoding="utf-8", decode_responses=True)
@@ -172,6 +168,6 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен вручную (KeyboardInterrupt/SystemExit).")
+        logger.info("Бот остановлен вручную.")
     except Exception as e:
         logger.critical(f"Критическая ошибка привела к остановке бота: {e}", exc_info=True)

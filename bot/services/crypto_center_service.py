@@ -1,8 +1,8 @@
 # ==================================================================================
 # Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 3.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
-# ИСПРАВЛЕНИЕ: Добавлена защитная логика для обработки потенциально
-#              дважды закодированных JSON-ответов от AI или кэша.
+# ИСПРАВЛЕНИЕ: Добавлена надёжная проверка и десериализация данных,
+#              получаемых как из кэша, так и напрямую от AI.
 # ==================================================================================
 
 import json
@@ -54,11 +54,7 @@ class CryptoCenterService:
         if cached_data := await self.redis.get(cache_key):
             logger.info(f"Serving {alpha_type} alpha for user {user_id} from cache.")
             try:
-                # ИСПРАВЛЕНО: Добавлена проверка на случай двойного кодирования JSON
-                projects_data = json.loads(cached_data)
-                if isinstance(projects_data, str):
-                    projects_data = json.loads(projects_data)
-                return projects_data
+                return json.loads(cached_data)
             except json.JSONDecodeError:
                 logger.error("Failed to decode cached data, fetching fresh.")
         
@@ -68,13 +64,21 @@ class CryptoCenterService:
         result = await self.ai_service.generate_structured_content(prompt, json_schema)
 
         if result:
+            # ИСПРАВЛЕНО: Финальная, самая надежная проверка
+            processed_result = []
             if isinstance(result, str):
-                try: result = json.loads(result)
-                except json.JSONDecodeError: return []
+                try: 
+                    processed_result = json.loads(result)
+                except json.JSONDecodeError:
+                    logger.error(f"AI returned a non-JSON string for {alpha_type}: {result}")
+                    return []
+            elif isinstance(result, list):
+                processed_result = result
             
-            logger.info(f"AI Search for user {user_id} found {len(result)} {alpha_type} opportunities.")
-            await self.redis.set(cache_key, json.dumps(result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
-            return result
+            if isinstance(processed_result, list):
+                logger.info(f"AI Search for user {user_id} found {len(processed_result)} {alpha_type} opportunities.")
+                await self.redis.set(cache_key, json.dumps(processed_result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
+                return processed_result
         
         logger.warning(f"AI Search for user {user_id} returned no valid {alpha_type} opportunities.")
         return []
@@ -84,7 +88,7 @@ class CryptoCenterService:
         projects_data = await self._generate_alpha(user_id, "airdrop", json_schema)
         
         if not isinstance(projects_data, list):
-             logger.error(f"Airdrop alpha data is not a list: {projects_data}")
+             logger.error(f"Airdrop alpha data is not a list after generation: {type(projects_data)}")
              return []
         
         return [AirdropProject(**data) for data in projects_data]
