@@ -1,10 +1,12 @@
 # ===============================================================
-# Файл: bot/services/asic_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/services/asic_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ОТКАЗОУСТОЙЧИВАЯ)
 # Описание: Высокопроизводительный сервис для управления базой ASIC.
-# ИСПРАВЛЕНИЕ: Конструктор приведен в полное соответствие с DI-контейнером.
+# ИСПРАВЛЕНИЕ: Внедрена система отказоустойчивости с загрузкой
+#              резервных данных из файла при сбое онлайн-источников.
 # ===============================================================
 import asyncio
 import logging
+import json
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 
@@ -23,7 +25,6 @@ logger = logging.getLogger(__name__)
 class AsicService:
     """Сервис-оркестратор для управления базой данных ASIC-майнеров."""
     
-    # ИСПРАВЛЕНО: Конструктор теперь принимает 'redis'
     def __init__(self, redis: redis.Redis, parser_service: ParserService, config: AsicServiceConfig):
         self.redis = redis
         self.parser_service = parser_service
@@ -31,6 +32,18 @@ class AsicService:
         self.keys = KeyFactory
         self._specs_cache: Optional[Dict[str, Dict[str, Any]]] = None
         self._specs_cache_time: Optional[datetime] = None
+
+    async def _load_fallback_asics(self) -> List[AsicMiner]:
+        """Загружает список ASIC из локального резервного JSON-файла."""
+        try:
+            with open(self.config.fallback_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            asics = [AsicMiner.model_validate(item) for item in data]
+            logger.warning(f"Загружено {len(asics)} ASIC из резервного файла: {self.config.fallback_file_path}")
+            return asics
+        except Exception as e:
+            logger.error(f"Критическая ошибка: не удалось загрузить резервный файл ASIC: {e}", exc_info=True)
+            return []
 
     @staticmethod
     def _calculate_net_profit(gross_profit: float, power_watts: int, electricity_cost: float) -> Tuple[float, float, float]:
@@ -103,31 +116,39 @@ class AsicService:
             self.parser_service.fetch_from_asicminervalue(),
             return_exceptions=True
         )
+        
         valid_sources = [s for s in sources if isinstance(s, list) and s]
+        
+        final_asic_list = []
+        
+        # ИСПРАВЛЕНО: Главная логика отказоустойчивости
         if not valid_sources:
-            logger.error("All ASIC data sources failed. Update aborted.")
-            return 0
-        merged = self._intelligent_merge(valid_sources)
-        enriched = await self._enrich_asics_with_specs(list(merged.values()))
-        if not enriched:
-            logger.error("No valid ASIC data after merge/enrichment. Update failed.")
+            logger.error("Все онлайн-источники данных ASIC недоступны. Активация резервного механизма.")
+            final_asic_list = await self._load_fallback_asics()
+        else:
+            merged = self._intelligent_merge(valid_sources)
+            enriched = await self._enrich_asics_with_specs(list(merged.values()))
+            final_asic_list = enriched
+
+        if not final_asic_list:
+            logger.critical("Не удалось получить данные ASIC ни из онлайн-источников, ни из резервного файла. Обновление отменено.")
             return 0
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe.delete(self.keys.asics_sorted_set()) # Используем await
+            pipe.delete(self.keys.asics_sorted_set())
             sorted_set_data = {}
-            for asic in enriched:
+            for asic in final_asic_list:
                 if asic.profitability is None: continue
                 asic_key = self.keys.asic_hash(normalize_asic_name(asic.name))
-                # Используем model_dump для Pydantic v2
-                pipe.hset(asic_key, mapping=asic.model_dump(mode='json', exclude={'net_profit', 'gross_profit', 'electricity_cost_per_day'}))
+                pipe.hset(asic_key, mapping=asic.model_dump(mode='json', exclude_none=True, exclude={'net_profit', 'gross_profit', 'electricity_cost_per_day'}))
                 sorted_set_data[asic_key] = asic.profitability
             if sorted_set_data:
                 pipe.zadd(self.keys.asics_sorted_set(), mapping=sorted_set_data)
             pipe.set(self.keys.asics_last_update(), datetime.now(timezone.utc).isoformat())
             await pipe.execute()
-        logger.info(f"Update complete. Cached {len(enriched)} ASICs.")
-        return len(enriched)
+            
+        logger.info(f"Update complete. Cached {len(final_asic_list)} ASICs.")
+        return len(final_asic_list)
 
     async def get_top_asics(self, electricity_cost: float, count: int = 50) -> Tuple[List[AsicMiner], Optional[datetime]]:
         """Получает топ ASIC, рассчитывая чистую прибыль для заданной цены э/э."""
@@ -136,7 +157,7 @@ class AsicService:
             try:
                 async with RedisLock(self.redis, lock_key, timeout=300, wait_timeout=60):
                     if not await self.redis.exists(self.keys.asics_sorted_set()):
-                        logger.info("Кэш ASIC отсутствует. Запуск обновления под блокировкой.")
+                        logger.info("Кэш ASIC отсутствует. Запуск принудительного обновления под блокировкой.")
                         await self.update_asic_list_from_sources()
             except LockAcquisitionError: 
                 logger.warning("Не удалось получить блокировку для обновления ASIC (Timeout). Ожидаем завершения текущего обновления.")
@@ -147,13 +168,12 @@ class AsicService:
 
         async with self.redis.pipeline() as pipe:
             for key in asic_keys:
-                pipe.hgetall(key) # hgetall не требует await внутри pipeline
+                pipe.hgetall(key)
             results = await pipe.execute()
 
         asics_with_profit = []
         for data in results:
             if not data: continue
-            # Используем model_validate для Pydantic v2
             asic = AsicMiner.model_validate(data)
             net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability or 0.0, asic.power or 0, electricity_cost)
             asic.net_profit = net_profit
