@@ -1,14 +1,35 @@
 # ===============================================================
 # Файл: render.yaml (ПРОДАКШН-ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Конфигурация для Render.com с Health Check,
-#           правильными командами и переменными окружения.
+# Описание: Конфигурация для Render.com с разделением на web
+#           и worker, Health Check и переменными окружения.
 # ===============================================================
 services:
-  # ИСПРАВЛЕНО: Тип сервиса изменен на 'web' для поддержки Health Check.
+  # Web-сервис: отвечает только на health checks, потребляет минимум ресурсов
   - type: web
-    name: crypto-bot
+    name: cryptobot-health
     env: python
     pythonVersion: "3.12"
+    plan: free # Бесплатного плана достаточно для health check
+    buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5 pydantic==2.8.2"
+    startCommand: "python -m bot.health_check_server" # Запускаем отдельный, легковесный сервер
+    envVars:
+      - key: PYTHONPATH
+        value: .
+      - key: PORT
+        fromService:
+          type: web
+          name: cryptobot-health
+          envVarKey: RENDER_SERVICE_PORT
+    healthCheck:
+      path: /healthz
+      initialDelaySeconds: 15
+
+  # Worker: основной процесс бота, выполняет всю работу
+  - type: worker
+    name: cryptobot-worker
+    env: python
+    pythonVersion: "3.12"
+    plan: starter # Starter или выше для продакшена
     buildCommand: |
       pip install --upgrade pip
       pip install -r requirements.txt
@@ -16,18 +37,36 @@ services:
     envVars:
       - key: PYTHONPATH
         value: .
-      # УЛУЧШЕНИЕ: Render автоматически предоставляет эту переменную для web-сервисов.
-      - key: PORT
+      # Переменная, чтобы отличать worker от web процесса
+      - key: IS_WEB_PROCESS
+        value: "false"
+      # Секреты нужно будет задать в UI Render
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: COINGECKO_API_KEY
+        sync: false
+      - key: CRYPTOCOMPARE_API_KEY
+        sync: false
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: NEWS_CHAT_ID
+        sync: false
+      - key: PORT # PORT нужен для основного приложения, чтобы оно знало, где запускать Health Check сервер
         value: 10000
-    # УЛУЧШЕНИЕ: Добавлена проверка работоспособности.
-    healthCheck:
-      path: /healthz
-      initialDelaySeconds: 60 # Даем боту время на запуск перед первой проверкой
-    # Автоматический перезапуск при сбоях
-    restartPolicy: on-failure
+      # URL для Redis будет предоставлен автоматически
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cryptobot-redis
+          property: connectionString
 
+  # База данных Redis
   - type: redis
-    name: cache
-    ipAllowList: [] # Для простоты. В продакшене лучше указать IP web-сервиса.
-    plan: free # 'free' для тестов, платный для продакшена.
+    name: cryptobot-redis
+    ipAllowList: [] # Для простоты. В продакшене лучше указать IP web-сервиса и worker'а.
+    plan: free # 'free' для тестов, платный (например, Standard) для продакшена.
     maxmemoryPolicy: allkeys-lru

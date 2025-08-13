@@ -14,7 +14,7 @@ from .market_handler import router as market_router
 from .crypto_center_handler import router as crypto_center_router
 from .verification_public_handler import router as verification_public_router
 from .achievements_handler import router as achievements_router
-from .game_handler import router as game_handler
+from .game_handler import router as game_router
 from .common_handler import router as common_router
 
 __all__ = [

@@ -6,7 +6,7 @@
 # ===============================================================
 import logging
 from datetime import datetime
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
 
 import redis.asyncio as redis
 from aiogram import Bot
@@ -127,6 +127,25 @@ class AdminService:
         text = "<b>Панель администратора</b>\n\nВыберите раздел:"
         keyboard = get_admin_menu_keyboard(user_role)
         return text, keyboard
+        
+    # --- НОВЫЙ МЕТОД: Изменение баланса ---
+    async def change_user_game_balance(self, user_id: int, amount: float) -> Optional[float]:
+        """
+        Атомарно изменяет игровой баланс пользователя и возвращает новый баланс.
+        Возвращает None, если профиль пользователя не найден.
+        """
+        profile_key = self.keys.user_game_profile(user_id)
+        if not await self.redis.exists(profile_key):
+            logger.warning(f"Попытка изменить баланс для несуществующего игрового профиля: user_id={user_id}")
+            return None
+
+        # Атомарно увеличиваем баланс и получаем новое значение
+        new_balance = await self.redis.hincrbyfloat(profile_key, "balance", amount)
+        # Также обновляем значение в таблице лидеров
+        await self.redis.zadd(self.keys.game_leaderboard(), {str(user_id): new_balance})
+        
+        logger.info(f"Администратор изменил баланс user_id={user_id} на {amount}. Новый баланс: {new_balance}")
+        return new_balance
 
     # --- Системные действия ---
     async def clear_asic_cache(self) -> int:

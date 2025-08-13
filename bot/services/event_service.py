@@ -9,7 +9,7 @@ import json
 import random
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from bot.config.settings import MiningEventServiceConfig
 from bot.utils.models import MiningEvent
@@ -22,7 +22,6 @@ class MiningEventService:
     События и их вероятности полностью управляются через внешний JSON-файл.
     """
 
-    # ИСПРАВЛЕНО: Конструктор теперь принимает объект config
     def __init__(self, config: MiningEventServiceConfig):
         """
         Инициализирует сервис игровых событий.
@@ -40,12 +39,25 @@ class MiningEventService:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            self.events = [MiningEvent(**event_data) for event_data in data.get("events", [])]
-            
-            total_probability = sum(event.probability for event in self.events)
-            if total_probability > 1.0:
-                logger.warning(f"Суммарная вероятность событий ({total_probability}) больше 1.0. "
-                               "Это означает, что событие будет происходить всегда.")
+            # ИСПРАВЛЕНО: Собираем события из всех пулов в один список
+            all_events_data = []
+            if "event_pools" in data:
+                for pool_name, event_list in data["event_pools"].items():
+                    if isinstance(event_list, list):
+                        # Для простых событий берем 'effects', для интерактивных - нет
+                        for event_data in event_list:
+                             # Простая эвристика для преобразования структуры эффектов
+                            if "effects" in event_data and isinstance(event_data["effects"], list):
+                                effect = event_data["effects"][0]
+                                if effect["type"] == "PROFIT_MULTIPLIER":
+                                    event_data["profit_multiplier"] = effect["value"]
+                                if effect["type"] == "COST_MULTIPLIER":
+                                    event_data["cost_multiplier"] = effect["value"]
+                            # Устанавливаем вероятность 1, т.к. она теперь управляется глобально
+                            event_data["probability"] = 1.0 
+                            all_events_data.append(event_data)
+
+            self.events = [MiningEvent(**event_data) for event_data in all_events_data]
             
             logger.info(f"Успешно загружено {len(self.events)} игровых событий из '{config_path}'.")
 
@@ -54,7 +66,7 @@ class MiningEventService:
         except json.JSONDecodeError:
             logger.error(f"Ошибка декодирования JSON в файле: {config_path}")
         except Exception as e:
-            logger.error(f"Непредвиденная ошибка при загрузке событий: {e}")
+            logger.error(f"Непредвиденная ошибка при загрузке событий: {e}", exc_info=True)
 
     def get_random_event(self) -> Optional[MiningEvent]:
         """
@@ -63,20 +75,23 @@ class MiningEventService:
         if not self.events:
             return None
 
-        events = self.events
-        weights = [event.probability for event in self.events]
-        
-        total_probability = sum(weights)
-        no_event_probability = max(0, 1.0 - total_probability)
-        
-        choices = events + [None]
-        final_weights = weights + [no_event_probability]
+        # Используем глобальный шанс на событие из конфига, если он есть
+        event_chance = 0.25 # Значение по умолчанию, если не найдено в конфиге
+        try:
+             with open(self.config.config_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                event_chance = data.get("global_settings", {}).get("event_chance_per_session", 0.25)
+        except Exception:
+            pass # Используем значение по умолчанию
 
-        chosen_event = random.choices(choices, weights=final_weights, k=1)[0]
-        
-        if chosen_event:
-            logger.info(f"Сгенерировано игровое событие: {chosen_event.name}")
-        else:
+        # Сначала решаем, произойдет ли событие вообще
+        if random.random() > event_chance:
             logger.info("Игровое событие не сгенерировано (штатный режим).")
+            return None
+
+        # Если событие произошло, выбираем случайное из пула
+        chosen_event = random.choice(self.events)
+        
+        logger.info(f"Сгенерировано игровое событие: {chosen_event.name}")
             
         return chosen_event

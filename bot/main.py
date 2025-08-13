@@ -51,6 +51,7 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(public.verification_public_router)
     dp.include_router(public.achievements_router)
     dp.include_router(public.market_router)
+    # ИСПРАВЛЕНО: Этот роутер теперь корректно импортируется
     dp.include_router(public.game_router)
     
     # Общий хэндлер для команд и AI должен идти после всех специфичных
@@ -78,7 +79,7 @@ async def on_startup(bot: Bot, deps: Deps):
     setup_jobs(deps.scheduler, deps)
     deps.scheduler.start()
     if deps.admin_service:
-        await deps.admin_service.notify_admins("✅ Бот успешно запущен!")
+        await deps.admin_service.notify_admins("✅ Бот успешно запущен и готов к работе!")
     logger.info("Процедуры on_startup завершены.")
 
 async def on_shutdown(bot: Bot, deps: Deps):
@@ -89,6 +90,8 @@ async def on_shutdown(bot: Bot, deps: Deps):
         deps.scheduler.shutdown(wait=False)
     if deps.redis_pool:
         await deps.redis_pool.close()
+    if deps.http_session:
+        await deps.http_session.close()
     if bot.session:
         await bot.session.close()
     logger.info("Процедуры on_shutdown завершены. Бот остановлен.")
@@ -97,32 +100,43 @@ async def on_shutdown(bot: Bot, deps: Deps):
 async def health_check(request: web.Request) -> web.Response:
     """Отвечает на HTTP-запросы для проверки работоспособности."""
     logger.debug("Health check эндпоинт получил запрос.")
-    return web.json_response({"status": "ok"})
+    deps: Deps = request.app['deps']
+    try:
+        await deps.redis_pool.ping()
+        await deps.bot.get_me()
+        return web.json_response({"status": "ok"})
+    except Exception as e:
+        logger.critical(f"Health check failed: {e}", exc_info=True)
+        return web.json_response({"status": "error", "reason": str(e)}, status=503)
 
-async def start_health_check_server():
+async def start_web_server(deps: Deps):
     """Запускает простой aiohttp сервер для Health Check."""
     app = web.Application()
+    app['deps'] = deps
     app.router.add_get("/healthz", health_check)
     runner = web.AppRunner(app)
     await runner.setup()
     # Render предоставляет переменную окружения PORT
     port = int(settings.PORT)
     site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    logger.info(f"Health check сервер запущен на порту {port}.")
-    # Keep the server running
-    while True:
-        await asyncio.sleep(3600)
+    try:
+        await site.start()
+        logger.info(f"Health check сервер запущен на порту {port}.")
+        # Keep the server running
+        await asyncio.Event().wait()
+    finally:
+        await runner.cleanup()
+
 
 async def main():
     setup_logging(level=settings.log_level, format="json")
     
     async with ClientSession() as http_session:
-        deps = await Deps.build(settings=settings, http_session=http_session, bot=Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML")))
+        bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
+        deps = await Deps.build(settings=settings, http_session=http_session, bot=bot)
         
         storage = RedisStorage(redis=deps.redis_pool)
         dp = Dispatcher(storage=storage)
-        bot = deps.bot
 
         dp.workflow_data["deps"] = deps
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
@@ -137,18 +151,37 @@ async def main():
         # --- Graceful Shutdown & Health Check ---
         loop = asyncio.get_event_loop()
         
+        # Создаем задачи для поллинга и веб-сервера
         polling_task = loop.create_task(dp.start_polling(bot, deps=deps))
-        health_check_task = loop.create_task(start_health_check_server())
+        
+        # Запускаем веб-сервер только если это web-процесс Render
+        # В нашем новом render.yaml бота запускает worker, поэтому этот код не выполнится
+        # Но оставляем его для гибкости
+        if settings.IS_WEB_PROCESS:
+             web_server_task = loop.create_task(start_web_server(deps))
+        else:
+             web_server_task = None
 
+        # Обработчик для graceful shutdown
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(dp.stop_polling()))
+            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(graceful_shutdown(s, dp, polling_task)))
+        
+        tasks_to_gather = [task for task in [polling_task, web_server_task] if task]
+        await asyncio.gather(*tasks_to_gather)
 
-        await asyncio.gather(polling_task, health_check_task)
+async def graceful_shutdown(s, dp, polling_task):
+    logger.warning(f"Получен сигнал {s.name}, начинаю graceful shutdown...")
+    # Отменяем задачу поллинга, чтобы бот перестал принимать новые апдейты
+    polling_task.cancel()
+    # Завершаем работу диспетчера
+    await dp.stop_polling()
+    logger.warning("Graceful shutdown завершен.")
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен вручную.")
+    except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+        logger.info("Бот остановлен.")
     except Exception as e:
         logger.critical(f"Критическая ошибка привела к остановке бота: {e}", exc_info=True)
