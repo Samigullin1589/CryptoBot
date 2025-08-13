@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/keyboards/callback_factories.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
+# Файл: bot/keyboards/callback_factories.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСЯ)
 # Описание: Централизованное определение всех структур данных для инлайн-кнопок.
-# ИСПРАВЛЕНИЕ: Добавлены фабрики для всех разделов бота для унификации.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая фабрика `CalculatorCallback`.
 # =================================================================================
 
 from aiogram.filters.callback_data import CallbackData
@@ -36,6 +36,13 @@ class OnboardingCallback(CallbackData, prefix="onboarding"):
 class QuizCallback(CallbackData, prefix="quiz"):
     action: str
     is_correct: Optional[int] = None
+
+# --- ИНСТРУМЕНТЫ ---
+class CalculatorCallback(CallbackData, prefix="calc"):
+    action: str
+    value: Optional[str] = None
+    page: Optional[int] = None
+    asic_index: Optional[int] = None
 
 # --- ИГРА ---
 class GameCallback(CallbackData, prefix="game"):

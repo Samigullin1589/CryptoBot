@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - РЕФАКТОРИНГ)
 # Описание: "Тонкий" обработчик для "Калькулятора доходности".
-# ИСПРАВЛЕНИЕ: Добавлен фильтр MenuCallback для прямого отклика на кнопку меню.
+# ИСПРАВЛЕНИЕ: Переход на использование CalculatorCallback.
 # ===============================================================
 import logging
 from typing import Union
@@ -14,7 +14,7 @@ from bot.keyboards.mining_keyboards import (
     get_calculator_cancel_keyboard, get_currency_selection_keyboard,
     get_asic_selection_keyboard, get_calculator_result_keyboard
 )
-from bot.keyboards.callback_factories import MenuCallback
+from bot.keyboards.callback_factories import MenuCallback, CalculatorCallback
 from bot.utils.dependencies import Deps
 from bot.utils.models import AsicMiner, CalculationInput
 from bot.utils.formatters import format_calculation_result
@@ -35,20 +35,23 @@ async def start_profit_calculator(call: CallbackQuery, state: FSMContext, deps: 
     await state.set_state(CalculatorStates.waiting_for_currency)
     await call.answer()
 
-@calculator_router.callback_query(F.data == "calc_action:cancel")
+@calculator_router.callback_query(F.data == "cancel_fsm")
 async def cancel_calculator(call: CallbackQuery, state: FSMContext):
     """Отменяет сценарий калькулятора в любом состоянии."""
     current_state = await state.get_state()
     if current_state is None:
         return await call.answer()
     await state.clear()
+    # Используем show_main_menu_from_callback для возврата в меню
+    from bot.utils.ui_helpers import show_main_menu_from_callback
     await call.message.edit_text("✅ Расчет отменен.")
     await call.answer()
 
-@calculator_router.callback_query(F.data.startswith("calc_currency:"), CalculatorStates.waiting_for_currency)
-async def process_currency_selection(call: CallbackQuery, state: FSMContext):
+
+@calculator_router.callback_query(CalculatorCallback.filter(F.action == "currency"), CalculatorStates.waiting_for_currency)
+async def process_currency_selection(call: CallbackQuery, callback_data: CalculatorCallback, state: FSMContext):
     await call.answer()
-    currency = call.data.split(":")[1]
+    currency = callback_data.value
     await state.update_data(currency=currency)
     
     prompt_text = (
@@ -93,20 +96,20 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
     await msg.edit_text("✅ Отлично! Теперь выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
     await state.set_state(CalculatorStates.waiting_for_asic_selection)
 
-@calculator_router.callback_query(F.data.startswith("calc_page:"), CalculatorStates.waiting_for_asic_selection)
-async def process_asic_pagination(call: CallbackQuery, state: FSMContext):
+@calculator_router.callback_query(CalculatorCallback.filter(F.action == "page"), CalculatorStates.waiting_for_asic_selection)
+async def process_asic_pagination(call: CallbackQuery, callback_data: CalculatorCallback, state: FSMContext):
     await call.answer()
-    page = int(call.data.split(":")[1])
+    page = callback_data.page
     user_data = await state.get_data()
     asic_list = [AsicMiner(**data) for data in user_data.get("asic_list_json", [])]
     
     keyboard = get_asic_selection_keyboard(asic_list, page=page)
     await call.message.edit_text("Выберите ваш ASIC-майнер из списка:", reply_markup=keyboard)
 
-@calculator_router.callback_query(F.data.startswith("calc_select_asic:"), CalculatorStates.waiting_for_asic_selection)
-async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
+@calculator_router.callback_query(CalculatorCallback.filter(F.action == "select_asic"), CalculatorStates.waiting_for_asic_selection)
+async def process_asic_selection_item(call: CallbackQuery, callback_data: CalculatorCallback, state: FSMContext):
     await call.answer()
-    asic_index = int(call.data.split(":")[1])
+    asic_index = callback_data.asic_index
     user_data = await state.get_data()
     asic_list = [AsicMiner(**data) for data in user_data.get("asic_list_json", [])]
 
