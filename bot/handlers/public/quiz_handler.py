@@ -1,6 +1,7 @@
 # =================================================================================
-# Файл: bot/handlers/public/quiz_handler.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
+# Файл: bot/handlers/public/quiz_handler.py (ВЕРСЯ "Distinguished Engineer" - НОВЫЙ)
 # Описание: Обрабатывает раздел "Викторина".
+# ИСПРАВЛЕНИЕ: Исправлены вызовы сервиса AI.
 # =================================================================================
 import logging
 from aiogram import F, Router
@@ -9,12 +10,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.utils.dependencies import Deps
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
+from bot.keyboards.callback_factories import MenuCallback
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-@router.callback_query(F.data == "nav:quiz")
-async def handle_quiz_start(call: CallbackQuery, deps: Deps, **kwargs):
+@router.callback_query(MenuCallback.filter(F.action == "quiz"))
+async def handle_quiz_start(call: CallbackQuery, deps: Deps):
     await call.answer("Генерирую вопрос...")
     question_data = await deps.quiz_service.get_random_question()
 
@@ -39,7 +41,7 @@ async def handle_quiz_answer(call: CallbackQuery):
     is_correct = int(call.data.split(":")[1])
     
     next_keyboard = InlineKeyboardBuilder()
-    next_keyboard.button(text="🔄 Следующий вопрос", callback_data="nav:quiz")
+    next_keyboard.button(text="🔄 Следующий вопрос", callback_data="menu:0:quiz")
     next_keyboard.button(text="🏠 Главное меню", callback_data="menu:0:main")
     next_keyboard.adjust(1)
 

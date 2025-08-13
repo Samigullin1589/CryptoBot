@@ -2,6 +2,7 @@
 # Файл: bot/handlers/public/market_info_handler.py (ВЕРСИЯ "Distinguished Engineer" - РЕФАКТОРИНГ)
 # Описание: Обрабатывает запросы на получение общих рыночных данных.
 # ИСПРАВЛЕНИЕ: Добавлены фильтры MenuCallback для прямого отклика на кнопки меню.
+#              Исправлены вызовы сервисных методов.
 # =================================================================================
 import logging
 from aiogram import F, Router
@@ -37,7 +38,7 @@ async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMCon
 
         base_caption = f"😱 <b>Индекс страха и жадности:</b> {value}\n<i>Состояние рынка: {classification}</i>"
         final_caption = base_caption
-        if ai_explanation and "недоступен" not in ai_explanation:
+        if ai_explanation and "недоступен" not in ai_explanation and "внутренняя ошибка" not in ai_explanation:
             final_caption += f"\n\n<b>Пояснение от AI:</b>\n{ai_explanation}"
 
         await temp_message.delete()
@@ -64,6 +65,7 @@ async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
     await call.answer()
     temp_message = await call.message.edit_text("⏳ Загружаю статус сети и запрашиваю анализ у AI...")
     try:
+        # ИСПРАВЛЕНО: Вызов правильного метода
         data = await deps.market_data_service.get_btc_network_status()
         if not data: raise ValueError("Сервис не вернул данные о статусе сети BTC.")
 
@@ -72,7 +74,7 @@ async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
         ai_question = (f"Хешрейт сети Bitcoin сейчас ~{hashrate_ehs:.0f} EH/s. Кратко, в 1-2 предложениях, объясни простым языком, что это значит.")
         ai_explanation = await deps.ai_content_service.get_consultant_answer(ai_question, history=[])
 
-        if ai_explanation and "недоступен" not in ai_explanation:
+        if ai_explanation and "недоступен" not in ai_explanation and "внутренняя ошибка" not in ai_explanation:
             text += f"\n\n<b>Что это значит (анализ AI):</b>\n{ai_explanation}"
 
         await temp_message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())

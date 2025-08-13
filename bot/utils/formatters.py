@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - С КОРРЕКТНЫМ ХАЛВИНГОМ)
+# Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - ПОЛНАЯ РЕАЛИЗАЦИЯ)
 # Описание: Вспомогательные функции для форматирования данных в текст.
-# ИСПРАВЛЕНИЕ: Обновлена функция format_halving_info для работы с новой
-#              структурой данных и отображения правильной информации.
+# ИСПРАВЛЕНИЕ: Полностью переписан без заглушек. Обновлены все функции
+#              для работы с новыми структурами данных.
 # =================================================================================
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -11,7 +11,6 @@ from bot.utils.models import AsicMiner, NewsArticle, Coin, CalculationResult
 
 # --- Форматтеры для раздела ASIC ---
 def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str:
-    # ... (код остается без изменений) ...
     if not asics:
         return "Нет доступных ASIC для отображения."
 
@@ -30,7 +29,6 @@ def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str
     return header + "\n".join(body) + footer
 
 def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
-    # ... (код остается без изменений) ...
     specs_map = {
         "algorithm": "Алгоритм", "hashrate": "Хешрейт",
         "power": "Потребление"
@@ -58,7 +56,6 @@ def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
 
 # --- Форматтеры для раздела новостей ---
 def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -> str:
-    # ... (код остается без изменений) ...
     if not articles:
         return "Нет доступных новостей."
 
@@ -77,7 +74,6 @@ def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -
 
 # --- Форматтеры для раздела курсов ---
 def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
-    # ... (код остается без изменений) ...
     price = price_data.get('price')
     price_str = f"{price:,.4f}".rstrip('0').rstrip('.') if price else "N/A"
     return (
@@ -88,7 +84,6 @@ def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
 # --- Форматтеры для рыночных данных ---
 def format_halving_info(halving_data: Dict[str, Any]) -> str:
     """Форматирует информацию о халвинге Bitcoin."""
-    # ИСПРАВЛЕНО: Теперь используем новые, корректные данные
     progress = halving_data.get('progressPercent', 0)
     remaining_blocks = halving_data.get('remainingBlocks', 0)
     estimated_date = halving_data.get('estimated_date', 'неизвестно')
@@ -101,17 +96,22 @@ def format_halving_info(halving_data: Dict[str, Any]) -> str:
     )
 
 def format_network_status(network_data: Dict[str, Any]) -> str:
-    # ... (код остается без изменений) ...
+    """Форматирует информацию о состоянии сети Bitcoin."""
     hashrate_ehs = network_data.get('hashrate_ehs', 0.0)
+    difficulty_change = network_data.get('difficulty_change', 0.0)
+    estimated_retarget_date = network_data.get('estimated_retarget_date', 'N/A')
+    
+    change_sign = "+" if difficulty_change > 0 else ""
     
     return (
         f"📡 <b>Статус сети Bitcoin</b>\n\n"
-        f"Хешрейт: <b>{hashrate_ehs:.2f} EH/s</b>"
+        f"Хешрейт: <b>{hashrate_ehs:.2f} EH/s</b>\n"
+        f"След. изменение сложности: <b>~{change_sign}{difficulty_change:.2f}%</b>\n"
+        f"<i>(Ориентировочно {estimated_retarget_date})</i>"
     )
 
 # --- Форматтер для калькулятора ---
 def format_calculation_result(result: CalculationResult) -> str:
-    # ... (код остается без изменений) ...
     net_profit_weekly = result.net_profit_usd_daily * 7
     net_profit_monthly = result.net_profit_usd_daily * 30.44
     net_profit_yearly = result.net_profit_usd_daily * 365.25

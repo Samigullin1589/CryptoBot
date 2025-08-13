@@ -2,7 +2,7 @@
 # Файл: bot/handlers/public/asic_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полнофункциональный обработчик для раздела ASIC.
 # ИСПРАВЛЕНИЕ: Добавлен недостающий обработчик top_asics_start для
-#              реагирования на кнопку в главном меню.
+#              реагирования на кнопку в главном меню. Исправлен вызов ui_helper'а.
 # =================================================================================
 import logging
 from datetime import datetime, timezone
@@ -53,7 +53,7 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
             f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago_str} мин. назад.</i>")
 
     keyboard = get_top_asics_keyboard(top_miners, page)
-    await edit_or_send_message(update, text, reply_markup=keyboard)
+    await edit_or_send_message(update, text, keyboard)
 
 
 # --- ОБРАБОТЧИКИ ---

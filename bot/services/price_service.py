@@ -1,6 +1,7 @@
 # =================================================================================
 # Файл: bot/services/price_service.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025)
 # Описание: Сервис-кэш для цен, использующий MarketDataService как источник данных.
+# ИСПРАВЛЕНИЕ: Интегрирован CoinAliasService для разрешения псевдонимов.
 # =================================================================================
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from typing import Dict, List, Optional
 from redis.asyncio import Redis
 from bot.config.settings import PriceServiceConfig
 from bot.services.market_data_service import MarketDataService
+from bot.services.coin_alias_service import CoinAliasService
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +21,12 @@ class PriceService:
         redis: Redis,
         config: PriceServiceConfig,
         market_data_service: MarketDataService,
+        coin_alias_service: CoinAliasService,
     ):
         self.redis = redis
         self.config = config
         self.market_data = market_data_service
+        self.alias_service = coin_alias_service
 
     def _get_cache_key(self, coin_id: str) -> str:
         return f"cache:price:v4:{coin_id}:{self.config.default_vs_currency}"
@@ -30,6 +34,14 @@ class PriceService:
     async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
         if not coin_ids:
             return {}
+        
+        # Шаг 0: Преобразуем псевдонимы в реальные ID
+        resolved_coin_ids: List[str] = []
+        for coin_id in coin_ids:
+            resolved_id = await self.alias_service.resolve_alias(coin_id)
+            if resolved_id:
+                resolved_coin_ids.append(resolved_id)
+        coin_ids = list(set(resolved_coin_ids)) # Убираем дубликаты
             
         # Шаг 1: Инициализация и массовая проверка кэша
         prices: Dict[str, Optional[float]] = {cid: None for cid in coin_ids}

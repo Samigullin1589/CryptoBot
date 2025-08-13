@@ -98,6 +98,14 @@
         "кардано",
         "cardano"
       ]
+    },
+    "ALEO": {
+      "name": "Aleo",
+      "coingecko_id": "aleo",
+      "aliases": [
+        "алео",
+        "aleo"
+      ]
     }
   }
 }

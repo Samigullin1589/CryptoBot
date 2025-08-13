@@ -3,6 +3,7 @@
 # Описание: DI-контейнер с логированием и отказоустойчивым подключением к Redis.
 # ИСПРАВЛЕНИЕ: Добавлена логика повторных попыток подключения к Redis при старте.
 #              Подключены все недостающие сервисы для модерации.
+#              Интегрирован CoinAliasService, удален AIConsultantService.
 # =================================================================================
 import logging
 import asyncio
@@ -22,6 +23,7 @@ from bot.services.ai_content_service import AIContentService
 from bot.services.news_service import NewsService
 from bot.services.parser_service import ParserService
 from bot.services.security_service import SecurityService
+from bot.services.coin_alias_service import CoinAliasService
 from bot.services.coin_list_service import CoinListService
 from bot.services.price_service import PriceService
 from bot.services.asic_service import AsicService
@@ -59,6 +61,7 @@ class Deps(BaseModel):
     achievement_service: AchievementService
     market_data_service: MarketDataService
     security_service: SecurityService
+    coin_alias_service: CoinAliasService
     coin_list_service: CoinListService
     asic_service: AsicService
     price_service: PriceService
@@ -105,6 +108,7 @@ class Deps(BaseModel):
             quiz_service = QuizService(ai_content_service=ai_content_service)
             event_service = MiningEventService(config=settings.events)
             coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
+            coin_alias_service = CoinAliasService(redis=redis_pool)
             stop_word_service = StopWordService(redis_client=redis_pool)
             moderation_service = ModerationService(bot=bot, user_service=user_service, admin_service=admin_service,
                                                    stop_word_service=stop_word_service, config=settings.threat_filter)
@@ -115,7 +119,7 @@ class Deps(BaseModel):
             achievement_service = AchievementService(redis=redis_pool, config=settings.achievements, market_data_service=market_data_service)
             security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
             asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
-            price_service = PriceService(redis=redis_pool, config=settings.price_service, market_data_service=market_data_service)
+            price_service = PriceService(redis=redis_pool, config=settings.price_service, market_data_service=market_data_service, coin_alias_service=coin_alias_service)
             crypto_center_service = CryptoCenterService(redis=redis_pool, ai_service=ai_content_service, news_service=news_service, config=settings.crypto_center)
             market_service = AsicMarketService(redis=redis_pool, settings=settings, achievement_service=achievement_service, bot=bot)
             
@@ -137,7 +141,7 @@ class Deps(BaseModel):
                 admin_service=admin_service, ai_content_service=ai_content_service,
                 news_service=news_service, parser_service=parser_service,
                 quiz_service=quiz_service, event_service=event_service,
-                achievement_service=achievement_service, market_data_service=market_data_service,
+                achievement_service=achievement_service, market_data_service=market_data_service, coin_alias_service=coin_alias_service,
                 security_service=security_service, coin_list_service=coin_list_service,
                 asic_service=asic_service, price_service=price_service,
                 crypto_center_service=crypto_center_service, market_service=market_service,

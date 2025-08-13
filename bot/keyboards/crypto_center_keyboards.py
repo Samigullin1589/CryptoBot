@@ -1,11 +1,12 @@
 # =================================================================================
 # Файл: bot/keyboards/crypto_center_keyboards.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
 # Описание: Клавиатуры для раздела "Крипто-Центр".
+# ИСПРАВЛЕНИЕ: Код полностью переписан для корректной работы с InlineKeyboardBuilder.
 # =================================================================================
 from typing import List
 from math import ceil
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.utils.models import AirdropProject, NewsArticle
 
@@ -31,9 +32,9 @@ def get_airdrop_list_keyboard(projects: List[AirdropProject], page: int, total_p
     
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(builder.button(text="⬅️", callback_data=f"{CC_CALLBACK_PREFIX}:airdrops:list:{page - 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CC_CALLBACK_PREFIX}:airdrops:list:{page - 1}"))
     if page < total_pages - 1:
-        nav_buttons.append(builder.button(text="➡️", callback_data=f"{CC_CALLBACK_PREFIX}:airdrops:list:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"{CC_CALLBACK_PREFIX}:airdrops:list:{page + 1}"))
     if nav_buttons:
         builder.row(*nav_buttons)
         
@@ -57,9 +58,9 @@ def get_mining_alpha_keyboard(signals: List[dict], page: int, total_pages: int) 
     builder = InlineKeyboardBuilder()
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(builder.button(text="⬅️", callback_data=f"{CC_CALLBACK_PREFIX}:mining:list:{page - 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CC_CALLBACK_PREFIX}:mining:list:{page - 1}"))
     if page < total_pages - 1:
-        nav_buttons.append(builder.button(text="➡️", callback_data=f"{CC_CALLBACK_PREFIX}:mining:list:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"{CC_CALLBACK_PREFIX}:mining:list:{page + 1}"))
     if nav_buttons:
         builder.row(*nav_buttons)
     builder.row(builder.button(text="⬅️ Назад в Крипто-Центр", callback_data=f"{CC_CALLBACK_PREFIX}:main"))
@@ -70,9 +71,9 @@ def get_news_feed_keyboard(articles: List[NewsArticle], page: int, total_pages: 
     builder = InlineKeyboardBuilder()
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(builder.button(text="⬅️", callback_data=f"{CC_CALLBACK_PREFIX}:news:list:{page - 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"{CC_CALLBACK_PREFIX}:news:list:{page - 1}"))
     if page < total_pages - 1:
-        nav_buttons.append(builder.button(text="➡️", callback_data=f"{CC_CALLBACK_PREFIX}:news:list:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"{CC_CALLBACK_PREFIX}:news:list:{page + 1}"))
     if nav_buttons:
         builder.row(*nav_buttons)
     builder.row(builder.button(text="⬅️ Назад в Крипто-Центр", callback_data=f"{CC_CALLBACK_PREFIX}:main"))

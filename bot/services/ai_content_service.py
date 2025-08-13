@@ -1,7 +1,8 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ВОССТАНОВЛЕНИЕ)
+# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Сервис для Gemini, использующий актуальную версию библиотеки.
-# ИСПРАВЛЕНИЕ: Восстановлен недостающий метод generate_summary.
+# ИСПРАВЛЕНИЕ: Восстановлен недостающий метод generate_summary и добавлен get_structured_response.
+#              Реализован роутинг моделей для оптимизации расхода квот.
 # ===============================================================
 
 import logging
@@ -30,14 +31,17 @@ class AIContentService:
 
     def __init__(self, api_key: str, config: AIConfig):
         self.config = config
-        self.client: Optional[genai.GenerativeModel] = None
+        self.pro_client: Optional[genai.GenerativeModel] = None
+        self.flash_client: Optional[genai.GenerativeModel] = None
+        
         if not api_key:
             logger.critical("API-ключ для Gemini не предоставлен. AI-сервис будет отключен.")
             return
         try:
             genai.configure(api_key=api_key)
-            self.client = genai.GenerativeModel(self.config.model_name)
-            logger.info(f"Клиент Google AI успешно сконфигурирован для модели {self.config.model_name}.")
+            self.pro_client = genai.GenerativeModel(self.config.model_name)
+            self.flash_client = genai.GenerativeModel(self.config.flash_model_name)
+            logger.info(f"Клиенты Google AI успешно сконфигурированы для моделей {self.config.model_name} и {self.config.flash_model_name}.")
         except Exception as e:
             logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.", exc_info=True)
 
@@ -69,9 +73,10 @@ class AIContentService:
     async def generate_structured_content(
         self, prompt: str, json_schema: Dict
     ) -> Optional[Dict[str, Any]]:
-        """Генерирует структурированный JSON."""
-        if not self.client: return None
+        """Генерирует структурированный JSON, используя быструю модель."""
+        if not self.flash_client: return None
         try:
+            # Используем специальную возможность для генерации JSON
             json_model = genai.GenerativeModel(
                 self.config.flash_model_name,
                 generation_config=GenerationConfig(response_mime_type="application/json")
@@ -85,14 +90,19 @@ class AIContentService:
             logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}", exc_info=True)
             return None
     
+    # [НОВЫЙ МЕТОД] для SecurityService
+    async def get_structured_response(self, system_prompt: str, user_prompt: str, response_schema: Dict) -> Optional[Dict[str, Any]]:
+        """Универсальный метод для получения JSON ответа от быстрой модели."""
+        if not self.flash_client: return None
+        return await self.generate_structured_content(f"{system_prompt}\n\n{user_prompt}", response_schema)
+
     # ИСПРАВЛЕНО: Восстановлен недостающий метод
     async def generate_summary(self, text_to_summarize: str) -> str:
         """Генерирует краткое саммари, используя быструю Flash модель."""
-        if not self.client: return "Не удалось проанализировать."
+        if not self.flash_client: return "Не удалось проанализировать."
         try:
-            flash_model = genai.GenerativeModel(self.config.flash_model_name)
             prompt = get_summary_prompt(text_to_summarize)
-            response = await self._make_request(flash_model, contents=prompt)
+            response = await self._make_request(self.flash_client, contents=prompt)
             return self._extract_text_from_response(response) or "Не удалось создать саммари."
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при генерации саммари: {e}", exc_info=True)
@@ -101,12 +111,15 @@ class AIContentService:
     async def get_consultant_answer(
         self, user_question: str, history: List[ContentDict]
     ) -> str:
-        """Отвечает на вопрос пользователя, используя поиск в интернете при необходимости."""
-        if not self.client: return "AI-консультант временно недоступен."
+        """Отвечает на вопрос пользователя, используя продвинутую Pro модель."""
+        if not self.pro_client: return "AI-консультант временно недоступен."
         try:
             system_prompt = get_consultant_prompt()
             chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
+            
+            # Создаем модель с системным промптом на лету
             consultant_model = genai.GenerativeModel(self.config.model_name, system_instruction=system_prompt)
+            
             response = await self._make_request(consultant_model, contents=chat_history)
             return self._extract_text_from_response(response) or "AI не смог сформировать ответ."
         except Exception as e:

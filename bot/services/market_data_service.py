@@ -2,6 +2,7 @@
 # Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Центральный сервис для получения любых рыночных данных.
 # ИСПРАВЛЕНИЕ: Исправлена критическая ошибка в конвертации хешрейта (умножение вместо деления).
+# ДОБАВЛЕНО: Реализованы недостающие методы для получения топа монет и статуса сети.
 # =================================================================================
 import logging
 import json
@@ -39,7 +40,6 @@ class MarketDataService:
         self.coin_list = coin_list_service
 
     async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
         try:
             prices = await self._fetch_prices_from_provider(coin_ids, self.config.primary_provider)
             coins_to_retry = [cid for cid, price in prices.items() if price is None]
@@ -54,7 +54,6 @@ class MarketDataService:
                 return {cid: None for cid in coin_ids}
 
     async def _fetch_prices_from_provider(self, coin_ids: List[str], provider: Provider) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
         if provider == "coingecko":
             return await self._get_prices_coingecko(coin_ids)
         elif provider == "cryptocompare":
@@ -62,7 +61,6 @@ class MarketDataService:
         raise ValueError(f"Неизвестный провайдер API: {provider}")
 
     async def _get_prices_coingecko(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
         api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
         headers = {'x-cg-pro-api-key': api_key} if api_key else {}
         base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
@@ -76,7 +74,6 @@ class MarketDataService:
         return result
 
     async def _get_prices_cryptocompare(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
         api_key = self.settings.CRYPTOCOMPARE_API_KEY.get_secret_value() if self.settings.CRYPTOCOMPARE_API_KEY else None
         if not api_key: return {cid: None for cid in coin_ids}
         headers = {'Authorization': f'Apikey {api_key}'}
@@ -102,7 +99,6 @@ class MarketDataService:
         return data['data'][0] if data and data.get('data') else None
 
     async def get_halving_info(self) -> Optional[Dict[str, Any]]:
-        # ... (код без изменений)
         try:
             current_height = int(await make_request(self.http_session, str(self.endpoints.mempool_space_tip_height), response_type="text"))
             halving_cycle = current_height // HALVING_INTERVAL
@@ -121,18 +117,63 @@ class MarketDataService:
 
     async def get_network_hashrate_ths(self) -> Optional[float]:
         """Получает текущий хешрейт сети Bitcoin в TH/s."""
-        # API возвращает значение в GH/s
         hashrate_ghs_str = await make_request(self.http_session, str(self.endpoints.blockchain_info_hashrate), response_type="text")
         if hashrate_ghs_str and hashrate_ghs_str.replace('.', '', 1).isdigit():
-            # ИСПРАВЛЕНО: Для конвертации из GH/s в TH/s нужно делить на 1000.
             return float(hashrate_ghs_str) / 1000
         return None
 
     async def get_block_reward_btc(self) -> Optional[float]:
-        # ... (код без изменений)
         try:
             current_height = int(await make_request(self.http_session, str(self.endpoints.mempool_space_tip_height), response_type="text"))
             halving_count = current_height // HALVING_INTERVAL
             return INITIAL_BLOCK_REWARD / (2 ** halving_count)
         except Exception:
             return 3.125
+
+    # --- НОВЫЕ МЕТОДЫ ---
+    async def get_top_coins_by_market_cap(self, limit: int = 30) -> Optional[List[Dict[str, Any]]]:
+        """
+        [НОВЫЙ МЕТОД] Получает список топ-N монет по рыночной капитализации.
+        """
+        cache_key = f"cache:market_data:top_{limit}_coins"
+        if cached_data := await self.redis.get(cache_key):
+            return json.loads(cached_data)
+
+        api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
+        headers = {'x-cg-pro-api-key': api_key} if api_key else {}
+        base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
+        url = f"{base_url}{self.endpoints.coins_markets_endpoint}"
+        params = {
+            'vs_currency': 'usd',
+            'order': 'market_cap_desc',
+            'per_page': limit,
+            'page': 1,
+            'sparkline': 'false'
+        }
+        data = await make_request(self.http_session, url, params=params, headers=headers)
+        if data and isinstance(data, list):
+            await self.redis.set(cache_key, json.dumps(data), ex=3600) # Кэш на 1 час
+        return data
+
+    async def get_btc_network_status(self) -> Optional[Dict[str, Any]]:
+        """
+        [НОВЫЙ МЕТОД] Комплексно собирает данные о состоянии сети Bitcoin.
+        """
+        try:
+            hashrate_ths = await self.get_network_hashrate_ths()
+            difficulty_data = await make_request(self.http_session, str(self.endpoints.mempool_space_difficulty))
+            
+            if not hashrate_ths or not difficulty_data:
+                return None
+            
+            # Конвертируем TH/s в EH/s для лучшего восприятия
+            hashrate_ehs = hashrate_ths / 1_000_000 
+            
+            return {
+                "hashrate_ehs": hashrate_ehs,
+                "difficulty_change": difficulty_data.get("difficultyChange"),
+                "estimated_retarget_date": datetime.fromtimestamp(difficulty_data.get('nextRetargetTimeEstimate')).strftime('%d.%m.%Y')
+            }
+        except Exception as e:
+            logger.error(f"Ошибка при сборе статуса сети BTC: {e}", exc_info=True)
+            return None
