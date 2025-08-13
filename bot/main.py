@@ -22,37 +22,43 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# --- Прямой импорт всех роутеров ---
-from bot.handlers.admin import admin_router, verification_admin_router, stats_router, moderation_router, game_admin_router
-from bot.handlers.tools import calculator_router
-from bot.handlers.game import mining_game_router
-from bot.handlers.public import menu_router, price_router, asic_handler, news_handler, quiz_handler, market_info_handler, market_handler, crypto_center_handler, verification_public_handler, achievements_handler, game_handler, common_router
-from bot.handlers.threats import threat_router
+# --- ИСПРАВЛЕНО: Упрощенный импорт пакетов ---
+from bot.handlers import admin, tools, game, public, threats
 
 logger = logging.getLogger(__name__)
 
 def register_all_routers(dp: Dispatcher):
     """Централизованно и явно регистрирует все роутеры приложения в правильном порядке."""
-    dp.include_router(admin_router)
-    dp.include_router(verification_admin_router)
-    dp.include_router(stats_router)
-    dp.include_router(moderation_router)
-    dp.include_router(game_admin_router)
-    dp.include_router(calculator_router)
-    dp.include_router(mining_game_router)
-    dp.include_router(menu_router)
-    dp.include_router(price_router)
-    dp.include_router(asic_handler.router)
-    dp.include_router(news_handler.router)
-    dp.include_router(quiz_handler.router)
-    dp.include_router(market_info_handler.router)
-    dp.include_router(crypto_center_handler.router)
-    dp.include_router(verification_public_handler.router)
-    dp.include_router(achievements_handler.router)
-    dp.include_router(market_handler.router)
-    dp.include_router(game_handler.router)
-    dp.include_router(common_router)
-    dp.include_router(threat_router)
+    # Административные
+    dp.include_router(admin.admin_router)
+    dp.include_router(admin.verification_admin_router)
+    dp.include_router(admin.stats_router)
+    dp.include_router(admin.moderation_router)
+    dp.include_router(admin.game_admin_router)
+
+    # Инструменты и игра
+    dp.include_router(tools.calculator_router)
+    dp.include_router(game.mining_game_router)
+
+    # Публичные функции
+    dp.include_router(public.menu_router)
+    dp.include_router(public.price_router)
+    dp.include_router(public.asic_router)
+    dp.include_router(public.news_router)
+    dp.include_router(public.quiz_router)
+    dp.include_router(public.market_info_router)
+    dp.include_router(public.crypto_center_router)
+    dp.include_router(public.verification_public_router)
+    dp.include_router(public.achievements_router)
+    dp.include_router(public.market_router)
+    dp.include_router(public.game_router)
+    
+    # Общий хэндлер для команд и AI должен идти после всех специфичных
+    dp.include_router(public.common_router)
+    
+    # Хэндлер угроз должен идти последним, чтобы перехватывать все, что не подошло выше
+    dp.include_router(threats.threat_router)
+
     logger.info("Все роутеры успешно зарегистрированы.")
 
 async def set_bot_commands(bot: Bot):
@@ -131,11 +137,9 @@ async def main():
         # --- Graceful Shutdown & Health Check ---
         loop = asyncio.get_event_loop()
         
-        # Создаем задачи для поллинга и health check
         polling_task = loop.create_task(dp.start_polling(bot, deps=deps))
         health_check_task = loop.create_task(start_health_check_server())
 
-        # Обрабатываем сигнал SIGTERM от Render для чистого завершения
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, lambda: asyncio.create_task(dp.stop_polling()))
 
