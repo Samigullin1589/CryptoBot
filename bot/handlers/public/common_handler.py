@@ -128,31 +128,3 @@ async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps)
     
     fake_callback_query = types.CallbackQuery(
         id=str(message.message_id),
-        from_user=message.from_user,
-        chat_instance="fake_chat_instance",
-        message=message,
-        data=MenuCallback(level=0, action=action).pack()
-    )
-    
-    await handler_func(call=fake_callback_query, state=state, deps=deps)
-
-@router.message(AITriggerFilter())
-async def handle_text_for_ai(message: Message, state: FSMContext, deps: Deps):
-    """
-    Обрабатывает текстовые сообщения, которые не являются командами или кнопками,
-    и передает их AI-консультанту.
-    """
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    user_text = message.text.strip()
-    
-    temp_msg = await message.reply("🤖 Думаю...")
-    
-    history = await deps.user_service.get_conversation_history(user_id, chat_id)
-    ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
-    await deps.user_service.add_to_conversation_history(user_id, chat_id, user_text, ai_answer)
-    
-    response_text = (f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
-                     f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}")
-    
-    await temp_msg.edit_text(response_text, disable_web_page_preview=True)

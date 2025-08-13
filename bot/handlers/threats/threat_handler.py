@@ -12,7 +12,6 @@ from aiogram import Router
 from aiogram.types import Message
 
 from bot.filters.threat_filter import ThreatFilter
-from bot.services.moderation_service import ModerationService
 from bot.utils.dependencies import Deps
 
 threat_router = Router(name=__name__)

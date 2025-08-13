@@ -1,9 +1,8 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Точка входа с улучшенной архитектурой и роутингом.
-# ИСПРАВЛЕНИЕ: Переход на прямые импорты роутеров для устранения
-#              циклических зависимостей и гарантии правильного порядка
-#              регистрации.
+# ИСПРАВЛЕНИЕ: Переход на прямые импорты роутеров и самый современный
+#              способ передачи зависимостей в startup/shutdown хуки.
 # =================================================================================
 
 import asyncio
@@ -133,7 +132,7 @@ async def main():
     async with ClientSession() as http_session:
         deps = await Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool, bot=bot)
         
-        # Передаем зависимости во все хэндлеры и middleware
+        # Передаем зависимости во все хэндлеры и middleware через workflow_data
         dp.workflow_data["deps"] = deps
         
         # Регистрируем Middleware
@@ -148,7 +147,11 @@ async def main():
         dp.shutdown.register(on_shutdown)
         
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot)
+        
+        # УЛУЧШЕНИЕ: Передаем deps напрямую в start_polling.
+        # Это самый современный способ, который гарантирует их доступность
+        # в startup/shutdown обработчиках.
+        await dp.start_polling(bot, deps=deps)
 
 if __name__ == "__main__":
     try:

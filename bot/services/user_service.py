@@ -1,7 +1,8 @@
 # =================================================================================
-# Файл: bot/services/user_service.py (ФИНАЛЬНАЯ ВЕРСИЯ - С ПОИСКОМ ПО USERNAME)
-# Описание: Сервис управления пользователями с поддержкой индекса username <-> user_id.
-# ИСПРАВЛЕНИЕ: Добавлена логика для поиска пользователя по его имени.
+# Файл: bot/services/user_service.py (ВЕРСИЯ "Distinguished Engineer" - УЛУЧШЕННАЯ)
+# Описание: Сервис управления пользователями с надежным индексом username <-> user_id.
+# ИСПРАВЛЕНИЕ: Добавлена логика для индексации и поиска пользователя по его имени,
+#              а также корректное обновление индекса при смене username.
 # =================================================================================
 import json
 import logging
@@ -36,7 +37,7 @@ class UserService:
         try:
             # Преобразуем строковые значения к их правильным типам
             if 'id' in user_data_dict: user_data_dict['id'] = int(user_data_dict['id'])
-            if 'role' in user_data_dict: user_data_dict['role'] = int(user_data_dict['role'])
+            if 'role' in user_data_dict: user_data_dict['role'] = UserRole(int(user_data_dict['role']))
             if 'electricity_cost' in user_data_dict: user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
             if 'verification_data' in user_data_dict and isinstance(user_data_dict['verification_data'], str):
                 user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
@@ -51,7 +52,7 @@ class UserService:
         Сохраняет модель пользователя в Redis HASH и обновляет индекс username -> user_id.
         """
         user_key = self.keys.user_profile(user.id)
-        user_data_to_save = user.model_dump()
+        user_data_to_save = user.model_dump(by_alias=True)
         
         final_mapping = {}
         for key, value in user_data_to_save.items():
@@ -60,19 +61,15 @@ class UserService:
             elif value is not None:
                 final_mapping[key] = str(value)
 
-        # Атомарная операция для обновления профиля и индекса
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.hset(user_key, mapping=final_mapping)
             
-            # Логика обновления индекса username -> id
             current_username = user.username.lower() if user.username else None
             old_username_lower = old_username.lower() if old_username else None
 
-            # Если юзернейм изменился или появился, а старый был
             if current_username != old_username_lower and old_username_lower:
                 pipe.hdel(self.keys.username_to_id_map(), old_username_lower)
             
-            # Если новый юзернейм есть, добавляем его в индекс
             if current_username:
                 pipe.hset(self.keys.username_to_id_map(), current_username, user.id)
             
@@ -112,14 +109,13 @@ class UserService:
         return new_user, True
 
     async def get_user_by_username(self, username: str) -> Optional[User]:
-        """[НОВЫЙ МЕТОД] Находит пользователя по его @username."""
+        """[УЛУЧШЕНО] Находит пользователя по его @username через индекс."""
         username_lower = username.lower().lstrip('@')
         user_id = await self.redis.hget(self.keys.username_to_id_map(), username_lower)
         if user_id:
             return await self.get_user(int(user_id))
         return None
     
-    # ... (остальные методы без изменений) ...
     async def get_all_user_ids(self) -> List[int]:
         user_ids_raw = await self.redis.smembers(self.keys.all_users_set())
         return [int(user_id) for user_id in user_ids_raw]
