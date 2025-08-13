@@ -1,6 +1,7 @@
 # =================================================================================
 # Файл: bot/jobs/game_tasks.py (ВЕРСИЯ "Distinguished Engineer" - НОВЫЙ)
 # Описание: Содержит функции, вызываемые по расписанию для игрового движка.
+# ИСПРАВЛЕНИЕ: Устранена циклическая зависимость с помощью TYPE_CHECKING.
 # =================================================================================
 import logging
 from typing import TYPE_CHECKING
@@ -39,4 +40,3 @@ async def scheduled_end_session(user_id: int, game_service: "MiningGameService")
             await game_service.bot.send_message(user_id, message_text)
     except Exception as e:
         logger.error(f"Scheduler: Ошибка при завершении сессии для пользователя {user_id}: {e}", exc_info=True)
-

@@ -1,14 +1,13 @@
 # =================================================================================
 # Файл: bot/services/mining_game_service.py (ФИНАЛЬНАЯ ИНТЕГРИРОВАННАЯ ВЕРСИЯ, АВГУСТ 2025)
 # Описание: Главный сервис-оркестратор для игровой механики.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий метод start_session_with_new_asic
-#              для корректной работы магазина.
+# ИСПРАВЛЕНИЕ: Устранена циклическая зависимость с помощью TYPE_CHECKING.
 # =================================================================================
 
 import time
 import json
 import logging
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as redis
@@ -18,13 +17,15 @@ from aiogram.types import InlineKeyboardMarkup
 
 from bot.config.settings import Settings
 from bot.services.user_service import UserService
-from bot.services.market_service import AsicMarketService
 from bot.services.event_service import MiningEventService
 from bot.services.achievement_service import AchievementService
 from bot.utils.models import MiningSessionResult, AsicMiner, User, UserGameProfile
 from bot.keyboards.game_keyboards import get_game_main_menu_keyboard, get_electricity_menu_keyboard
 from bot.utils.lua_scripts import LuaScripts
 from bot.utils.keys import KeyFactory
+
+if TYPE_CHECKING:
+    from bot.services.market_service import AsicMarketService
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class MiningGameService:
                  scheduler: AsyncIOScheduler,
                  settings: Settings,
                  user_service: UserService,
-                 market_service: AsicMarketService,
+                 market_service: "AsicMarketService",
                  event_service: MiningEventService,
                  achievement_service: AchievementService,
                  bot: Bot):

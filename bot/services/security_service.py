@@ -7,14 +7,16 @@
 # =================================================================================
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 
 from async_lru import alru_cache
 
 # Импортируем необходимые компоненты
 from bot.config.settings import ThreatFilterConfig
-from bot.services.ai_content_service import AIContentService
 from bot.utils.models import AIVerdict
+
+if TYPE_CHECKING:
+    from bot.services.ai_content_service import AIContentService
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ class SecurityService:
     Делегирует фактический вызов AI специализированному сервису.
     """
 
-    def __init__(self, ai_service: AIContentService, config: ThreatFilterConfig):
+    def __init__(self, ai_service: "AIContentService", config: ThreatFilterConfig):
         """
         Инициализирует сервис безопасности.
 
@@ -109,4 +111,3 @@ class SecurityService:
             # Логируем ошибку, но возвращаем вердикт по-умолчанию, чтобы не сломать логику бота
             logger.error(f"Ошибка при анализе сообщения AI: {e}", exc_info=True)
             return default_verdict
-

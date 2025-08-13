@@ -1,186 +1,138 @@
 # =================================================================================
-# Файл: bot/services/market_data_service.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
-# Описание: Центральный сервис для получения любых рыночных данных.
-# ИСПРАВЛЕНИЕ: Исправлена критическая ошибка в конвертации хешрейта (умножение вместо деления).
-# ДОБАВЛЕНО: Реализованы недостающие методы для получения топа монет и статуса сети.
+# Файл: bot/services/market_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Описание: Сервис, управляющий рынком ASIC-майнеров.
+# ИСПРАВЛЕНИЕ: Устранена циклическая зависимость с помощью TYPE_CHECKING.
 # =================================================================================
-import logging
-import json
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Dict, Any, Literal
-from math import ceil
 
-import aiohttp
-from redis.asyncio import Redis
+import json
+import uuid
+import time
+import logging
+from typing import List, Optional, TYPE_CHECKING
+
+import redis.asyncio as redis
+from aiogram import Bot
 
 from bot.config.settings import Settings
-from bot.utils.http_client import make_request
-from bot.services.coin_list_service import CoinListService
+from bot.utils.models import AsicMiner, MarketListing
+from bot.utils.lua_scripts import LuaScripts
+from bot.utils.keys import KeyFactory
+
+# ИСПРАВЛЕНИЕ: Используем TYPE_CHECKING для разрыва циклической зависимости
+if TYPE_CHECKING:
+    from bot.services.achievement_service import AchievementService
 
 logger = logging.getLogger(__name__)
 
-Provider = Literal["coingecko", "cryptocompare"]
-HALVING_INTERVAL = 210000
-AVG_BLOCK_TIME_MINUTES = 10
-INITIAL_BLOCK_REWARD = 50.0
-
-class MarketDataService:
-    def __init__(
-        self,
-        redis: Redis,
-        http_session: aiohttp.ClientSession,
-        settings: Settings,
-        coin_list_service: CoinListService
-    ):
+class AsicMarketService:
+    def __init__(self,
+                 redis: redis.Redis,
+                 settings: Settings,
+                 achievement_service: "AchievementService",
+                 bot: Bot):
         self.redis = redis
-        self.http_session = http_session
-        self.config = settings.market_data
-        self.endpoints = settings.endpoints
         self.settings = settings
-        self.coin_list = coin_list_service
+        self.achievements = achievement_service
+        self.bot = bot
+        self.keys = KeyFactory
+        self.lua_list_item = None
+        self.lua_cancel_listing = None
+        self.lua_buy_item = None
 
-    async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
-        try:
-            prices = await self._fetch_prices_from_provider(coin_ids, self.config.primary_provider)
-            coins_to_retry = [cid for cid, price in prices.items() if price is None]
-            if coins_to_retry:
-                fallback_prices = await self._fetch_prices_from_provider(coins_to_retry, self.config.fallback_provider)
-                prices.update(fallback_prices)
-            return prices
-        except Exception:
-            try:
-                return await self._fetch_prices_from_provider(coin_ids, self.config.fallback_provider)
-            except Exception:
-                return {cid: None for cid in coin_ids}
+    async def setup(self):
+        """Асинхронно загружает LUA-скрипты после создания объекта."""
+        self.lua_list_item = await self.redis.script_load(LuaScripts.LIST_ITEM_FOR_SALE)
+        self.lua_cancel_listing = await self.redis.script_load(LuaScripts.CANCEL_LISTING)
+        self.lua_buy_item = await self.redis.script_load(LuaScripts.BUY_ITEM_FROM_MARKET)
+        logger.info("LUA-скрипты для AsicMarketService успешно загружены.")
 
-    async def _fetch_prices_from_provider(self, coin_ids: List[str], provider: Provider) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
-        if provider == "coingecko":
-            return await self._get_prices_coingecko(coin_ids)
-        elif provider == "cryptocompare":
-            return await self._get_prices_cryptocompare(coin_ids)
-        raise ValueError(f"Неизвестный провайдер API: {provider}")
+    async def list_asic_for_sale(self, user_id: int, asic_id: str, price: float) -> Optional[str]:
+        if price <= 0:
+            return None
 
-    async def _get_prices_coingecko(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
-        api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
-        headers = {'x-cg-pro-api-key': api_key} if api_key else {}
-        base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
-        url = f"{base_url}{self.endpoints.simple_price_endpoint}"
-        params = {'ids': ','.join(coin_ids), 'vs_currencies': 'usd'}
-        data = await make_request(self.http_session, url, params=params, headers=headers)
-        result = {cid: None for cid in coin_ids}
-        if data:
-            for cid, price_data in data.items():
-                result[cid] = price_data.get('usd')
-        return result
-
-    async def _get_prices_cryptocompare(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        # ... (код без изменений)
-        api_key = self.settings.CRYPTOCOMPARE_API_KEY.get_secret_value() if self.settings.CRYPTOCOMPARE_API_KEY else None
-        if not api_key: return {cid: None for cid in coin_ids}
-        headers = {'Authorization': f'Apikey {api_key}'}
-        url = f"{self.endpoints.cryptocompare_api_base}{self.endpoints.cryptocompare_price_endpoint}"
-        id_to_symbol_map, symbols_to_fetch = {}, []
-        for cid in coin_ids:
-            if coin := await self.coin_list.find_coin_by_query(cid):
-                symbol = coin.symbol.upper()
-                id_to_symbol_map[symbol] = cid
-                symbols_to_fetch.append(symbol)
-        if not symbols_to_fetch: return {cid: None for cid in coin_ids}
-        params = {'fsyms': ','.join(symbols_to_fetch), 'tsyms': 'USD'}
-        data = await make_request(self.http_session, url, params=params, headers=headers)
-        result = {cid: None for cid in coin_ids}
-        if data:
-            for symbol, price_data in data.items():
-                if original_id := id_to_symbol_map.get(symbol):
-                    result[original_id] = price_data.get('USD')
-        return result
+        hangar_key = self.keys.user_hangar(user_id)
+        listing_id = str(uuid.uuid4())
         
-    async def get_fear_and_greed_index(self) -> Optional[Dict]:
-        data = await make_request(self.http_session, str(self.endpoints.fear_and_greed_api))
-        return data['data'][0] if data and data.get('data') else None
-
-    async def get_halving_info(self) -> Optional[Dict[str, Any]]:
-        # ... (код без изменений)
-        try:
-            current_height = int(await make_request(self.http_session, str(self.endpoints.mempool_space_tip_height), response_type="text"))
-            halving_cycle = current_height // HALVING_INTERVAL
-            next_halving_block = (halving_cycle + 1) * HALVING_INTERVAL
-            blocks_remaining = next_halving_block - current_height
-            estimated_date = datetime.now(timezone.utc) + timedelta(minutes=blocks_remaining * AVG_BLOCK_TIME_MINUTES)
-            progress = (current_height % HALVING_INTERVAL) / HALVING_INTERVAL * 100
-            return {"progressPercent": progress, "remainingBlocks": blocks_remaining, "estimated_date": estimated_date.strftime('%d.%m.%Y')}
-        except Exception as e:
-            logger.error(f"Не удалось вычислить данные о халвинге: {e}", exc_info=True)
+        keys = [hangar_key, self.keys.market_listing_data(listing_id), self.keys.market_listings_by_price()]
+        args = [asic_id, listing_id, user_id, price, int(time.time())]
+        
+        result = await self.redis.evalsha(self.lua_list_item, len(keys), *keys, *args)
+        
+        if result == 1:
+            logger.info(f"User {user_id} listed ASIC {asic_id} for {price} (listing ID: {listing_id})")
+            return listing_id
+        else:
+            logger.error(f"Failed to list ASIC {asic_id} for user {user_id}. Item not found in hangar.")
             return None
 
-    async def get_btc_price_usd(self) -> Optional[float]:
-        prices = await self.get_prices(['bitcoin'])
-        return prices.get('bitcoin')
+    async def cancel_listing(self, user_id: int, listing_id: str) -> bool:
+        keys = [self.keys.market_listing_data(listing_id), self.keys.market_listings_by_price(), self.keys.user_hangar(user_id)]
+        args = [listing_id, user_id]
+        
+        result = await self.redis.evalsha(self.lua_cancel_listing, len(keys), *keys, *args)
+        
+        if result == 1:
+            logger.info(f"User {user_id} cancelled listing {listing_id}.")
+            return True
+        else:
+            logger.warning(f"Failed to cancel listing {listing_id} for user {user_id}. Not owner or listing not found.")
+            return False
 
-    async def get_network_hashrate_ths(self) -> Optional[float]:
-        """Получает текущий хешрейт сети Bitcoin в TH/s."""
-        # API возвращает значение в GH/s
-        hashrate_ghs_str = await make_request(self.http_session, str(self.endpoints.blockchain_info_hashrate), response_type="text")
-        if hashrate_ghs_str and hashrate_ghs_str.replace('.', '', 1).isdigit():
-            # ИСПРАВЛЕНО: Для конвертации из GH/s в TH/s нужно делить на 1000.
-            return float(hashrate_ghs_str) / 1000
-        return None
+    async def buy_asic(self, buyer_id: int, listing_id: str) -> str:
+        commission_rate = self.settings.game.market_commission_rate
+        
+        seller_id_str = await self.redis.hget(self.keys.market_listing_data(listing_id), "seller_id")
+        seller_id = int(seller_id_str) if seller_id_str else None
 
-    async def get_block_reward_btc(self) -> Optional[float]:
-        # ... (код без изменений)
-        try:
-            current_height = int(await make_request(self.http_session, str(self.endpoints.mempool_space_tip_height), response_type="text"))
-            halving_count = current_height // HALVING_INTERVAL
-            return INITIAL_BLOCK_REWARD / (2 ** halving_count)
-        except Exception:
-            return 3.125
+        keys = [
+            self.keys.market_listing_data(listing_id),
+            self.keys.market_listings_by_price(),
+            self.keys.user_game_profile(buyer_id),
+            self.keys.user_hangar(buyer_id),
+            self.keys.user_game_profile(seller_id) if seller_id else "nil"
+        ]
+        args = [listing_id, buyer_id, seller_id or 0, commission_rate]
+        
+        result_code = await self.redis.evalsha(self.lua_buy_item, len(keys), *keys, *args)
 
-    # --- НОВЫЕ МЕТОДЫ ---
-    async def get_top_coins_by_market_cap(self, limit: int = 30) -> Optional[List[Dict[str, Any]]]:
-        """
-        [НОВЫЙ МЕТОД] Получает список топ-N монет по рыночной капитализации.
-        """
-        cache_key = f"cache:market_data:top_{limit}_coins"
-        if cached_data := await self.redis.get(cache_key):
-            return json.loads(cached_data)
-
-        api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
-        headers = {'x-cg-pro-api-key': api_key} if api_key else {}
-        base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
-        url = f"{base_url}{self.endpoints.coins_markets_endpoint}"
-        params = {
-            'vs_currency': 'usd',
-            'order': 'market_cap_desc',
-            'per_page': limit,
-            'page': 1,
-            'sparkline': 'false'
-        }
-        data = await make_request(self.http_session, url, params=params, headers=headers)
-        if data and isinstance(data, list):
-            await self.redis.set(cache_key, json.dumps(data), ex=3600) # Кэш на 1 час
-        return data
-
-    async def get_btc_network_status(self) -> Optional[Dict[str, Any]]:
-        """
-        [НОВЫЙ МЕТОД] Комплексно собирает данные о состоянии сети Bitcoin.
-        """
-        try:
-            hashrate_ths = await self.get_network_hashrate_ths()
-            if not hashrate_ths:
-                return None
+        if result_code == 1:
+            logger.info(f"User {buyer_id} successfully bought listing {listing_id}.")
+            if seller_id:
+                unlocked_ach = await self.achievements.process_static_event(seller_id, "asic_sold")
+                if unlocked_ach:
+                    try:
+                        await self.bot.send_message(
+                            seller_id,
+                            f"🏆 <b>Новое достижение!</b>\n\n"
+                            f"<b>{unlocked_ach.name}</b>: {unlocked_ach.description}\n"
+                            f"<i>Награда: +{unlocked_ach.reward_coins} монет.</i>"
+                        )
+                    except Exception as e:
+                        logger.error(f"Не удалось отправить уведомление о достижении продавцу {seller_id}: {e}")
+            return "✅ Поздравляем с приобретением! Оборудование уже в вашем ангаре."
+        elif result_code == -1:
+            return "❌ Вы не можете купить собственное оборудование."
+        elif result_code == -2:
+            return "❌ Недостаточно средств для покупки."
+        elif result_code == -3:
+            return "❌ Этот лот больше не доступен. Возможно, его уже купили или сняли с продажи."
+        else:
+            return "❌ Произошла неизвестная ошибка при покупке."
             
-            # Конвертируем TH/s в EH/s для лучшего восприятия
-            hashrate_ehs = hashrate_ths / 1_000_000 
-            
-            # Можно добавить больше метрик сюда в будущем
-            # difficulty_data = await make_request(self.http_session, str(self.endpoints.mempool_space_difficulty))
-            
-            return {
-                "hashrate_ehs": hashrate_ehs
-            }
-        except Exception as e:
-            logger.error(f"Ошибка при сборе статуса сети BTC: {e}", exc_info=True)
-            return None
+    async def get_market_listings(self, offset: int = 0, count: int = 20) -> List[MarketListing]:
+        listing_ids = await self.redis.zrange(self.keys.market_listings_by_price(), offset, offset + count - 1)
+        if not listing_ids:
+            return []
+
+        pipe = self.redis.pipeline()
+        for listing_id in listing_ids:
+            pipe.hgetall(self.keys.market_listing_data(listing_id))
+        
+        listings_data = await pipe.execute()
+        
+        market_listings = []
+        for data in listings_data:
+            if data:
+                market_listings.append(MarketListing(**data))
+        
+        return market_listings
