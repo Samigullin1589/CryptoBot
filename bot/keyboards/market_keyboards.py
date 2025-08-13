@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/keyboards/market_keyboards.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
 # Описание: Функции для генерации всех необходимых клавиатур для рынка.
-# ИСПРАВЛЕНИЕ: Переход на использование фабрик CallbackData.
+# ИСПРАВЛЕНИЕ: Удалена устаревшая константа MARKET_CALLBACK_PREFIX.
 # =================================================================================
 
 from typing import List
@@ -17,18 +17,20 @@ def get_market_listings_keyboard(listings: List[MarketListing], current_page: in
     """
     builder = InlineKeyboardBuilder()
 
+    # Создаем по одной кнопке для каждого лота
     for listing in listings:
         asic = AsicMiner.model_validate_json(listing.asic_data)
         button_text = f"Купить {asic.name} за {listing.price:,.2f} монет"
         callback_data = MarketCallback(action="buy", listing_id=listing.id).pack()
         builder.row(InlineKeyboardButton(text=button_text, callback_data=callback_data))
 
+    # Создаем навигационные кнопки
     nav_buttons = []
     if current_page > 0:
         nav_buttons.append(InlineKeyboardButton(text="◀️ Назад", callback_data=MarketCallback(action="page", page=current_page - 1).pack()))
     
     if total_pages > 1:
-        nav_buttons.append(InlineKeyboardButton(text=f"{current_page + 1}/{total_pages}", callback_data="do_nothing"))
+        nav_buttons.append(InlineKeyboardButton(text=f"{current_page + 1}/{total_pages}", callback_data="do_nothing")) # Просто для отображения
 
     if current_page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=MarketCallback(action="page", page=current_page + 1).pack()))

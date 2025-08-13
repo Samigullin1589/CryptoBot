@@ -1,6 +1,7 @@
 # =================================================================================
-# Файл: bot/handlers/public/market_handler.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
+# Файл: bot/handlers/public/market_handler.py (ВЕРСЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
 # Описание: Обработчики команд и callback'ов для взаимодействия с рынком.
+# ИСПРАВЛЕНИЕ: Полный переход на использование MarketCallback factory.
 # =================================================================================
 
 import logging
@@ -13,9 +14,9 @@ from bot.services.market_service import AsicMarketService
 from bot.services.mining_game_service import MiningGameService
 from bot.keyboards.market_keyboards import (
     get_market_listings_keyboard, 
-    get_choose_asic_to_sell_keyboard,
-    MARKET_CALLBACK_PREFIX
+    get_choose_asic_to_sell_keyboard
 )
+from bot.keyboards.callback_factories import MarketCallback
 from bot.states.market_states import MarketStates
 from bot.utils.models import AsicMiner
 
@@ -26,24 +27,20 @@ PAGE_SIZE = 5  # Количество лотов на одной страниц�
 # --- Обработчик команды /market и постраничной навигации ---
 
 @router.message(Command("market"))
-@router.callback_query(F.data.startswith(f"{MARKET_CALLBACK_PREFIX}:page:"))
-async def market_start_handler(message: types.Message | types.CallbackQuery, market_service: AsicMarketService, state: FSMContext):
+@router.callback_query(MarketCallback.filter(F.action == "page"))
+async def market_start_handler(message: types.Message | types.CallbackQuery, market_service: AsicMarketService, state: FSMContext, callback_data: MarketCallback = None):
     await state.clear() # Сбрасываем любое состояние, если пользователь зашел на рынок
     
-    page = 0
+    page = callback_data.page if callback_data else 0
+    
     if isinstance(message, types.CallbackQuery):
-        page = int(message.data.split(":")[-1])
-        # Используем message.message.edit_text для редактирования существующего сообщения
         target_message = message.message
     else:
-        # Используем message.answer для отправки нового сообщения
         target_message = message
 
-    # Получаем все лоты. В реальном проекте это может быть оптимизировано.
-    all_listings = await market_service.get_market_listings(offset=0, count=1000) # Получаем до 1000 лотов
+    all_listings = await market_service.get_market_listings(offset=0, count=1000)
     total_pages = ceil(len(all_listings) / PAGE_SIZE)
     
-    # Вычисляем срез для текущей страницы
     start_index = page * PAGE_SIZE
     end_index = start_index + PAGE_SIZE
     current_page_listings = all_listings[start_index:end_index]
@@ -62,7 +59,7 @@ async def market_start_handler(message: types.Message | types.CallbackQuery, mar
 
 # --- Сценарий Продажи Оборудования (FSM) ---
 
-@router.callback_query(F.data == f"{MARKET_CALLBACK_PREFIX}:sell_start")
+@router.callback_query(MarketCallback.filter(F.action == "sell_start"))
 async def sell_start_handler(callback: types.CallbackQuery, state: FSMContext, mining_game_service: MiningGameService):
     user_id = callback.from_user.id
     hangar_key = mining_game_service.keys.user_hangar(user_id)
@@ -78,9 +75,9 @@ async def sell_start_handler(callback: types.CallbackQuery, state: FSMContext, m
     await callback.message.edit_text("👇 Выберите оборудование, которое хотите выставить на продажу:", reply_markup=keyboard)
     await callback.answer()
 
-@router.callback_query(MarketStates.choosing_asic_to_sell, F.data.startswith(f"{MARKET_CALLBACK_PREFIX}:sell_select:"))
-async def sell_select_asic_handler(callback: types.CallbackQuery, state: FSMContext):
-    asic_id = callback.data.split(":")[-1]
+@router.callback_query(MarketStates.choosing_asic_to_sell, MarketCallback.filter(F.action == "sell_select"))
+async def sell_select_asic_handler(callback: types.CallbackQuery, state: FSMContext, callback_data: MarketCallback):
+    asic_id = callback_data.asic_id
     await state.update_data(asic_id_to_sell=asic_id)
     await state.set_state(MarketStates.entering_price)
     
@@ -108,22 +105,21 @@ async def sell_enter_price_handler(message: types.Message, state: FSMContext, ma
         await message.answer("❌ Произошла ошибка при выставлении лота. Возможно, оборудование уже используется.")
 
     await state.clear()
+    # После завершения сценария, показываем обновленный рынок
+    await market_start_handler(message, market_service, state)
 
 # --- Обработчик Покупки ---
 
-@router.callback_query(F.data.startswith(f"{MARKET_CALLBACK_PREFIX}:buy:"))
-async def buy_item_handler(callback: types.CallbackQuery, market_service: AsicMarketService):
-    listing_id = callback.data.split(":")[-1]
+@router.callback_query(MarketCallback.filter(F.action == "buy"))
+async def buy_item_handler(callback: types.CallbackQuery, market_service: AsicMarketService, state: FSMContext, callback_data: MarketCallback):
+    listing_id = callback_data.listing_id
     
-    # Здесь мы могли бы показать окно с подтверждением, но для простоты сразу вызываем покупку.
-    # В реальном проекте лучше добавить шаг подтверждения.
     result_text = await market_service.buy_asic(callback.from_user.id, listing_id)
     
     await callback.answer(result_text, show_alert=True)
     
     # Обновляем сообщение с рынком, чтобы купленный лот исчез
-    await market_start_handler(callback, market_service, FSMContext(storage=callback.bot.fsm_storage, key=callback.bot.fsm_storage.get_key(callback.bot, callback.from_user.id)))
-
+    await market_start_handler(callback, market_service, state)
 
 # --- Обработчик отмены FSM ---
 @router.callback_query(F.data == "cancel_fsm")
