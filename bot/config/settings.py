@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'logging'.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'logging' и поле IS_WEB_PROCESS.
 # =================================================================================
 
 import logging
@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
+    # ИСПРАВЛЕНО: Добавлено поле для определения типа процесса
+    IS_WEB_PROCESS: bool = False
+    PORT: int = 10000
     log_level: str = "INFO"
     ai: AIConfig = Field(default_factory=AIConfig)
     throttling: ThrottlingConfig = Field(default_factory=ThrottlingConfig)

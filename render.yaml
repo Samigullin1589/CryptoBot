@@ -10,7 +10,7 @@ services:
     env: python
     pythonVersion: "3.12"
     plan: free # Бесплатного плана достаточно для health check
-    buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5 pydantic==2.8.2"
+    buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5 pydantic==2.8.2 pydantic-settings==2.3.4 python-dotenv==1.0.1"
     startCommand: "python -m bot.health_check_server" # Запускаем отдельный, легковесный сервер
     envVars:
       - key: PYTHONPATH
@@ -20,6 +20,8 @@ services:
           type: web
           name: cryptobot-health
           envVarKey: RENDER_SERVICE_PORT
+      - key: IS_WEB_PROCESS # Указываем, что это web-процесс
+        value: "true"
     healthCheck:
       path: /healthz
       initialDelaySeconds: 15
@@ -55,7 +57,7 @@ services:
         sync: false
       - key: NEWS_CHAT_ID
         sync: false
-      - key: PORT # PORT нужен для основного приложения, чтобы оно знало, где запускать Health Check сервер
+      - key: PORT # PORT нужен для основного приложения, если оно вдруг запустится как web-сервис
         value: 10000
       # URL для Redis будет предоставлен автоматически
       - key: REDIS_URL
