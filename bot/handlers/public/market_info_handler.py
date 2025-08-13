@@ -21,17 +21,17 @@ logger = logging.getLogger(__name__)
 async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMContext):
     await call.answer()
     temp_message = await call.message.edit_text("⏳ Загружаю индекс и генерирую пояснение от AI...")
-    
+
     try:
         data = await deps.market_data_service.get_fear_and_greed_index()
         if not data: raise ValueError("API индекса страха и жадности не вернул данных.")
 
         value = int(data['value'])
         classification = data['value_classification']
-        
+
         image_bytes = generate_fng_image(value, classification)
         photo = BufferedInputFile(image_bytes, filename="fng_index.png")
-        
+
         ai_question = (f"Кратко, в 1-2 предложениях, объясни простым языком, что означает 'Индекс страха и жадности' {value} ({classification}).")
         ai_explanation = await deps.ai_content_service.get_consultant_answer(ai_question, history=[])
 
@@ -52,7 +52,7 @@ async def handle_halving_info(call: CallbackQuery, deps: Deps, state: FSMContext
     try:
         data = await deps.market_data_service.get_halving_info()
         if not data: raise ValueError("API для халвинга не вернул валидных данных.")
-        
+
         text = format_halving_info(data)
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
     except Exception as e:
@@ -71,7 +71,7 @@ async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
         hashrate_ehs = data.get('hashrate_ehs', 0.0)
         ai_question = (f"Хешрейт сети Bitcoin сейчас ~{hashrate_ehs:.0f} EH/s. Кратко, в 1-2 предложениях, объясни простым языком, что это значит.")
         ai_explanation = await deps.ai_content_service.get_consultant_answer(ai_question, history=[])
-        
+
         if ai_explanation and "недоступен" not in ai_explanation:
             text += f"\n\n<b>Что это значит (анализ AI):</b>\n{ai_explanation}"
 

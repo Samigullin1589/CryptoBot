@@ -23,15 +23,15 @@ async def show_top_asics_page(update: Message | CallbackQuery, state: FSMContext
     target_message = update.message if is_callback else update
 
     await target_message.edit_text("⏳ Загружаю актуальный список ASIC...")
-        
+
     await state.set_state(AsicExplorerStates.showing_top)
-    
+
     fsm_data = await state.get_data()
     page = fsm_data.get("page", 1)
 
     user_profile, _ = await deps.user_service.get_or_create_user(update.from_user)
     electricity_cost = user_profile.electricity_cost
-    
+
     top_miners, last_update_time = await deps.asic_service.get_top_asics(electricity_cost)
 
     if not top_miners:
@@ -46,9 +46,10 @@ async def show_top_asics_page(update: Message | CallbackQuery, state: FSMContext
 
     text = (f"🏆 <b>Топ доходных ASIC</b>\n"
             f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago_str} мин. назад.</i>")
-    
+
     keyboard = get_top_asics_keyboard(top_miners, page)
     await target_message.edit_text(text, reply_markup=keyboard)
+
 
 @router.callback_query(MenuCallback.filter(F.action == "asics"))
 async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps):
@@ -57,6 +58,7 @@ async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps):
     await state.set_state(AsicExplorerStates.showing_top)
     await state.update_data(page=1)
     await show_top_asics_page(call, state, deps)
+
 
 @router.callback_query(F.data.startswith("asic_page:"), (AsicExplorerStates.showing_top | AsicExplorerStates.showing_passport))
 async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):
@@ -74,7 +76,7 @@ async def asic_passport_handler(call: CallbackQuery, state: FSMContext, deps: De
 
     user_profile, _ = await deps.user_service.get_or_create_user(call.from_user)
     asic = await deps.asic_service.find_asic_by_normalized_name(normalized_name, user_profile.electricity_cost)
-    
+
     if not asic:
         await call.answer("😕 Модель не найдена в базе.", show_alert=True)
         return
