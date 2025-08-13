@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: DI-контейнер с логированием инициализации и асинхронной настройкой сервисов.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий MiningService в DI-контейнер.
+# ИСПРАВЛЕНИЕ: Добавлены недостающие сервисы ModerationService и StopWordService.
 # =================================================================================
 
 import logging
@@ -32,15 +32,15 @@ from bot.services.achievement_service import AchievementService
 from bot.services.market_service import AsicMarketService
 from bot.services.mining_game_service import MiningGameService
 from bot.services.verification_service import VerificationService
-# ИСПРАВЛЕНО: Добавлен импорт MiningService
 from bot.services.mining_service import MiningService
+# ИСПРАВЛЕНО: Добавлены импорты для сервисов модерации
+from bot.services.stop_word_service import StopWordService
+from bot.services.moderation_service import ModerationService
 
 logger = logging.getLogger(__name__)
 
 class Deps(BaseModel):
-    """
-    Data Injection контейнер для всех сервисов и клиентов.
-    """
+    """Data Injection контейнер для всех сервисов и клиентов."""
     settings: Settings
     http_session: aiohttp.ClientSession
     redis_pool: Redis
@@ -66,17 +66,17 @@ class Deps(BaseModel):
     market_service: AsicMarketService
     mining_game_service: MiningGameService
     verification_service: VerificationService
-    # ИСПРАВЛЕНО: Добавлен mining_service
     mining_service: MiningService
+    # ИСПРАВЛЕНО: Добавлены сервисы модерации
+    stop_word_service: StopWordService
+    moderation_service: ModerationService
 
     class Config:
         arbitrary_types_allowed = True
 
     @classmethod
     async def build(cls, settings: Settings, http_session: aiohttp.ClientSession, redis_pool: Redis, bot: Bot) -> "Deps":
-        """
-        Асинхронный фабричный метод для безопасной сборки и настройки контейнера зависимостей.
-        """
+        """Асинхронный фабричный метод для безопасной сборки и настройки контейнера зависимостей."""
         logger.info("Начало сборки контейнера зависимостей (Deps)...")
         try:
             # Инициализация базовых сервисов
@@ -88,15 +88,15 @@ class Deps(BaseModel):
             quiz_service = QuizService(ai_content_service=ai_content_service)
             event_service = MiningEventService(config=settings.events)
             coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
+            
+            # ИСПРАВЛЕНО: Инициализация сервисов модерации
+            stop_word_service = StopWordService(redis_client=redis_pool)
+            moderation_service = ModerationService(bot=bot, user_service=user_service, admin_service=admin_service,
+                                                   stop_word_service=stop_word_service, config=settings.threat_filter)
 
             # Инициализация сервисов, зависящих от других
             market_data_service = MarketDataService(redis=redis_pool, http_session=http_session, settings=settings, coin_list_service=coin_list_service)
-            logger.info("MarketDataService инициализирован.")
-            
-            # ИСПРАВЛЕНО: MiningService теперь создается здесь
             mining_service = MiningService(market_data_service=market_data_service)
-            logger.info("MiningService инициализирован.")
-
             achievement_service = AchievementService(redis=redis_pool, config=settings.achievements, market_data_service=market_data_service)
             security_service = SecurityService(ai_service=ai_content_service, config=settings.threat_filter)
             asic_service = AsicService(redis=redis_pool, parser_service=parser_service, config=settings.asic_service)
@@ -113,11 +113,9 @@ class Deps(BaseModel):
             )
             verification_service = VerificationService(user_service=user_service)
 
-            # Асинхронная настройка сервисов, которым это необходимо
             await market_service.setup()
             await mining_game_service.setup()
 
-            # ИСПРАВЛЕНО: Добавлен mining_service в итоговый объект
             deps_instance = cls(
                 settings=settings, http_session=http_session, redis_pool=redis_pool,
                 scheduler=scheduler_instance, bot=bot, user_service=user_service,
@@ -129,7 +127,8 @@ class Deps(BaseModel):
                 asic_service=asic_service, price_service=price_service,
                 crypto_center_service=crypto_center_service, market_service=market_service,
                 mining_game_service=mining_game_service, verification_service=verification_service,
-                mining_service=mining_service
+                mining_service=mining_service, stop_word_service=stop_word_service,
+                moderation_service=moderation_service
             )
             logger.info("Контейнер зависимостей (Deps) успешно собран.")
             return deps_instance
