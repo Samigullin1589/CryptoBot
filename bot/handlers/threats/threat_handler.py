@@ -1,7 +1,9 @@
 # ===============================================================
-# Файл: bot/handlers/threats/threat_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - УЛУЧШЕННАЯ)
+# Файл: bot/handlers/threats/threat_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
 # Описание: "Тонкий" хэндлер, который ловит сообщения от ThreatFilter
 # и передает их в ModerationService для комплексной обработки.
+# ИСПРАВЛЕНИЕ: Изменен способ регистрации фильтра с ThreatFilter()
+#              на ThreatFilter для корректной работы DI.
 # ===============================================================
 import logging
 from typing import List
@@ -11,14 +13,17 @@ from aiogram.types import Message
 
 from bot.filters.threat_filter import ThreatFilter
 from bot.services.moderation_service import ModerationService
+from bot.utils.dependencies import Deps
 
 threat_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-@threat_router.message(ThreatFilter())
+# ИСПРАВЛЕНО: Передаем класс фильтра, а не его экземпляр.
+# Это позволяет aiogram автоматически внедрять зависимости (deps) в фильтр.
+@threat_router.message(ThreatFilter)
 async def handle_threat_message(
     message: Message,
-    moderation_service: ModerationService,
+    deps: Deps,
     threat_score: float,
     reasons: List[str]
 ):
@@ -32,9 +37,9 @@ async def handle_threat_message(
         f"Score: {threat_score:.2f}. Reasons: {reasons}"
     )
     
-    # --- УЛУЧШЕНИЕ: Вызов сервиса стал чище ---
     try:
-        await moderation_service.process_detected_threat(
+        # Получаем сервис из DI-контейнера deps
+        await deps.moderation_service.process_detected_threat(
             message=message,
             threat_score=threat_score,
             reasons=reasons
