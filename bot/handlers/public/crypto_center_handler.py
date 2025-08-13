@@ -1,10 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/public/crypto_center_handler.py (ВЕРСИЯ "Distinguished Engineer" - ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ)
 # Описание: Полнофункциональный обработчик для раздела "Крипто-Центр".
-#           Управляет FSM, навигацией по меню и отображением данных от AI.
-# ИСПРАВЛЕНИЕ: Файл полностью переписан для реализации логики обработчика,
-#              чтобы устранить ошибку ImportError. Добавлена точка входа
-#              из главного меню через MenuCallback.
+# ИСПРАВЛЕНИЕ: Переход на использование унифицированных фабрик CallbackData.
 # =================================================================================
 import logging
 from math import ceil
@@ -14,14 +11,13 @@ from aiogram.utils.markdown import hlink
 
 from bot.utils.dependencies import Deps
 from bot.states.crypto_center_states import CryptoCenterStates
-from bot.keyboards.callback_factories import MenuCallback
+from bot.keyboards.callback_factories import MenuCallback, CryptoCenterCallback
 from bot.keyboards.crypto_center_keyboards import (
     get_crypto_center_main_menu_keyboard,
     get_airdrop_list_keyboard,
     get_airdrop_details_keyboard,
     get_mining_alpha_keyboard,
     get_news_feed_keyboard,
-    CC_CALLBACK_PREFIX,
     PAGE_SIZE
 )
 
@@ -43,17 +39,17 @@ async def crypto_center_entry(call: types.CallbackQuery, state: FSMContext, deps
     await call.message.edit_text(text, reply_markup=get_crypto_center_main_menu_keyboard())
     await call.answer()
 
-@router.callback_query(F.data == f"{CC_CALLBACK_PREFIX}:main")
+@router.callback_query(CryptoCenterCallback.filter(F.action == "main"))
 async def crypto_center_main_menu_callback(call: types.CallbackQuery, state: FSMContext, deps: Deps):
     """Возврат в главное меню Крипто-Центра."""
     await crypto_center_entry(call, state, deps)
 
 # --- СЕКЦИЯ AIRDROP ALPHA ---
 
-@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:list:"))
-async def show_airdrop_list(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+@router.callback_query(CryptoCenterCallback.filter(F.action == "airdrops_list"))
+async def show_airdrop_list(call: types.CallbackQuery, callback_data: CryptoCenterCallback, state: FSMContext, deps: Deps):
     """Отображает список Airdrop-проектов с пагинацией."""
-    page = int(call.data.split(":")[-1])
+    page = callback_data.page
     await state.set_state(CryptoCenterStates.viewing_airdrops_list)
     await call.message.edit_text("⏳ Ищу самые горячие Airdrop'ы...")
 
@@ -70,10 +66,10 @@ async def show_airdrop_list(call: types.CallbackQuery, state: FSMContext, deps: 
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()
 
-@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:view:"))
-async def show_airdrop_details(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+@router.callback_query(CryptoCenterCallback.filter(F.action == "airdrop_view"))
+async def show_airdrop_details(call: types.CallbackQuery, callback_data: CryptoCenterCallback, state: FSMContext, deps: Deps):
     """Показывает детальную информацию о проекте и чек-лист."""
-    project_id = call.data.split(":")[-1]
+    project_id = callback_data.project_id
     user_id = call.from_user.id
 
     await state.set_state(CryptoCenterStates.viewing_airdrop_details)
@@ -98,11 +94,10 @@ async def show_airdrop_details(call: types.CallbackQuery, state: FSMContext, dep
     await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
     await call.answer()
 
-@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:task:"))
-async def toggle_airdrop_task(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+@router.callback_query(CryptoCenterCallback.filter(F.action == "airdrop_task"))
+async def toggle_airdrop_task(call: types.CallbackQuery, callback_data: CryptoCenterCallback, state: FSMContext, deps: Deps):
     """Отмечает/снимает отметку о выполнении задачи в чек-листе."""
-    parts = call.data.split(":")
-    project_id, task_index = parts[3], int(parts[4])
+    project_id, task_index = callback_data.project_id, callback_data.task_index
     user_id = call.from_user.id
 
     await deps.crypto_center_service.toggle_task_status(user_id, project_id, task_index)
@@ -118,10 +113,10 @@ async def toggle_airdrop_task(call: types.CallbackQuery, state: FSMContext, deps
 
 # --- СЕКЦИЯ MINING ALPHA ---
 
-@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:mining:list:"))
-async def show_mining_alpha(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+@router.callback_query(CryptoCenterCallback.filter(F.action == "mining_list"))
+async def show_mining_alpha(call: types.CallbackQuery, callback_data: CryptoCenterCallback, state: FSMContext, deps: Deps):
     """Отображает список майнинг-сигналов."""
-    page = int(call.data.split(":")[-1])
+    page = callback_data.page
     await state.set_state(CryptoCenterStates.viewing_mining_signals)
     await call.message.edit_text("⏳ Анализирую блокчейн в поисках майнинг-возможностей...")
 
@@ -149,10 +144,10 @@ async def show_mining_alpha(call: types.CallbackQuery, state: FSMContext, deps: 
 
 # --- СЕКЦИЯ LIVE ЛЕНТА ---
 
-@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:news:list:"))
-async def show_live_feed(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+@router.callback_query(CryptoCenterCallback.filter(F.action == "news_list"))
+async def show_live_feed(call: types.CallbackQuery, callback_data: CryptoCenterCallback, state: FSMContext, deps: Deps):
     """Отображает live-ленту новостей с AI-суммаризацией."""
-    page = int(call.data.split(":")[-1])
+    page = callback_data.page
     await state.set_state(CryptoCenterStates.viewing_feed)
     await call.message.edit_text("⏳ Собираю и анализирую последнюю информацию...")
 
