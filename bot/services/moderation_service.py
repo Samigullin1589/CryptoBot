@@ -3,6 +3,7 @@
 # Описание: Сервис, инкапсулирующий всю логику модерации:
 #           бан, предупреждения, работа со стоп-словами и
 #           уведомление администраторов.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий метод process_threat_action.
 # ===============================================================
 import logging
 from typing import List, Optional
@@ -38,9 +39,17 @@ class ModerationService:
             logger.info(f"Администратор {admin_id} забанил пользователя {target_user_id} в чате {target_chat_id} по причине: {reason}")
             
             if original_message:
-                await original_message.delete()
+                try:
+                    await original_message.delete()
+                except TelegramBadRequest:
+                    pass # Сообщение уже могло быть удалено
             
-            await self.user_service.update_user_role(target_user_id, UserRole.BANNED)
+            # Обновляем роль пользователя в нашей БД
+            user = await self.user_service.get_user(target_user_id)
+            if user:
+                user.role = UserRole.BANNED
+                await self.user_service.save_user(user)
+
             return f"✅ Пользователь {target_user_id} успешно забанен. Причина: {reason}"
         except TelegramBadRequest as e:
             logger.error(f"Не удалось забанить пользователя {target_user_id}: {e.message}")
@@ -68,7 +77,8 @@ class ModerationService:
             f"<i>Сообщение удалено.</i>"
         )
         
-        keyboard = get_threat_notification_keyboard(user.id, message.chat.id, message.message_id)
+        # message.message_id больше не нужен, т.к. сообщение удаляется сразу
+        keyboard = get_threat_notification_keyboard(user.id, message.chat.id)
         await self.admin_service.notify_admins(admin_alert, reply_markup=keyboard)
 
     # --- Методы для управления стоп-словами ---

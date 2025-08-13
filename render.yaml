@@ -8,18 +8,14 @@ services:
   - type: web
     name: cryptobot-health
     env: python
-    pythonVersion: "3.12"
+    # ИСПРАВЛЕНО: Указываем актуальную версию Python
+    pythonVersion: "3.12.4"
     plan: free # Бесплатного плана достаточно для health check
-    buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5 pydantic==2.8.2 pydantic-settings==2.3.4 python-dotenv==1.0.1"
-    startCommand: "python -m bot.health_check_server" # Запускаем отдельный, легковесный сервер
+    buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5"
+    startCommand: "python -m bot.health_check_server"
     envVars:
       - key: PYTHONPATH
         value: .
-      - key: PORT
-        fromService:
-          type: web
-          name: cryptobot-health
-          envVarKey: RENDER_SERVICE_PORT
       - key: IS_WEB_PROCESS # Указываем, что это web-процесс
         value: "true"
     healthCheck:
@@ -30,12 +26,12 @@ services:
   - type: worker
     name: cryptobot-worker
     env: python
-    pythonVersion: "3.12"
+    # ИСПРАВЛЕНО: Указываем актуальную версию Python
+    pythonVersion: "3.12.4"
     plan: starter # Starter или выше для продакшена
-    buildCommand: |
-      pip install --upgrade pip
-      pip install -r requirements.txt
-    startCommand: python -m bot.main
+    # ИСПРАВЛЕНО: Упрощенная и надежная команда сборки
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "python -m bot.main"
     envVars:
       - key: PYTHONPATH
         value: .
@@ -57,8 +53,6 @@ services:
         sync: false
       - key: NEWS_CHAT_ID
         sync: false
-      - key: PORT # PORT нужен для основного приложения, если оно вдруг запустится как web-сервис
-        value: 10000
       # URL для Redis будет предоставлен автоматически
       - key: REDIS_URL
         fromService:

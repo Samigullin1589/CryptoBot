@@ -31,6 +31,9 @@ async def handle_threat_message(
     - Вызывает ModerationService для наказания и уведомления.
     - Удаляет исходное сообщение.
     """
+    if not message.from_user:
+        return
+
     logger.warning(
         f"Threat detected from user {message.from_user.id} in chat {message.chat.id}. "
         f"Score: {threat_score:.2f}. Reasons: {reasons}"

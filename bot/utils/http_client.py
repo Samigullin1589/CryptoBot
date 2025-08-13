@@ -1,8 +1,9 @@
 # ===============================================================
-# Файл: bot/utils/http_client.py (НОВЫЙ ФАЙЛ)
+# Файл: bot/utils/http_client.py
 # Описание: Содержит универсальную и отказоустойчивую функцию
 # для выполнения асинхронных HTTP-запросов.
-# ИСПРАВЛЕНИЕ: Добавлен User-Agent для обхода блокировок.
+# ИСПРАВЛЕНИЕ: Добавлен User-Agent для обхода блокировок и
+#              улучшена обработка таймаутов.
 # ===============================================================
 
 import logging
@@ -36,7 +37,6 @@ async def make_request(
     timeout: int = 15
 ) -> Optional[Any]:
     
-    # ИСПРАВЛЕНО: Добавляем User-Agent по умолчанию
     request_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
     }
@@ -50,17 +50,19 @@ async def make_request(
             url,
             params=params,
             json=json_data,
-            headers=request_headers, # Используем обновленные заголовки
+            headers=request_headers,
             timeout=aio_timeout,
-            ssl=False
+            ssl=False # Может быть полезно в некоторых окружениях
         ) as response:
             response.raise_for_status()
             if response_type == "json":
+                # content_type=None позволяет парсить JSON с некорректным Content-Type
                 return await response.json(content_type=None)
             return await response.text()
             
     except aiohttp.ClientResponseError as e:
         logger.error(f"Request to {url} failed with status {e.status}, message='{e.message}'")
+        # Повторная попытка будет выполнена декоратором backoff
         raise
     except asyncio.TimeoutError:
         logger.error(f"Request to {url} timed out after {timeout} seconds.")

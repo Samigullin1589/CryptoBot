@@ -2,7 +2,7 @@
 # Файл: bot/services/admin_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - ПОЛНАЯ РЕАЛИЗАЦИЯ)
 # Описание: Единый сервис для всей логики администрирования.
 # ИСПРАВЛЕНИЕ: Реализованы недостающие методы для сбора игровой
-#              статистики и статистики по командам.
+#              статистики, статистики по командам и изменения баланса.
 # ===============================================================
 import logging
 from datetime import datetime
@@ -77,7 +77,6 @@ class AdminService:
                 actions_list = [f"<code>{action}</code> - {count} раз" for action, count in top_actions]
                 text = header + "\n".join(actions_list)
         else:
-            # Возвращаем меню статистики, если тип неизвестен
             logger.warning(f"Запрошен неизвестный тип статистики: {stats_type}")
             return "Выберите категорию для просмотра:", get_stats_menu_keyboard()
         
@@ -103,14 +102,16 @@ class AdminService:
     async def get_game_stats(self) -> Dict[str, Any]:
         """Собирает статистику по игровому модулю."""
         stats_key = self.keys.game_stats()
-        game_stats = await self.redis.hgetall(stats_key)
+        game_stats_raw = await self.redis.hgetall(stats_key)
         
-        # Суммируем балансы всех игроков
-        total_balance = await self.redis.zscore(self.keys.game_leaderboard(), "global_sum") or 0.0
-        
+        # Суммируем балансы всех игроков (если лидерборд большой, это может быть неэффективно)
+        # Для больших проектов лучше хранить отдельный счетчик.
+        leaderboard = await self.redis.zrange(self.keys.game_leaderboard(), 0, -1, withscores=True)
+        total_balance = sum(score for _, score in leaderboard)
+
         return {
-            "active_sessions": int(game_stats.get("active_sessions", 0)),
-            "pending_withdrawals": int(game_stats.get("pending_withdrawals", 0)),
+            "active_sessions": int(game_stats_raw.get("active_sessions", 0)),
+            "pending_withdrawals": int(game_stats_raw.get("pending_withdrawals", 0)),
             "total_balance": float(total_balance)
         }
 
@@ -122,13 +123,12 @@ class AdminService:
     # --- Навигация в админ-панели ---
     async def get_main_menu_content(self, user_id: int) -> Tuple[str, InlineKeyboardMarkup]:
         """Возвращает контент для главного меню админ-панели."""
-        # Упрощенная проверка роли, т.к. фильтр уже отработал
         user_role = UserRole.SUPER_ADMIN if user_id in self.settings.admin_ids else UserRole.ADMIN
         text = "<b>Панель администратора</b>\n\nВыберите раздел:"
         keyboard = get_admin_menu_keyboard(user_role)
         return text, keyboard
         
-    # --- НОВЫЙ МЕТОД: Изменение баланса ---
+    # --- РЕАЛИЗОВАННЫЙ МЕТОД: Изменение баланса ---
     async def change_user_game_balance(self, user_id: int, amount: float) -> Optional[float]:
         """
         Атомарно изменяет игровой баланс пользователя и возвращает новый баланс.
@@ -139,22 +139,23 @@ class AdminService:
             logger.warning(f"Попытка изменить баланс для несуществующего игрового профиля: user_id={user_id}")
             return None
 
-        # Атомарно увеличиваем баланс и получаем новое значение
-        new_balance = await self.redis.hincrbyfloat(profile_key, "balance", amount)
-        # Также обновляем значение в таблице лидеров
-        await self.redis.zadd(self.keys.game_leaderboard(), {str(user_id): new_balance})
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.hincrbyfloat(profile_key, "balance", amount)
+            # Также обновляем значение в таблице лидеров
+            pipe.zincrby(self.keys.game_leaderboard(), amount, str(user_id))
+            results = await pipe.execute()
         
+        new_balance = results[0]
         logger.info(f"Администратор изменил баланс user_id={user_id} на {amount}. Новый баланс: {new_balance}")
         return new_balance
 
     # --- Системные действия ---
     async def clear_asic_cache(self) -> int:
         """Очищает кэш ASIC-майнеров."""
-        # Ищем все ключи, связанные с асиками
         cursor = '0'
         deleted_count = 0
         while cursor != 0:
-            cursor, keys = await self.redis.scan(cursor, match=f"{self.keys.asic_hash('*')}", count=1000)
+            cursor, keys = await self.redis.scan(cursor, match=f"asic:*", count=1000)
             if keys:
                 deleted_count += await self.redis.delete(*keys)
         

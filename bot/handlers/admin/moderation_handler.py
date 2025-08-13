@@ -2,6 +2,7 @@
 # Файл: bot/handlers/admin/moderation_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
 # Описание: "Тонкий" обработчик для команд модерации.
 # Принимает команды, валидирует их и вызывает ModerationService.
+# ИСПРАВЛЕНИЕ: Реализована обработка callback-запросов от уведомлений.
 # ===============================================================
 import logging
 from aiogram import Router, F, Bot, types
@@ -24,26 +25,31 @@ async def handle_threat_action_callback(call: types.CallbackQuery, moderation_se
     """Обрабатывает нажатия на кнопки в уведомлении об угрозе."""
     await call.answer()
     parts = call.data.split(":")
-    action, chat_id_str, user_id_str = parts[1], parts[2], parts[3]
-    chat_id, user_id = int(chat_id_str), int(user_id_str)
-    
-    response_text = await moderation_service.process_threat_action(
-        action=action,
-        admin_id=call.from_user.id,
-        target_user_id=user_id,
-        target_chat_id=chat_id,
-        original_message=call.message
-    )
-    
-    # --- ИСПРАВЛЕНО: Используем тройные кавычки для многострочного f-string ---
-    await call.message.edit_text(
-        f"""{call.message.text}
+    action = parts[1]
 
----
-✅ <b>Действие выполнено:</b> {response_text}""",
+    if action == "ignore":
+        await call.message.edit_text(f"{call.message.text}\n\n--- \nДействие проигнорировано.", reply_markup=None)
+        return
+
+    user_id_str, chat_id_str = parts[2], parts[3]
+    user_id, chat_id = int(user_id_str), int(chat_id_str)
+
+    response_text = "Действие не распознано."
+    if action == "ban":
+        response_text = await moderation_service.ban_user(
+            admin_id=call.from_user.id,
+            target_user_id=user_id,
+            target_chat_id=chat_id,
+            reason="Автоматический бан после обнаружения угрозы"
+        )
+    elif action == "pardon":
+        # Здесь можно добавить логику повышения "очков доверия" пользователю
+        response_text = f"✅ Пользователь {user_id} помилован."
+
+    await call.message.edit_text(
+        f"{call.message.html_text}\n\n--- \n✅ <b>Действие выполнено:</b> {response_text}",
         reply_markup=None
     )
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 
 # --- Команды модерации ---
@@ -73,30 +79,6 @@ async def handle_ban_command(message: Message, moderation_service: ModerationSer
     await message.answer(result_text)
     # Удаляем команду администратора
     await message.delete()
-
-@moderation_router.message(Command("warn", "пред", prefix="!/"), PrivilegeFilter(min_role=UserRole.MODERATOR), GROUP_ONLY_FILTER)
-async def handle_warn_command(message: Message, moderation_service: ModerationService):
-    """Команда для вынесения предупреждения пользователю."""
-    if not message.reply_to_message:
-        await message.reply("⚠️ Эту команду нужно использовать в ответ на сообщение пользователя.")
-        return
-
-    reason = "Нарушение правил."
-    args = message.text.split(maxsplit=1)
-    if len(args) > 1:
-        reason = args[1]
-
-    result_text = await moderation_service.warn_user(
-        admin_id=message.from_user.id,
-        target_user_id=message.reply_to_message.from_user.id,
-        target_chat_id=message.chat.id,
-        reason=reason
-    )
-    await message.answer(result_text)
-    await message.delete()
-    await message.reply_to_message.delete()
-
-# --- Управление стоп-словами ---
 
 @moderation_router.message(Command("add_stop_word", prefix="!/"), PrivilegeFilter(min_role=UserRole.ADMIN))
 async def handle_add_stop_word_command(message: Message, moderation_service: ModerationService):
