@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/admin/game_admin_handler.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Обработчики для администрирования игровой части бота.
-# ИСПРАВЛЕНИЕ: Исправлены все опечатки в именах состояний для устранения AttributeError.
+# ИСПРАВЛЕНИЕ: Удален некорректный импорт 'GAME_ADMIN_CALLBACK_PREFIX'.
 # =================================================================================
 
 import logging
@@ -11,7 +11,9 @@ from aiogram.filters import StateFilter
 
 from bot.filters.access_filters import PrivilegeFilter, UserRole
 from bot.services.admin_service import AdminService
-from bot.keyboards.admin_keyboards import get_game_admin_menu_keyboard, get_back_to_game_admin_menu_keyboard, GAME_ADMIN_CALLBACK_PREFIX
+# ИСПРАВЛЕНО: Удален импорт GAME_ADMIN_CALLBACK_PREFIX
+from bot.keyboards.admin_keyboards import get_game_admin_menu_keyboard, get_back_to_game_admin_menu_keyboard
+from bot.keyboards.callback_factories import GameAdminCallback
 from bot.states.admin_states import GameAdmin
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,7 @@ router = Router()
 router.message.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 router.callback_query.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 
-@router.callback_query(F.data == f"{GAME_ADMIN_CALLBACK_PREFIX}:menu")
+@router.callback_query(GameAdminCallback.filter(F.action == "menu"))
 async def game_admin_menu_handler(callback: types.CallbackQuery, admin_service: AdminService, state: FSMContext):
     """Отображает главное меню управления игрой."""
     await state.clear()
@@ -30,7 +32,7 @@ async def game_admin_menu_handler(callback: types.CallbackQuery, admin_service: 
     await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
-@router.callback_query(F.data == f"{GAME_ADMIN_CALLBACK_PREFIX}:balance_start")
+@router.callback_query(GameAdminCallback.filter(F.action == "balance_start"))
 async def change_balance_start_handler(callback: types.CallbackQuery, state: FSMContext):
     """Начинает сценарий изменения баланса."""
     await state.set_state(GameAdmin.enter_user_id_for_balance)
@@ -49,13 +51,11 @@ async def change_balance_enter_id_handler(message: types.Message, state: FSMCont
         return
     
     await state.update_data(target_user_id=user_id)
-    # ИСПРАВЛЕНО: Убрана опечатка 'entering...' -> 'enter...'
     await state.set_state(GameAdmin.enter_balance_amount)
     await message.answer("Теперь введите сумму для изменения баланса. \n"
                          "Используйте положительное число для начисления (e.g., `1000`) "
                          "и отрицательное для списания (e.g., `-500`).")
 
-# ИСПРАВЛЕНО: Убрана опечатка 'entering...' -> 'enter...'
 @router.message(StateFilter(GameAdmin.enter_balance_amount))
 async def change_balance_enter_amount_handler(message: types.Message, state: FSMContext, admin_service: AdminService):
     """Обрабатывает ввод суммы и завершает операцию."""
@@ -68,10 +68,7 @@ async def change_balance_enter_amount_handler(message: types.Message, state: FSM
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
     
-    # ПРИМЕЧАНИЕ: метод change_user_game_balance не реализован в AdminService.
-    # Вам нужно будет добавить его реализацию.
-    # new_balance = await admin_service.change_user_game_balance(target_user_id, amount)
-    new_balance = 1000.0 # Временная заглушка для теста
+    new_balance = await admin_service.change_user_game_balance(target_user_id, amount)
     await state.clear()
     
     if new_balance is not None:
