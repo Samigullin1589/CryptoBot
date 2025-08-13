@@ -135,7 +135,7 @@ async def show_mining_alpha(call: types.CallbackQuery, state: FSMContext, deps: 
 
     signals_text = []
     for signal in paginated_signals:
-        guide_link = f" ({hlink('гайд', signal.get('guide_url', ''))})" if signal.get('guide_url') else ""
+        guide_link = f" ({hlink(signal.get('guide_url', ''), 'гайд')})" if signal.get('guide_url') else ""
         signals_text.append(
             f"🔹 <b>{signal.get('name', 'N/A')} ({signal.get('algorithm', 'N/A')})</b>{guide_link}\n"
             f"   <i>{signal.get('description', '')}</i>"
@@ -145,6 +145,7 @@ async def show_mining_alpha(call: types.CallbackQuery, state: FSMContext, deps: 
     keyboard = get_mining_alpha_keyboard(paginated_signals, page, total_pages)
     await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
     await call.answer()
+
 
 # --- СЕКЦИЯ LIVE ЛЕНТА ---
 
