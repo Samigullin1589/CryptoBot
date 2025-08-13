@@ -2,9 +2,7 @@
 # Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Обрабатывает общие команды и текстовый ввод, корректно
 #           различая нажатия на текстовые кнопки и запросы к AI.
-# ИСПРАВЛЕНИЕ: Исправлена SyntaxError (незакрытая скобка).
-#              Реализована финальная архитектура с прямым вызовом
-#              обработчиков вместо устаревшего навигатора.
+# ИСПРАВЛЕНИЕ: Добавлен универсальный обработчик отмены FSM.
 # =================================================================================
 import logging
 from typing import Dict, Any
@@ -19,6 +17,7 @@ from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.keyboards.onboarding_keyboards import get_onboarding_start_keyboard, get_onboarding_step_keyboard
 from bot.states.common_states import CommonStates
 from bot.utils.dependencies import Deps
+from bot.utils.ui_helpers import show_main_menu_from_callback
 from bot.utils.text_utils import sanitize_html
 from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS
 
@@ -27,7 +26,7 @@ from bot.handlers.public import price_handler, asic_handler, news_handler, quiz_
 from bot.handlers.tools import calculator_handler
 from bot.handlers.game import mining_game_handler
 
-from bot.keyboards.callback_factories import MenuCallback
+from bot.keyboards.callback_factories import MenuCallback, OnboardingCallback
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
@@ -93,11 +92,21 @@ async def handle_start(message: Message, state: FSMContext, command: CommandObje
 async def handle_help(message: Message):
     await message.answer(HELP_TEXT, disable_web_page_preview=True)
 
+# --- УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ОТМЕНЫ ---
+@router.callback_query(F.data == "cancel_fsm")
+async def cancel_fsm_handler(call: CallbackQuery, state: FSMContext):
+    """
+    Отменяет любой сценарий FSM и возвращает в главное меню.
+    """
+    await state.clear()
+    await call.answer("Действие отменено.", show_alert=False)
+    await show_main_menu_from_callback(call)
+
 # --- УПРАВЛЕНИЕ ОНБОРДИНГОМ ---
-@router.callback_query(F.data.startswith("onboarding:"))
-async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
+@router.callback_query(OnboardingCallback.filter())
+async def handle_onboarding_navigation(call: CallbackQuery, callback_data: OnboardingCallback, state: FSMContext):
     await call.answer()
-    action = call.data.split(":")[1]
+    action = callback_data.action
 
     if action in ["skip", "finish"]:
         text = ("Отлично, теперь вы знаете все основы!\n\n"
@@ -107,7 +116,7 @@ async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
         return
 
     try:
-        step = int(action.split("_")[1])
+        step = int(action.replace("step_", ""))
         await state.update_data(onboarding_step=step)
         
         text = ONBOARDING_TEXTS.get(step, "Неизвестный шаг.")
@@ -126,8 +135,6 @@ async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps)
     """
     handler_func, action = TEXT_COMMAND_MAP[message.text]
     
-    # ИСПРАВЛЕНО: Создание объекта CallbackQuery с закрытой скобкой
-    # и правильная логика вызова хэндлера напрямую.
     fake_callback_query = types.CallbackQuery(
         id=str(message.message_id),
         from_user=message.from_user,

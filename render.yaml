@@ -8,15 +8,14 @@ services:
   - type: web
     name: cryptobot-health
     env: python
-    # ИСПРАВЛЕНО: Указываем актуальную версию Python
     pythonVersion: "3.12.4"
-    plan: free # Бесплатного плана достаточно для health check
+    plan: free
     buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5"
     startCommand: "python -m bot.health_check_server"
     envVars:
       - key: PYTHONPATH
         value: .
-      - key: IS_WEB_PROCESS # Указываем, что это web-процесс
+      - key: IS_WEB_PROCESS
         value: "true"
     healthCheck:
       path: /healthz
@@ -26,19 +25,15 @@ services:
   - type: worker
     name: cryptobot-worker
     env: python
-    # ИСПРАВЛЕНО: Указываем актуальную версию Python
     pythonVersion: "3.12.4"
-    plan: starter # Starter или выше для продакшена
-    # ИСПРАВЛЕНО: Упрощенная и надежная команда сборки
+    plan: starter
     buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
     startCommand: "python -m bot.main"
     envVars:
       - key: PYTHONPATH
         value: .
-      # Переменная, чтобы отличать worker от web процесса
       - key: IS_WEB_PROCESS
         value: "false"
-      # Секреты нужно будет задать в UI Render
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_USER_IDS
@@ -53,7 +48,6 @@ services:
         sync: false
       - key: NEWS_CHAT_ID
         sync: false
-      # URL для Redis будет предоставлен автоматически
       - key: REDIS_URL
         fromService:
           type: redis
@@ -63,6 +57,6 @@ services:
   # База данных Redis
   - type: redis
     name: cryptobot-redis
-    ipAllowList: [] # Для простоты. В продакшене лучше указать IP web-сервиса и worker'а.
-    plan: free # 'free' для тестов, платный (например, Standard) для продакшена.
+    ipAllowList: []
+    plan: free
     maxmemoryPolicy: allkeys-lru

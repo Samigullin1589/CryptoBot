@@ -1,8 +1,7 @@
 # ===============================================================
 # Файл: bot/keyboards/mining_keyboards.py (ПРОДАКШН-ВЕРСИЯ 2025 - ПОЛНАЯ ВОССТАНОВЛЕННАЯ)
 # Описание: Генераторы клавиатур для игры "Виртуальный Майнинг" и Калькулятора.
-# ИСПРАВЛЕНИЕ: Восстановлены все недостающие функции для
-#              корректной работы игрового модуля.
+# ИСПРАВЛЕНИЕ: Переход на использование фабрик CallbackData.
 # ===============================================================
 
 from typing import List, Dict
@@ -11,9 +10,9 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.utils.models import AsicMiner
 from bot.utils.text_utils import normalize_asic_name
-from .callback_factories import MenuCallback
+from .callback_factories import MenuCallback, GameCallback, PaginatorCallback, CalculatorCallback
 
-PAGE_SIZE = 5 # Количество асиков на одной странице
+PAGE_SIZE = 5
 
 # --- Клавиатуры для игры "Виртуальный Майнинг" ---
 
@@ -25,11 +24,11 @@ def get_mining_menu_keyboard(is_session_active: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     if not is_session_active:
-        builder.button(text="▶️ Начать сессию", callback_data="game_nav:shop")
+        builder.button(text="▶️ Начать сессию", callback_data=GameCallback(action="shop").pack())
     
-    builder.button(text="🏠 Моя ферма", callback_data="game_nav:my_farm")
-    builder.button(text="💡 Электричество", callback_data="game_nav:electricity")
-    builder.button(text="🤝 Пригласить друга", callback_data="game_action:invite")
+    builder.button(text="🏠 Моя ферма", callback_data=GameCallback(action="my_farm").pack())
+    builder.button(text="💡 Электричество", callback_data=GameCallback(action="electricity").pack())
+    builder.button(text="🤝 Пригласить друга", callback_data=GameCallback(action="invite").pack())
     builder.button(text="⬅️ Назад в меню", callback_data=MenuCallback(level=0, action="main").pack())
     
     builder.adjust(1 if not is_session_active else 2, 2, 1)
@@ -45,37 +44,37 @@ def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMa
         profit_str = f"{asic.profitability:,.2f}$/день" if asic.profitability is not None else ""
         builder.button(
             text=f"Купить {asic.name} {profit_str}",
-            callback_data=f"game_action:start:{asic_id}"
+            callback_data=GameCallback(action="start", value=asic_id).pack()
         )
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"game_shop_page:{page - 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=GameCallback(action="shop_page", page=page - 1).pack()))
     
     total_pages = (len(asics) + PAGE_SIZE - 1) // PAGE_SIZE
     if total_pages > 1:
          nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="do_nothing"))
 
     if end_offset < len(asics):
-        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"game_shop_page:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=GameCallback(action="shop_page", page=page + 1).pack()))
     
     if nav_buttons:
         builder.row(*nav_buttons)
 
-    builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="nav:mining_game"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data=GameCallback(action="main_menu").pack()))
     builder.adjust(1)
     return builder.as_markup()
 
 def get_my_farm_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="💰 Вывести средства", callback_data="game_action:withdraw")
-    builder.button(text="⬅️ Назад в меню", callback_data="nav:mining_game")
+    builder.button(text="💰 Вывести средства", callback_data=GameCallback(action="withdraw").pack())
+    builder.button(text="⬅️ Назад в меню", callback_data=GameCallback(action="main_menu").pack())
     builder.adjust(1)
     return builder.as_markup()
 
 def get_withdraw_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Понятно", callback_data="nav:mining_game")
+    builder.button(text="✅ Понятно", callback_data=GameCallback(action="main_menu").pack())
     return builder.as_markup()
 
 def get_electricity_menu_keyboard(tariffs: dict, user_tariffs: List[str], current_tariff: str) -> InlineKeyboardMarkup:
@@ -83,13 +82,13 @@ def get_electricity_menu_keyboard(tariffs: dict, user_tariffs: List[str], curren
     for name, info in tariffs.items():
         if name in user_tariffs:
             status = " (Выбран)" if name == current_tariff else " (Доступен)"
-            callback = f"game_tariff_select:{name}"
+            callback = GameCallback(action="tariff_select", value=name).pack()
         else:
             status = f" ({info.unlock_price} монет)"
-            callback = f"game_tariff_buy:{name}"
+            callback = GameCallback(action="tariff_buy", value=name).pack()
         builder.button(text=f"{name}{status}", callback_data=callback)
     
-    builder.button(text="⬅️ Назад в меню", callback_data="nav:mining_game")
+    builder.button(text="⬅️ Назад в меню", callback_data=GameCallback(action="main_menu").pack())
     builder.adjust(1)
     return builder.as_markup()
 
@@ -97,14 +96,14 @@ def get_electricity_menu_keyboard(tariffs: dict, user_tariffs: List[str], curren
 
 def get_calculator_cancel_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data="calc_action:cancel")
+    builder.button(text="❌ Отмена", callback_data="cancel_fsm")
     return builder.as_markup()
 
 def get_currency_selection_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="USD ($)", callback_data="calc_currency:usd")
-    builder.button(text="RUB (₽)", callback_data="calc_currency:rub")
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="calc_action:cancel"))
+    builder.button(text="USD ($)", callback_data=CalculatorCallback(action="currency", value="usd").pack())
+    builder.button(text="RUB (₽)", callback_data=CalculatorCallback(action="currency", value="rub").pack())
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_fsm"))
     builder.adjust(2)
     return builder.as_markup()
 
@@ -114,22 +113,23 @@ def get_asic_selection_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyb
     end_offset = start_offset + PAGE_SIZE
 
     for i, asic in enumerate(asics[start_offset:end_offset], start=start_offset):
-        builder.button(text=asic.name, callback_data=f"calc_select_asic:{i}")
+        builder.button(text=asic.name, callback_data=CalculatorCallback(action="select_asic", asic_index=i).pack())
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"calc_page:{page - 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=CalculatorCallback(action="page", page=page - 1).pack()))
     if end_offset < len(asics):
-        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"calc_page:{page + 1}"))
+        nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=CalculatorCallback(action="page", page=page + 1).pack()))
     
-    builder.row(*nav_buttons)
-    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="calc_action:cancel"))
+    if nav_buttons:
+        builder.row(*nav_buttons)
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_fsm"))
     builder.adjust(1)
     return builder.as_markup()
 
 def get_calculator_result_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Новый расчёт", callback_data="nav:calculator")
+    builder.button(text="⬅️ Новый расчёт", callback_data=MenuCallback(level=1, action="calculator").pack())
     builder.button(text="🏠 Главное меню", callback_data=MenuCallback(level=0, action="main").pack())
     builder.adjust(1)
     return builder.as_markup()
