@@ -1,9 +1,10 @@
 # =================================================================================
-# Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УМНАЯ)
+# Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Обрабатывает общие команды и текстовый ввод, корректно
 #           различая нажатия на текстовые кнопки и запросы к AI.
-# ИСПРАВЛЕНИЕ: Исправлена ссылка на обработчик игры для устранения AttributeError.
-#              Улучшены и конкретизированы импорты.
+# ИСПРАВЛЕНИЕ: Исправлена SyntaxError (незакрытая скобка).
+#              Реализована финальная архитектура с прямым вызовом
+#              обработчиков вместо устаревшего навигатора.
 # =================================================================================
 import logging
 from typing import Dict, Any
@@ -24,7 +25,7 @@ from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS
 # --- Корректный импорт всех необходимых обработчиков ---
 from bot.handlers.public import price_handler, asic_handler, news_handler, quiz_handler, market_info_handler, crypto_center_handler
 from bot.handlers.tools import calculator_handler
-from bot.handlers.game import mining_game_handler # ИСПРАВЛЕНО: Правильный импорт игрового хендлера
+from bot.handlers.game import mining_game_handler
 
 from bot.keyboards.callback_factories import MenuCallback
 
@@ -41,7 +42,6 @@ TEXT_COMMAND_MAP: Dict[str, Any] = {
     "⏳ Халвинг": (market_info_handler.handle_halving_info, "halving"),
     "📡 Статус BTC": (market_info_handler.handle_btc_status, "btc_status"),
     "🧠 Викторина": (quiz_handler.handle_quiz_start, "quiz"),
-    # ИСПРАВЛЕНО: Указана правильная функция (handle_mining_menu) и ее источник (mining_game_handler)
     "💎 Виртуальный Майнинг": (mining_game_handler.handle_mining_menu, "game"),
     "💎 Крипто-Центр": (crypto_center_handler.crypto_center_entry, "crypto_center")
 }
@@ -126,5 +126,35 @@ async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps)
     """
     handler_func, action = TEXT_COMMAND_MAP[message.text]
     
+    # ИСПРАВЛЕНО: Создание объекта CallbackQuery с закрытой скобкой
+    # и правильная логика вызова хэндлера напрямую.
     fake_callback_query = types.CallbackQuery(
         id=str(message.message_id),
+        from_user=message.from_user,
+        chat_instance="fake_chat_instance",
+        message=message,
+        data=MenuCallback(level=0, action=action).pack()
+    )
+    
+    await handler_func(call=fake_callback_query, state=state, deps=deps)
+
+@router.message(AITriggerFilter())
+async def handle_text_for_ai(message: Message, state: FSMContext, deps: Deps):
+    """
+    Обрабатывает текстовые сообщения, которые не являются командами или кнопками,
+    и передает их AI-консультанту.
+    """
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    user_text = message.text.strip()
+    
+    temp_msg = await message.reply("🤖 Думаю...")
+    
+    history = await deps.user_service.get_conversation_history(user_id, chat_id)
+    ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
+    await deps.user_service.add_to_conversation_history(user_id, chat_id, user_text, ai_answer)
+    
+    response_text = (f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
+                     f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}")
+    
+    await temp_msg.edit_text(response_text, disable_web_page_preview=True)
