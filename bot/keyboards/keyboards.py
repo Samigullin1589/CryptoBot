@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/keyboards/keyboards.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ)
 # Описание: Основной модуль для самых общих клавиатур.
-# ИСПРАВЛЕНИЕ: Полный переход на использование CallbackData фабрик.
+# ИСПРАВЛЕНИЕ: Полный переход на использование CallbackData фабрик с методом .pack().
 # =================================================================================
 import random
 from aiogram.types import InlineKeyboardButton
@@ -35,7 +35,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     for text, action in buttons.items():
         builder.button(
             text=text, 
-            callback_data=MenuCallback(level=0, action=action)
+            callback_data=MenuCallback(level=0, action=action).pack() # ИСПРАВЛЕНО
         )
         
     builder.adjust(2)
@@ -50,7 +50,7 @@ def get_back_to_main_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(
         text="⬅️ Назад в главное меню", 
-        callback_data=MenuCallback(level=0, action="main")
+        callback_data=MenuCallback(level=0, action="main").pack() # ИСПРАВЛЕНО
     )
     builder.row(get_promo_button())
     return builder.as_markup()

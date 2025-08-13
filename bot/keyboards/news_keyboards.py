@@ -2,6 +2,7 @@
 # Файл: bot/keyboards/news_keyboards.py (ДИНАМИЧЕСКИЙ, АВГУСТ 2025)
 # Описание: Клавиатуры для раздела новостей, которые строятся
 # на основе данных, полученных из конфигурации.
+# ИСПРАВЛЕНИЕ: Добавлен метод .pack() для корректной сериализации callback-данных.
 # =================================================================================
 from typing import Dict
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -28,12 +29,12 @@ def get_news_sources_keyboard(sources: Dict[str, str]) -> InlineKeyboardMarkup:
         for key, name in sources.items():
             builder.button(
                 text=f"📰 {name}",
-                callback_data=NewsCallback(action="get_feed", source_key=key)
+                callback_data=NewsCallback(action="get_feed", source_key=key).pack() # ИСПРАВЛЕНО
             )
     
     builder.button(
         text="⬅️ Назад в главное меню",
-        callback_data=MenuCallback(level=0, action="main")
+        callback_data=MenuCallback(level=0, action="main").pack() # ИСПРАВЛЕНО
     )
 
     builder.adjust(1) # Каждая кнопка на новой строке

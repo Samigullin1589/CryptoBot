@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/keyboards/info_keyboards.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ)
 # Описание: Клавиатуры для информационных разделов.
-# ИСПРАВЛЕНИЕ: Переход на использование PriceCallback и MenuCallback.
+# ИСПРАВЛЕНИЕ: Переход на использование PriceCallback и MenuCallback с методом .pack().
 # =================================================================================
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup
@@ -23,13 +23,13 @@ def get_price_keyboard() -> InlineKeyboardMarkup:
     for symbol, coin_id in popular_coins.items():
         builder.button(
             text=symbol, 
-            callback_data=PriceCallback(action="show", coin_id=coin_id)
+            callback_data=PriceCallback(action="show", coin_id=coin_id).pack() # ИСПРАВЛЕНО
         )
     
     # Кнопка для возврата в главное меню использует MenuCallback
     builder.button(
-        text="⬅️ Назад в меню", 
-        callback_data=MenuCallback(level=0, action="main")
+        text="⬅️ В меню", 
+        callback_data=MenuCallback(level=0, action="main").pack() # ИСПРАВЛЕНО
     )
     
     builder.adjust(4, 1)
