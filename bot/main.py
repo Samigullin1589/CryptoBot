@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
+# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Точка входа с улучшенной архитектурой и роутингом.
-# ИСПРАВЛЕНИЕ: Переход на прямые импорты роутеров для устранения
-#              циклических зависимостей.
+# ИСПРАВЛЕНИЕ: Изменен порядок импортов для окончательного решения
+#              проблемы циклических зависимостей.
 # =================================================================================
 
 import asyncio
@@ -22,7 +22,8 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# ИСПРАВЛЕНО: Роутеры импортируются напрямую из своих модулей, а не из __init__.py
+# ИСПРАВЛЕНО: Роутеры импортируются в порядке, разрывающем цикл зависимостей.
+# Сначала импортируем навигатор, который зависит от всех остальных.
 
 # Админские роутеры
 from bot.handlers.admin.admin_menu import admin_router
@@ -31,9 +32,9 @@ from bot.handlers.admin.stats_handler import stats_router
 from bot.handlers.admin.moderation_handler import moderation_router
 from bot.handlers.admin.game_admin_handler import router as game_admin_router
 
-# Публичные роутеры
-from bot.handlers.public.common_handler import router as common_router
+# Публичные роутеры (в специальном порядке)
 from bot.handlers.public.menu_handlers import router as menu_router
+from bot.handlers.public.common_handler import router as common_router
 from bot.handlers.public.price_handler import router as price_router
 from bot.handlers.public.asic_handler import router as asic_router
 from bot.handlers.public.news_handler import router as news_router
