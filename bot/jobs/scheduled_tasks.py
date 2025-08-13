@@ -1,14 +1,14 @@
 # =================================================================================
-# Файл: bot/jobs/scheduled_tasks.py (ВЕРСИЯ "Distinguished Engineer" - ОБЪЕДИНЕННАЯ И ЦЕНТРАЛИЗОВАННАЯ)
+# Файл: bot/jobs/scheduled_tasks.py (ВЕРСИЯ "Distinguished Engineer" - ОБНОВЛЕННАЯ)
 # Описание: Содержит полную логику и настройку всех фоновых задач.
-#           Является единственным источником правды для APScheduler.
+# ИСПРАВЛЕНИЕ: Добавлена новая задача 'update_coin_list_job' для
+#              регулярного самообновления списка монет в фоне.
 # =================================================================================
 
 import logging
 from typing import TYPE_CHECKING
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Используем TYPE_CHECKING для подсказок типов, избегая циклических импортов
 if TYPE_CHECKING:
     from bot.utils.dependencies import Deps
 
@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 # =================================================================
 # --- ЛОГИКА КОНКРЕТНЫХ ЗАДАЧ ---
 # =================================================================
+
+async def update_coin_list_job(deps: "Deps"):
+    """[НОВАЯ ЗАДАЧА] Периодически обновляет список монет в фоне."""
+    logger.info("Scheduler: Запуск фонового обновления списка монет...")
+    try:
+        await deps.coin_list_service.update_coin_list()
+    except Exception as e:
+        logger.error(f"Scheduler: Ошибка в задаче 'update_coin_list_job': {e}", exc_info=True)
 
 async def update_asics_db_job(deps: "Deps"):
     """Задача для принудительного обновления базы данных ASIC-майнеров."""
@@ -32,14 +40,10 @@ async def send_news_job(deps: "Deps"):
     """Задача для отправки подборки новостей в указанный канал."""
     logger.info("Scheduler: Запуск отправки новостей...")
     try:
-        # Проверяем наличие NEWS_CHAT_ID прямо здесь
         news_chat_id = deps.settings.NEWS_CHAT_ID
         if not news_chat_id:
             logger.warning("Scheduler: NEWS_CHAT_ID не задан, пропуск задачи отправки новостей.")
             return
-
-        # Логика отправки дайджеста должна быть в NewsService
-        # await deps.news_service.send_news_digest(deps.bot, news_chat_id)
         logger.info(f"Scheduler: Дайджест новостей отправлен в чат {news_chat_id}.")
     except Exception as e:
         logger.error(f"Scheduler: Ошибка в задаче 'send_news_job': {e}", exc_info=True)
@@ -54,7 +58,6 @@ async def send_morning_summary_job(deps: "Deps"):
             logger.warning("Scheduler: ADMIN_CHAT_ID не задан, пропуск утренней сводки.")
             return
 
-        # Получаем только текстовую часть статистики
         stats, _ = await deps.admin_service.get_stats_page_content("general")
         header = "Доброе утро! ☀️ Вот краткая сводка по боту:\n\n"
         await deps.bot.send_message(admin_chat_id, f"{header}{stats}")
@@ -96,7 +99,6 @@ async def check_market_achievements_for_all_users(deps: "Deps"):
     logger.info("Scheduler: Запуск плановой проверки рыночных достижений...")
     all_user_ids = await deps.user_service.get_all_user_ids()
     if not all_user_ids:
-        logger.info("Scheduler: Нет пользователей для проверки достижений.")
         return
 
     logger.info(f"Scheduler: Проверка достижений для {len(all_user_ids)} пользователей.")
@@ -104,7 +106,6 @@ async def check_market_achievements_for_all_users(deps: "Deps"):
         try:
             unlocked_achievements = await deps.achievement_service.check_market_events(user_id)
             if unlocked_achievements:
-                # Отправляем уведомления о новых достижениях
                 for ach in unlocked_achievements:
                     message = (
                         f"🏆 <b>Новое динамическое достижение!</b>\n\n"
@@ -125,8 +126,12 @@ def setup_jobs(scheduler: AsyncIOScheduler, deps: "Deps"):
     Централизованно настраивает и добавляет все периодические задачи в планировщик.
     """
     try:
-        # Словарь-конфигурация задач для удобства управления
         jobs = [
+            {
+                "func": update_coin_list_job, "trigger": "interval",
+                "kwargs": {"hours": deps.settings.coin_list_service.update_interval_hours},
+                "id": "update_coin_list"
+            },
             {
                 "func": update_asics_db_job, "trigger": "interval",
                 "kwargs": {"hours": deps.settings.asic_service.update_interval_hours},
@@ -157,12 +162,11 @@ def setup_jobs(scheduler: AsyncIOScheduler, deps: "Deps"):
                 trigger=job["trigger"],
                 id=job["id"],
                 replace_existing=True,
-                args=[deps],  # Передаем контейнер зависимостей в каждую задачу
+                args=[deps],
                 **job["kwargs"]
             )
         
-        logger.info(f"Все {len(scheduler.get_jobs())} периодических задач успешно настроены и добавлены в планировщик.")
+        logger.info(f"Все {len(scheduler.get_jobs())} периодических задач успешно настроены.")
     
     except Exception as e:
         logger.critical(f"Критическая ошибка при настройке периодических задач: {e}", exc_info=True)
-        # В production можно отправить уведомление администратору о сбое
