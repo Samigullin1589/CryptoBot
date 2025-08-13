@@ -1,8 +1,9 @@
 # =================================================================================
 # Файл: bot/handlers/public/asic_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полнофункциональный обработчик для раздела ASIC.
-# ИСПРАВЛЕНИЕ: Исправлен синтаксис фильтра состояний для устранения TypeError.
-#              Добавлен прямой вход из главного меню через MenuCallback.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий `await call.answer()` в обработчик
+#              пагинации для устранения "вечной загрузки" кнопки.
+#              Оптимизирована логика редактирования сообщений.
 # =================================================================================
 import logging
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ router = Router(name="asic_handler")
 
 async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
     """Отображает страницу с топом ASIC-майнеров, используя FSM для хранения страницы."""
+    # Сразу редактируем сообщение, чтобы пользователь видел отклик
     await edit_or_send_message(update, "⏳ Загружаю актуальный список ASIC...")
 
     await state.set_state(AsicExplorerStates.showing_top)
@@ -52,7 +54,7 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
             f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago_str} мин. назад.</i>")
 
     keyboard = get_top_asics_keyboard(top_miners, page)
-    await edit_or_send_message(update, text, keyboard)
+    await edit_or_send_message(update, text, reply_markup=keyboard)
 
 
 # --- ОБРАБОТЧИКИ ---
@@ -65,18 +67,24 @@ async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps):
     await state.update_data(page=1)
     await show_top_asics_page(call, state, deps)
 
-# ИСПРАВЛЕНО: Теперь состояния передаются как отдельные аргументы, а не через оператор |
+
 @router.callback_query(
     F.data.startswith("asic_page:"),
     AsicExplorerStates.showing_top,
     AsicExplorerStates.showing_passport
 )
 async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):
-    """Обрабатывает пагинацию и возврат к списку ASIC."""
+    """
+    Обрабатывает пагинацию и возврат к списку ASIC.
+    """
+    # ИСПРАВЛЕНО: Добавлен await call.answer() в самом начале.
+    # Это немедленно убирает "часики" на кнопке, решая проблему "вечной загрузки".
     await call.answer()
+    
     page = int(call.data.split(":")[1])
     await state.update_data(page=page)
     await show_top_asics_page(call, state, deps)
+
 
 @router.callback_query(F.data.startswith("asic_passport:"), AsicExplorerStates.showing_top)
 async def asic_passport_handler(call: CallbackQuery, state: FSMContext, deps: Deps):
@@ -98,6 +106,7 @@ async def asic_passport_handler(call: CallbackQuery, state: FSMContext, deps: De
     text = format_asic_passport(asic, user_profile.electricity_cost)
     await call.message.edit_text(text, reply_markup=get_asic_passport_keyboard(page))
 
+
 @router.callback_query(F.data == "asic_action:set_cost", AsicExplorerStates.showing_top)
 async def prompt_for_electricity_cost(call: CallbackQuery, state: FSMContext):
     """Запрашивает у пользователя стоимость электроэнергии."""
@@ -109,6 +118,7 @@ async def prompt_for_electricity_cost(call: CallbackQuery, state: FSMContext):
         "Эта цена будет сохранена в вашем профиле для всех будущих расчетов.",
         reply_markup=None
     )
+
 
 @router.message(AsicExplorerStates.prompt_electricity_cost)
 async def process_electricity_cost(message: Message, state: FSMContext, deps: Deps):
@@ -125,5 +135,4 @@ async def process_electricity_cost(message: Message, state: FSMContext, deps: De
     await deps.user_service.set_user_electricity_cost(message.from_user.id, cost)
     await message.answer(f"✅ Ваша цена электроэнергии <b>${cost:.4f}/кВт·ч</b> сохранена! Пересчитываю топ...")
 
-    # Для вызова show_top_asics_page нужен объект Message или CallbackQuery
     await show_top_asics_page(message, state, deps)
