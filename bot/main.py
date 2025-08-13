@@ -1,14 +1,15 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Точка входа с улучшенной архитектурой и роутингом.
-# ИСПРАВЛЕНИЕ: Логика создания Redis-пула полностью передана в DI-контейнер Deps.
+# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
+# Описание: Точка входа с интегрированным Health Check сервером и
+#           обработкой сигналов для Graceful Shutdown на Render.
 # =================================================================================
 
 import asyncio
 import logging
+import signal
 
 import redis.asyncio as redis
-from aiohttp import ClientSession
+from aiohttp import web, ClientSession
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.redis import RedisStorage
@@ -52,7 +53,7 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(game_handler.router)
     dp.include_router(common_router)
     dp.include_router(threat_router)
-    logger.info("Все роутеры успешно зарегистрированы в правильном порядке.")
+    logger.info("Все роутеры успешно зарегистрированы.")
 
 async def set_bot_commands(bot: Bot):
     commands = [
@@ -86,29 +87,59 @@ async def on_shutdown(bot: Bot, deps: Deps):
         await bot.session.close()
     logger.info("Процедуры on_shutdown завершены. Бот остановлен.")
 
+# --- Health Check для Render ---
+async def health_check(request: web.Request) -> web.Response:
+    """Отвечает на HTTP-запросы для проверки работоспособности."""
+    logger.debug("Health check эндпоинт получил запрос.")
+    return web.json_response({"status": "ok"})
+
+async def start_health_check_server():
+    """Запускает простой aiohttp сервер для Health Check."""
+    app = web.Application()
+    app.router.add_get("/healthz", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Render предоставляет переменную окружения PORT
+    port = int(settings.PORT)
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Health check сервер запущен на порту {port}.")
+    # Keep the server running
+    while True:
+        await asyncio.sleep(3600)
+
 async def main():
     setup_logging(level=settings.log_level, format="json")
     
     async with ClientSession() as http_session:
-        # ИСПРАВЛЕНО: Deps теперь сам управляет созданием Redis-пула.
         deps = await Deps.build(settings=settings, http_session=http_session, bot=Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML")))
         
         storage = RedisStorage(redis=deps.redis_pool)
         dp = Dispatcher(storage=storage)
-        bot = deps.bot # Используем бота, созданного внутри Deps
+        bot = deps.bot
 
         dp.workflow_data["deps"] = deps
-        
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
         dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
-        
         register_all_routers(dp)
         
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
         
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, deps=deps)
+        
+        # --- Graceful Shutdown & Health Check ---
+        loop = asyncio.get_event_loop()
+        
+        # Создаем задачи для поллинга и health check
+        polling_task = loop.create_task(dp.start_polling(bot, deps=deps))
+        health_check_task = loop.create_task(start_health_check_server())
+
+        # Обрабатываем сигнал SIGTERM от Render для чистого завершения
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, lambda: asyncio.create_task(dp.stop_polling()))
+
+        await asyncio.gather(polling_task, health_check_task)
 
 if __name__ == "__main__":
     try:
