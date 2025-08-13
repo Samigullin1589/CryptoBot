@@ -3,7 +3,8 @@
 # Описание: Полнофункциональный обработчик для раздела "Крипто-Центр".
 #           Управляет FSM, навигацией по меню и отображением данных от AI.
 # ИСПРАВЛЕНИЕ: Файл полностью переписан для реализации логики обработчика,
-#              чтобы устранить ошибку ImportError.
+#              чтобы устранить ошибку ImportError. Добавлена точка входа
+#              из главного меню через MenuCallback.
 # =================================================================================
 import logging
 from math import ceil
@@ -27,11 +28,11 @@ from bot.keyboards.crypto_center_keyboards import (
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# --- ГЛАВНОЕ МЕНЮ ---
+# --- ТОЧКА ВХОДА И ГЛАВНОЕ МЕНЮ ---
 
 @router.callback_query(MenuCallback.filter(F.action == "crypto_center"))
-async def crypto_center_main_menu(call: types.CallbackQuery, state: FSMContext, deps: Deps):
-    """Отображает главное меню Крипто-Центра."""
+async def crypto_center_entry(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Точка входа в Крипто-Центр из главного меню."""
     await state.clear()
     await state.set_state(CryptoCenterStates.main_menu)
     text = (
@@ -41,6 +42,11 @@ async def crypto_center_main_menu(call: types.CallbackQuery, state: FSMContext, 
     )
     await call.message.edit_text(text, reply_markup=get_crypto_center_main_menu_keyboard())
     await call.answer()
+
+@router.callback_query(F.data == f"{CC_CALLBACK_PREFIX}:main")
+async def crypto_center_main_menu_callback(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Возврат в главное меню Крипто-Центра."""
+    await crypto_center_entry(call, state, deps)
 
 # --- СЕКЦИЯ AIRDROP ALPHA ---
 
@@ -57,16 +63,12 @@ async def show_airdrop_list(call: types.CallbackQuery, state: FSMContext, deps: 
         return
 
     total_pages = ceil(len(projects) / PAGE_SIZE)
-    start_index = page * PAGE_SIZE
-    end_index = start_index + PAGE_SIZE
-
-    paginated_projects = projects[start_index:end_index]
+    paginated_projects = projects[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
     text = "💎 <b>Airdrop Alpha</b>\n\nAI подобрал для вас список потенциальных Airdrop'ов:"
     keyboard = get_airdrop_list_keyboard(paginated_projects, page, total_pages)
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()
-
 
 @router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:view:"))
 async def show_airdrop_details(call: types.CallbackQuery, state: FSMContext, deps: Deps):
@@ -95,7 +97,6 @@ async def show_airdrop_details(call: types.CallbackQuery, state: FSMContext, dep
     keyboard = get_airdrop_details_keyboard(project, completed_tasks)
     await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
     await call.answer()
-
 
 @router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:task:"))
 async def toggle_airdrop_task(call: types.CallbackQuery, state: FSMContext, deps: Deps):
@@ -126,27 +127,24 @@ async def show_mining_alpha(call: types.CallbackQuery, state: FSMContext, deps: 
 
     signals = await deps.crypto_center_service.get_mining_alpha(call.from_user.id)
     if not signals:
-        await call.message.edit_text("😕 AI не обнаружил интересных сигналов для майнинга.", reply_markup=get_crypto_center_main_menu_keyboard())
+        await call.message.edit_text("😕 AI не обнаружил интересных сигналов для майнинга в данный момент.", reply_markup=get_crypto_center_main_menu_keyboard())
         return
 
     total_pages = ceil(len(signals) / PAGE_SIZE)
-    start_index = page * PAGE_SIZE
-    end_index = start_index + PAGE_SIZE
-    paginated_signals = signals[start_index:end_index]
+    paginated_signals = signals[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
     signals_text = []
     for signal in paginated_signals:
-        guide_link = f" ({hlink('гайд', signal['guide_url'])})" if signal.get('guide_url') else ""
+        guide_link = f" ({hlink('гайд', signal.get('guide_url', ''))})" if signal.get('guide_url') else ""
         signals_text.append(
-            f"🔹 <b>{signal['name']} ({signal['algorithm']})</b>{guide_link}\n"
-            f"   <i>{signal['description']}</i>"
+            f"🔹 <b>{signal.get('name', 'N/A')} ({signal.get('algorithm', 'N/A')})</b>{guide_link}\n"
+            f"   <i>{signal.get('description', '')}</i>"
         )
 
     text = "⚙️ <b>Mining Alpha</b>\n\nAI обнаружил следующие возможности:\n\n" + "\n\n".join(signals_text)
     keyboard = get_mining_alpha_keyboard(paginated_signals, page, total_pages)
     await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
     await call.answer()
-
 
 # --- СЕКЦИЯ LIVE ЛЕНТА ---
 
@@ -159,20 +157,16 @@ async def show_live_feed(call: types.CallbackQuery, state: FSMContext, deps: Dep
 
     articles = await deps.crypto_center_service.get_live_feed_with_summary()
     if not articles:
-        await call.message.edit_text("😕 Не удалось загрузить новостную ленту.", reply_markup=get_crypto_center_main_menu_keyboard())
+        await call.message.edit_text("😕 Не удалось загрузить новостную ленту. Попробуйте позже.", reply_markup=get_crypto_center_main_menu_keyboard())
         return
 
     total_pages = ceil(len(articles) / PAGE_SIZE)
-    start_index = page * PAGE_SIZE
-    end_index = start_index + PAGE_SIZE
-    paginated_articles = articles[start_index:end_index]
+    paginated_articles = articles[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
 
     articles_text = []
     for article in paginated_articles:
         summary = f"\n   <b>AI-суть:</b> <i>{article.ai_summary}</i>" if article.ai_summary else ""
-        articles_text.append(
-            f"▪️ {hlink(article.title, article.url)} ({article.source}){summary}"
-        )
+        articles_text.append(f"▪️ {hlink(article.title, article.url)} ({article.source}){summary}")
 
     text = "📰 <b>Live Лента</b>\n\nСамые важные новости с кратким анализом от AI:\n\n" + "\n\n".join(articles_text)
     keyboard = get_news_feed_keyboard(paginated_articles, page, total_pages)

@@ -2,7 +2,8 @@
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Точка входа с улучшенной архитектурой и роутингом.
 # ИСПРАВЛЕНИЕ: Переход на прямые импорты роутеров для устранения
-#              циклических зависимостей.
+#              циклических зависимостей и гарантии правильного порядка
+#              регистрации.
 # =================================================================================
 
 import asyncio
@@ -22,15 +23,22 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# ИСПРАВЛЕНО: Роутеры импортируются напрямую из своих модулей
+# --- Прямой импорт всех роутеров ---
+# Административные хэндлеры
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.admin.verification_admin_handler import router as verification_admin_router
 from bot.handlers.admin.stats_handler import stats_router
 from bot.handlers.admin.moderation_handler import moderation_router
 from bot.handlers.admin.game_admin_handler import router as game_admin_router
 
+# Хэндлеры инструментов
+from bot.handlers.tools.calculator_handler import calculator_router
+
+# Игровые хэндлеры
+from bot.handlers.game.mining_game_handler import game_router as mining_game_router
+
+# Публичные хэндлеры (в определенном порядке)
 from bot.handlers.public.menu_handlers import router as menu_router
-from bot.handlers.public.common_handler import router as common_router
 from bot.handlers.public.price_handler import router as price_router
 from bot.handlers.public.asic_handler import router as asic_router
 from bot.handlers.public.news_handler import router as news_router
@@ -41,22 +49,27 @@ from bot.handlers.public.crypto_center_handler import router as crypto_center_ro
 from bot.handlers.public.verification_public_handler import router as verification_public_router
 from bot.handlers.public.achievements_handler import router as achievements_router
 from bot.handlers.public.game_handler import router as game_router
+from bot.handlers.public.common_handler import router as common_router
 
-from bot.handlers.game.mining_game_handler import game_router as mining_game_router
-from bot.handlers.tools.calculator_handler import calculator_router
+# Хэндлеры безопасности (должны быть последними)
 from bot.handlers.threats.threat_handler import threat_router
 
 logger = logging.getLogger(__name__)
 
 def register_all_routers(dp: Dispatcher):
-    """Централизованно и явно регистрирует все роутеры приложения."""
+    """Централизованно и явно регистрирует все роутеры приложения в правильном порядке."""
+    # Административные
     dp.include_router(admin_router)
     dp.include_router(verification_admin_router)
     dp.include_router(stats_router)
     dp.include_router(moderation_router)
     dp.include_router(game_admin_router)
-    dp.include_router(mining_game_router)
+
+    # Инструменты и игра
     dp.include_router(calculator_router)
+    dp.include_router(mining_game_router)
+
+    # Публичные функции
     dp.include_router(menu_router)
     dp.include_router(price_router)
     dp.include_router(asic_router)
@@ -68,8 +81,13 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(achievements_router)
     dp.include_router(market_router)
     dp.include_router(game_router)
+    
+    # Общий хэндлер для команд и AI должен идти после всех специфичных
     dp.include_router(common_router)
+    
+    # Хэндлер угроз должен идти последним, чтобы перехватывать все, что не подошло выше
     dp.include_router(threat_router)
+
     logger.info("Все роутеры успешно зарегистрированы в правильном порядке.")
 
 async def set_bot_commands(bot: Bot):
@@ -111,15 +129,26 @@ async def main():
     storage = RedisStorage(redis=redis_pool)
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=storage)
-    register_all_routers(dp)
+    
     async with ClientSession() as http_session:
         deps = await Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool, bot=bot)
+        
+        # Передаем зависимости во все хэндлеры и middleware
+        dp.workflow_data["deps"] = deps
+        
+        # Регистрируем Middleware
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
         dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
+        
+        # Регистрируем роутеры
+        register_all_routers(dp)
+        
+        # Регистрируем startup/shutdown хуки
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
+        
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, deps=deps)
+        await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
