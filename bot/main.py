@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Точка входа с улучшенной архитектурой и роутингом.
-# ИСПРАВЛЕНИЕ: Изменен порядок импортов для окончательного решения
-#              проблемы циклических зависимостей.
+# ИСПРАВЛЕНИЕ: Переход на прямые импорты роутеров для устранения
+#              циклических зависимостей.
 # =================================================================================
 
 import asyncio
@@ -22,17 +22,13 @@ from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.jobs.scheduled_tasks import setup_jobs
 
-# ИСПРАВЛЕНО: Роутеры импортируются в порядке, разрывающем цикл зависимостей.
-# Сначала импортируем навигатор, который зависит от всех остальных.
-
-# Админские роутеры
+# ИСПРАВЛЕНО: Роутеры импортируются напрямую из своих модулей
 from bot.handlers.admin.admin_menu import admin_router
 from bot.handlers.admin.verification_admin_handler import router as verification_admin_router
 from bot.handlers.admin.stats_handler import stats_router
 from bot.handlers.admin.moderation_handler import moderation_router
 from bot.handlers.admin.game_admin_handler import router as game_admin_router
 
-# Публичные роутеры (в специальном порядке)
 from bot.handlers.public.menu_handlers import router as menu_router
 from bot.handlers.public.common_handler import router as common_router
 from bot.handlers.public.price_handler import router as price_router
@@ -46,32 +42,21 @@ from bot.handlers.public.verification_public_handler import router as verificati
 from bot.handlers.public.achievements_handler import router as achievements_router
 from bot.handlers.public.game_handler import router as game_router
 
-# Игровые роутеры
 from bot.handlers.game.mining_game_handler import game_router as mining_game_router
-
-# Инструменты
 from bot.handlers.tools.calculator_handler import calculator_router
-
-# Угрозы
 from bot.handlers.threats.threat_handler import threat_router
-
 
 logger = logging.getLogger(__name__)
 
 def register_all_routers(dp: Dispatcher):
     """Централизованно и явно регистрирует все роутеры приложения."""
-    # Админские роутеры
     dp.include_router(admin_router)
     dp.include_router(verification_admin_router)
     dp.include_router(stats_router)
     dp.include_router(moderation_router)
     dp.include_router(game_admin_router)
-
-    # Роутеры с FSM и конкретными сценариями
     dp.include_router(mining_game_router)
     dp.include_router(calculator_router)
-
-    # Основные публичные роутеры
     dp.include_router(menu_router)
     dp.include_router(price_router)
     dp.include_router(asic_router)
@@ -83,15 +68,9 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(achievements_router)
     dp.include_router(market_router)
     dp.include_router(game_router)
-    
-    # Общий обработчик текста и команд /start, /help
     dp.include_router(common_router)
-
-    # Обработка угроз (самый последний)
     dp.include_router(threat_router)
-    
     logger.info("Все роутеры успешно зарегистрированы в правильном порядке.")
-
 
 async def set_bot_commands(bot: Bot):
     commands = [
@@ -104,18 +83,15 @@ async def set_bot_commands(bot: Bot):
     await bot.set_my_commands(commands, BotCommandScopeDefault())
     logger.info("Команды бота успешно установлены.")
 
-
 async def on_startup(bot: Bot, deps: Deps):
     logger.info("Запуск процедур on_startup...")
     await set_bot_commands(bot)
     await deps.coin_list_service.update_coin_list()
     setup_jobs(deps.scheduler, deps)
     deps.scheduler.start()
-    logger.info("Планировщик задач запущен.")
     if deps.admin_service:
         await deps.admin_service.notify_admins("✅ Бот успешно запущен!")
     logger.info("Процедуры on_startup завершены.")
-
 
 async def on_shutdown(bot: Bot, deps: Deps):
     logger.info("Запуск процедур on_shutdown...")
@@ -123,47 +99,27 @@ async def on_shutdown(bot: Bot, deps: Deps):
         await deps.admin_service.notify_admins("❗️ Бот останавливается!")
     if deps.scheduler and deps.scheduler.running:
         deps.scheduler.shutdown(wait=False)
-        logger.info("Планировщик задач остановлен.")
     if deps.redis_pool:
         await deps.redis_pool.close()
-        logger.info("Пул соединений Redis закрыт.")
     if bot.session:
         await bot.session.close()
-        logger.info("Сессия бота закрыта.")
     logger.info("Процедуры on_shutdown завершены. Бот остановлен.")
-
 
 async def main():
     setup_logging(level=settings.log_level, format="json")
-    
     redis_pool = redis.from_url(str(settings.REDIS_URL), encoding="utf-8", decode_responses=True)
     storage = RedisStorage(redis=redis_pool)
-
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=storage)
-
     register_all_routers(dp)
-
     async with ClientSession() as http_session:
-        deps = await Deps.build(
-            settings=settings,
-            http_session=http_session,
-            redis_pool=redis_pool,
-            bot=bot
-        )
-
+        deps = await Deps.build(settings=settings, http_session=http_session, redis_pool=redis_pool, bot=bot)
         dp.update.middleware(ThrottlingMiddleware(storage=storage))
         dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
-        logger.info("Все Middleware успешно зарегистрированы.")
-        
         dp.startup.register(on_startup)
         dp.shutdown.register(on_shutdown)
-
         await bot.delete_webhook(drop_pending_updates=True)
-
-        logger.info("Запуск процесса опроса Telegram...")
         await dp.start_polling(bot, deps=deps)
-
 
 if __name__ == "__main__":
     try:

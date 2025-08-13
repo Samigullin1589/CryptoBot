@@ -1,7 +1,7 @@
 # ===============================================================
-# Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/handlers/tools/calculator_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - РЕФАКТОРИНГ)
 # Описание: "Тонкий" обработчик для "Калькулятора доходности".
-# ИСПРАВЛЕНИЕ: Добавлена клавиатура навигации к сообщению с результатом.
+# ИСПРАВЛЕНИЕ: Добавлен фильтр MenuCallback для прямого отклика на кнопку меню.
 # ===============================================================
 import logging
 from typing import Union
@@ -14,25 +14,30 @@ from bot.keyboards.mining_keyboards import (
     get_calculator_cancel_keyboard, get_currency_selection_keyboard,
     get_asic_selection_keyboard, get_calculator_result_keyboard
 )
+from bot.keyboards.callback_factories import MenuCallback
 from bot.utils.dependencies import Deps
 from bot.utils.models import AsicMiner, CalculationInput
 from bot.utils.formatters import format_calculation_result
 
-calculator_router = Router()
+calculator_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-@calculator_router.callback_query(F.data == "nav:calculator")
-async def start_profit_calculator(call: CallbackQuery, state: FSMContext, deps: Deps, **kwargs):
+@calculator_router.callback_query(MenuCallback.filter(F.action == "calculator"))
+async def start_profit_calculator(call: CallbackQuery, state: FSMContext, deps: Deps):
+    """Запускает сценарий калькулятора доходности из главного меню."""
     await state.clear()
     await deps.admin_service.track_action(call.from_user.id, "nav:calculator")
     
     text = "Выберите валюту, в которой вы укажете стоимость электроэнергии:"
-    await call.message.edit_text(text, reply_markup=get_currency_selection_keyboard())
+    keyboard = get_currency_selection_keyboard()
+    
+    await call.message.edit_text(text, reply_markup=keyboard)
     await state.set_state(CalculatorStates.waiting_for_currency)
     await call.answer()
 
 @calculator_router.callback_query(F.data == "calc_action:cancel")
 async def cancel_calculator(call: CallbackQuery, state: FSMContext):
+    """Отменяет сценарий калькулятора в любом состоянии."""
     current_state = await state.get_state()
     if current_state is None:
         return await call.answer()
@@ -106,12 +111,12 @@ async def process_asic_selection_item(call: CallbackQuery, state: FSMContext):
     asic_list = [AsicMiner(**data) for data in user_data.get("asic_list_json", [])]
 
     if asic_index >= len(asic_list):
-        return await call.answer("❌ Ошибка выбора. Список мог обновиться. Попробуйте снова.", show_alert=True)
+        return await call.answer("❌ Ошибка выбора. Список мог обновиться.", show_alert=True)
         
     await state.update_data(selected_asic_json=asic_list[asic_index].model_dump())
     
     await call.message.edit_text(
-        "📊 Введите комиссию вашего пула в % (например, <code>1</code> или <code>1.5</code>):",
+        "📊 Введите комиссию вашего пула в % (например, <code>1</code>):",
         reply_markup=get_calculator_cancel_keyboard()
     )
     await state.set_state(CalculatorStates.waiting_for_pool_commission)
@@ -140,12 +145,10 @@ async def process_pool_commission(message: Message, state: FSMContext, deps: Dep
     result = await deps.mining_service.calculate_btc_profitability(calc_input)
     
     if not result:
-         await msg.edit_text("❌ Не удалось получить ключевые данные для расчета. Попробуйте позже.")
+         await msg.edit_text("❌ Не удалось получить данные для расчета. Попробуйте позже.")
          await state.clear()
          return
 
     result_text = format_calculation_result(result)
-    
-    # ИСПРАВЛЕНО: Добавляем клавиатуру к сообщению с результатом
     await msg.edit_text(result_text, reply_markup=get_calculator_result_keyboard(), disable_web_page_preview=True)
     await state.clear()

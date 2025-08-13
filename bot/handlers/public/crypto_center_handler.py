@@ -1,138 +1,185 @@
-# ==================================================================================
-# Файл: bot/services/crypto_center_service.py (ВЕРСИЯ "ГЕНИЙ 3.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
-# Описание: Полностью самодостаточный и персонализированный сервис-оркестратор.
-# ИСПРАВЛЕНИЕ: Добавлена надёжная проверка и десериализация данных,
-#              получаемых как из кэша, так и напрямую от AI.
-# ==================================================================================
-
-import json
+# =================================================================================
+# Файл: bot/handlers/public/crypto_center_handler.py (ВЕРСИЯ "Distinguished Engineer" - ПОЛНОСТЬЮ ИСПРАВЛЕННЫЙ)
+# Описание: Полнофункциональный обработчик для раздела "Крипто-Центр".
+#           Управляет FSM, навигацией по меню и отображением данных от AI.
+# ИСПРАВЛЕНИЕ: Файл полностью переписан для реализации логики обработчика,
+#              чтобы устранить ошибку ImportError.
+# =================================================================================
 import logging
-import asyncio
-from typing import List, Dict, Any, Optional
+from math import ceil
+from aiogram import Router, F, types
+from aiogram.fsm.context import FSMContext
+from aiogram.utils.markdown import hlink
 
-import redis.asyncio as redis
-from bs4 import BeautifulSoup
+from bot.utils.dependencies import Deps
+from bot.states.crypto_center_states import CryptoCenterStates
+from bot.keyboards.crypto_center_keyboards import (
+    get_crypto_center_main_menu_keyboard,
+    get_airdrop_list_keyboard,
+    get_airdrop_details_keyboard,
+    get_mining_alpha_keyboard,
+    get_news_feed_keyboard,
+    CC_CALLBACK_PREFIX,
+    PAGE_SIZE
+)
 
-from bot.config.settings import CryptoCenterServiceConfig
-from bot.services.ai_content_service import AIContentService
-from bot.services.news_service import NewsService
-from bot.utils.keys import KeyFactory
-from bot.utils.models import NewsArticle, AirdropProject
-from bot.texts.ai_prompts import get_personalized_alpha_prompt
-
+router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-class CryptoCenterService:
-    """Персональный AI-ассистент для навигации в мире криптовалют."""
+# --- ГЛАВНОЕ МЕНЮ ---
 
-    def __init__(self, redis: redis.Redis, ai_service: AIContentService,
-                 news_service: NewsService, config: CryptoCenterServiceConfig):
-        self.redis = redis
-        self.ai_service = ai_service
-        self.news_service = news_service
-        self.config = config
-        self.keys = KeyFactory
+@router.callback_query(F.data == f"{CC_CALLBACK_PREFIX}:main")
+async def crypto_center_main_menu(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Отображает главное меню Крипто-Центра."""
+    await state.clear()
+    await state.set_state(CryptoCenterStates.main_menu)
+    text = (
+        "💎 <b>Крипто-Центр</b>\n\n"
+        "Это ваш персональный хаб, где AI-аналитик ищет для вас самые "
+        "перспективные возможности на рынке."
+    )
+    await call.message.edit_text(text, reply_markup=get_crypto_center_main_menu_keyboard())
+    await call.answer()
 
-    async def _get_user_interest_profile(self, user_id: int) -> Dict[str, List[str]]:
-        profile_key = self.keys.user_interest_profile(user_id)
-        tags_raw = await self.redis.smembers(f"{profile_key}:tags")
-        coins_raw = await self.redis.smembers(f"{profile_key}:coins")
-        return {"tags": [t for t in tags_raw], "interacted_coins": [c for c in coins_raw]}
+# --- СЕКЦИЯ AIRDROP ALPHA ---
 
-    async def update_user_interest(self, user_id: int, tags: List[str] = None, coins: List[str] = None):
-        profile_key = self.keys.user_interest_profile(user_id)
-        async with self.redis.pipeline(transaction=True) as pipe:
-            if tags: pipe.sadd(f"{profile_key}:tags", *tags)
-            if coins: pipe.sadd(f"{profile_key}:coins", *coins)
-            await pipe.execute()
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:list:"))
+async def show_airdrop_list(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Отображает список Airdrop-проектов с пагинацией."""
+    page = int(call.data.split(":")[-1])
+    await state.set_state(CryptoCenterStates.viewing_airdrops_list)
+    await call.message.edit_text("⏳ Ищу самые горячие Airdrop'ы...")
 
-    async def _generate_alpha(self, user_id: int, alpha_type: str, json_schema: Dict) -> List[Dict[str, Any]]:
-        """Универсальный метод для генерации персонализированной 'альфы' с помощью AI-поиска."""
-        user_profile = await self._get_user_interest_profile(user_id)
-        cache_key = self.keys.personalized_alpha_cache(user_id, alpha_type)
-
-        if cached_data := await self.redis.get(cache_key):
-            logger.info(f"Serving {alpha_type} alpha for user {user_id} from cache.")
-            try:
-                # Десериализуем JSON-строку из кэша
-                return json.loads(cached_data)
-            except json.JSONDecodeError:
-                logger.error("Failed to decode cached data, fetching fresh.")
+    projects = await deps.crypto_center_service.get_airdrop_alpha(call.from_user.id)
+    if not projects:
+        await call.message.edit_text("😕 На данный момент AI не нашел подходящих Airdrop-проектов для вашего профиля.", reply_markup=get_crypto_center_main_menu_keyboard())
+        return
         
-        logger.info(f"Generating fresh personalized {alpha_type} alpha for user {user_id} via AI Search...")
+    total_pages = ceil(len(projects) / PAGE_SIZE)
+    start_index = page * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    
+    paginated_projects = projects[start_index:end_index]
+
+    text = "💎 <b>Airdrop Alpha</b>\n\nAI подобрал для вас список потенциальных Airdrop'ов:"
+    keyboard = get_airdrop_list_keyboard(paginated_projects, page, total_pages)
+    await call.message.edit_text(text, reply_markup=keyboard)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:view:"))
+async def show_airdrop_details(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Показывает детальную информацию о проекте и чек-лист."""
+    project_id = call.data.split(":")[-1]
+    user_id = call.from_user.id
+    
+    await state.set_state(CryptoCenterStates.viewing_airdrop_details)
+    await state.update_data(current_airdrop_id=project_id)
+
+    # Получаем все проекты заново, чтобы найти нужный
+    projects = await deps.crypto_center_service.get_airdrop_alpha(user_id)
+    project = next((p for p in projects if p.id == project_id), None)
+
+    if not project:
+        await call.answer("❌ Проект не найден. Возможно, список обновился.", show_alert=True)
+        return
+
+    completed_tasks = await deps.crypto_center_service.get_user_progress(user_id, project_id)
+
+    tasks_text = "\n".join(
+        f"▪️ {task}" for task in project.tasks
+    )
+
+    text = (
+        f"💎 <b>{project.name}</b>\n"
+        f"<i>Статус: {project.status}</i>\n\n"
+        f"{project.description}\n\n"
+        f"<b>Чек-лист для получения дропа:</b>\n{tasks_text}"
+    )
+    keyboard = get_airdrop_details_keyboard(project, completed_tasks)
+    await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:airdrops:task:"))
+async def toggle_airdrop_task(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Отмечает/снимает отметку о выполнении задачи в чек-листе."""
+    parts = call.data.split(":")
+    project_id, task_index = parts[3], int(parts[4])
+    user_id = call.from_user.id
+
+    await deps.crypto_center_service.toggle_task_status(user_id, project_id, task_index)
+    
+    # Обновляем клавиатуру, не перерисовывая все сообщение
+    projects = await deps.crypto_center_service.get_airdrop_alpha(user_id)
+    project = next((p for p in projects if p.id == project_id), None)
+    if project:
+        completed_tasks = await deps.crypto_center_service.get_user_progress(user_id, project_id)
+        keyboard = get_airdrop_details_keyboard(project, completed_tasks)
+        await call.message.edit_reply_markup(reply_markup=keyboard)
         
-        prompt = get_personalized_alpha_prompt(user_profile, alpha_type)
-        result = await self.ai_service.generate_structured_content(prompt, json_schema)
+    await call.answer("Статус задачи обновлен.")
 
-        if result:
-            # ИСПРАВЛЕНО: Добавлена проверка на случай, если AI вернул строку вместо объекта
-            if isinstance(result, str):
-                try: 
-                    result = json.loads(result)
-                except json.JSONDecodeError:
-                    logger.error(f"AI returned a non-JSON string for {alpha_type}: {result}")
-                    return []
-            
-            logger.info(f"AI Search for user {user_id} found {len(result)} {alpha_type} opportunities.")
-            await self.redis.set(cache_key, json.dumps(result, ensure_ascii=False), ex=self.config.alpha_cache_ttl_seconds)
-            return result
-        
-        logger.warning(f"AI Search for user {user_id} returned no valid {alpha_type} opportunities.")
-        return []
+# --- СЕКЦИЯ MINING ALPHA ---
 
-    async def get_airdrop_alpha(self, user_id: int) -> List[AirdropProject]:
-        json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "status": {"type": "STRING"}, "tasks": {"type": "ARRAY", "items": {"type": "STRING"}}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "status", "tasks"]}}
-        projects_data = await self._generate_alpha(user_id, "airdrop", json_schema)
-        
-        if not isinstance(projects_data, list):
-             logger.error(f"Airdrop alpha data is not a list after generation: {type(projects_data)}")
-             return []
-        
-        return [AirdropProject(**data) for data in projects_data]
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:mining:list:"))
+async def show_mining_alpha(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Отображает список майнинг-сигналов."""
+    page = int(call.data.split(":")[-1])
+    await state.set_state(CryptoCenterStates.viewing_mining_signals)
+    await call.message.edit_text("⏳ Анализирую блокчейн в поисках майнинг-возможностей...")
 
-    async def get_mining_alpha(self, user_id: int) -> List[Dict[str, Any]]:
-        json_schema = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {"id": {"type": "STRING"}, "name": {"type": "STRING"}, "description": {"type": "STRING"}, "algorithm": {"type": "STRING"}, "hardware": {"type": "STRING"}, "status": {"type": "STRING"}, "guide_url": {"type": "STRING"}}, "required": ["id", "name", "description", "algorithm", "hardware"]}}
-        return await self._generate_alpha(user_id, "mining", json_schema)
+    signals = await deps.crypto_center_service.get_mining_alpha(call.from_user.id)
+    if not signals:
+        await call.message.edit_text("😕 AI не обнаружил интересных сигналов для майнинга в данный момент.", reply_markup=get_crypto_center_main_menu_keyboard())
+        return
 
-    async def get_live_feed_with_summary(self) -> List[NewsArticle]:
-        cache_key = self.keys.live_feed_cache()
-        if cached_data := await self.redis.get(cache_key):
-            return [NewsArticle(**data) for data in json.loads(cached_data)]
+    total_pages = ceil(len(signals) / PAGE_SIZE)
+    start_index = page * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    paginated_signals = signals[start_index:end_index]
+    
+    signals_text = []
+    for signal in paginated_signals:
+        guide_link = f" ({hlink('гайд', signal['guide_url'])})" if signal.get('guide_url') else ""
+        signals_text.append(
+            f"🔹 <b>{signal['name']} ({signal['algorithm']})</b>{guide_link}\n"
+            f"   <i>{signal['description']}</i>"
+        )
 
-        logger.info("Generating fresh live feed with summaries...")
-        articles = await self.news_service.get_all_latest_news()
-        if not articles:
-            return []
+    text = "⚙️ <b>Mining Alpha</b>\n\nAI обнаружил следующие возможности:\n\n" + "\n\n".join(signals_text)
+    keyboard = get_mining_alpha_keyboard(paginated_signals, page, total_pages)
+    await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
+    await call.answer()
 
-        summary_tasks = []
-        for article in articles[:5]:
-            clean_text = BeautifulSoup(article.body, 'html.parser').get_text(separator=' ', strip=True)
-            if clean_text:
-                summary_tasks.append(self.ai_service.generate_summary(clean_text))
-        
-        summaries = await asyncio.gather(*summary_tasks, return_exceptions=True)
-        
-        for article, summary in zip(articles, summaries):
-            if isinstance(summary, str):
-                article.ai_summary = summary
-            else:
-                logger.error(f"Ошибка при суммаризации статьи '{article.title}': {summary}")
-            
-        await self.redis.set(cache_key, json.dumps([a.model_dump(mode='json') for a in articles]), ex=self.config.feed_cache_ttl_seconds)
-        return articles
 
-    async def get_user_progress(self, user_id: int, airdrop_id: str) -> List[int]:
-        progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
-        completed_tasks = await self.redis.smembers(progress_key)
-        return sorted([int(task_idx) for task_idx in completed_tasks])
+# --- СЕКЦИЯ LIVE ЛЕНТА ---
 
-    async def toggle_task_status(self, user_id: int, airdrop_id: str, task_index: int):
-        progress_key = self.keys.user_airdrop_progress(user_id, airdrop_id)
-        task_index_str = str(task_index)
-        
-        if await self.redis.srem(progress_key, task_index_str):
-            logger.info(f"User {user_id} marked task {task_index} of airdrop '{airdrop_id}' as NOT completed.")
-        else:
-            await self.redis.sadd(progress_key, task_index_str)
-            logger.info(f"User {user_id} marked task {task_index} of airdrop '{airdrop_id}' as completed.")
-            await self.update_user_interest(user_id, tags=['airdrop_hunter'])
+@router.callback_query(F.data.startswith(f"{CC_CALLBACK_PREFIX}:news:list:"))
+async def show_live_feed(call: types.CallbackQuery, state: FSMContext, deps: Deps):
+    """Отображает live-ленту новостей с AI-суммаризацией."""
+    page = int(call.data.split(":")[-1])
+    await state.set_state(CryptoCenterStates.viewing_feed)
+    await call.message.edit_text("⏳ Собираю и анализирую последнюю информацию...")
+
+    articles = await deps.crypto_center_service.get_live_feed_with_summary()
+    if not articles:
+        await call.message.edit_text("😕 Не удалось загрузить новостную ленту. Попробуйте позже.", reply_markup=get_crypto_center_main_menu_keyboard())
+        return
+
+    total_pages = ceil(len(articles) / PAGE_SIZE)
+    start_index = page * PAGE_SIZE
+    end_index = start_index + PAGE_SIZE
+    paginated_articles = articles[start_index:end_index]
+
+    articles_text = []
+    for article in paginated_articles:
+        summary = f"\n   <b>AI-суть:</b> <i>{article.ai_summary}</i>" if article.ai_summary else ""
+        articles_text.append(
+            f"▪️ {hlink(article.title, article.url)} ({article.source}){summary}"
+        )
+
+    text = "📰 <b>Live Лента</b>\n\nСамые важные новости с кратким анализом от AI:\n\n" + "\n\n".join(articles_text)
+    keyboard = get_news_feed_keyboard(paginated_articles, page, total_pages)
+    await call.message.edit_text(text, reply_markup=keyboard, disable_web_page_preview=True)
+    await call.answer()

@@ -1,16 +1,16 @@
 # =================================================================================
-# Файл: bot/handlers/public/price_handler.py (ПРОДАКШН-ВЕРСИЯ 2025, С ФАБРИКАМИ)
-# Описание: Обработчик для сценария получения цены, использующий CallbackData.
+# Файл: bot/handlers/public/price_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - РЕФАКТОРИНГ)
+# Описание: Обработчик для сценария получения цены.
+# ИСПРАВЛЕНИЕ: Добавлен фильтр MenuCallback для прямого отклика на кнопку меню.
 # =================================================================================
 import logging
-
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
 from bot.keyboards.info_keyboards import get_price_keyboard
-from bot.keyboards.callback_factories import PriceCallback # Импортируем нашу фабрику
+from bot.keyboards.callback_factories import PriceCallback, MenuCallback
 from bot.states.info_states import PriceInquiryState
 from bot.utils.dependencies import Deps
 from bot.utils.formatters import format_price_info
@@ -18,9 +18,9 @@ from bot.utils.formatters import format_price_info
 router = Router(name="price_handler_router")
 logger = logging.getLogger(__name__)
 
-# ИСПРАВЛЕНО: Сигнатура изменена для совместимости с menu_handlers
-async def handle_price_menu_start(call: CallbackQuery, state: FSMContext, deps: Deps, **kwargs):
-    """Точка входа в раздел курсов. Вызывается из menu_handlers."""
+@router.callback_query(MenuCallback.filter(F.action == "price"))
+async def handle_price_menu_start(call: CallbackQuery, state: FSMContext):
+    """Точка входа в раздел курсов, вызывается из главного меню."""
     text = "Курс какой монеты вас интересует? Выберите из популярных или отправьте тикер/название."
     await call.message.edit_text(text, reply_markup=get_price_keyboard())
     await state.set_state(PriceInquiryState.waiting_for_ticker)
@@ -36,10 +36,7 @@ async def show_price_for_coin(target: Message | CallbackQuery, coin_id: str, dep
 
     coin = await deps.coin_list_service.find_coin_by_query(coin_id)
     if not coin:
-        await message.edit_text(
-            f"❌ К сожалению, не удалось найти информацию по '{coin_id}'. Попробуйте еще раз.",
-            reply_markup=get_back_to_main_menu_keyboard()
-        )
+        await message.edit_text(f"❌ Не удалось найти информацию по '{coin_id}'.", reply_markup=get_back_to_main_menu_keyboard())
         return
 
     prices = await deps.price_service.get_prices([coin.id])
@@ -49,17 +46,11 @@ async def show_price_for_coin(target: Message | CallbackQuery, coin_id: str, dep
         response_text = format_price_info(coin, {"price": price_value})
         await message.edit_text(response_text, reply_markup=get_back_to_main_menu_keyboard())
     else:
-        await message.edit_text(
-            f"❌ Не удалось получить курс для {coin.name} ({coin.symbol.upper()}). Попробуйте позже.",
-            reply_markup=get_back_to_main_menu_keyboard()
-        )
+        await message.edit_text(f"❌ Не удалось получить курс для {coin.name}.", reply_markup=get_back_to_main_menu_keyboard())
 
-# Фильтруем по PriceCallback, где action == 'show'
 @router.callback_query(PriceCallback.filter(F.action == "show"))
 async def handle_price_button_callback(call: CallbackQuery, callback_data: PriceCallback, state: FSMContext, deps: Deps):
-    """
-    Обрабатывает нажатие на кнопку с конкретной монетой.
-    """
+    """Обрабатывает нажатие на кнопку с конкретной монетой."""
     await state.clear()
     await show_price_for_coin(call, callback_data.coin_id, deps)
 
