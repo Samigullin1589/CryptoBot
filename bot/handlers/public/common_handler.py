@@ -2,44 +2,36 @@
 # Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УМНАЯ)
 # Описание: Обрабатывает общие команды и текстовый ввод, корректно
 #           различая нажатия на текстовые кнопки и запросы к AI.
-# ИСПРАВЛЕНИЕ: Логика handle_text_as_button адаптирована под новую
-#              систему навигации без единого роутера.
+# ИСПРАВЛЕНИЕ: Исправлена ссылка на обработчик игры для устранения AttributeError.
+#              Улучшены и конкретизированы импорты.
 # =================================================================================
 import logging
-from typing import Union, Dict, Any
+from typing import Dict, Any
 
 from aiogram import F, Router, Bot, types
 from aiogram.filters import CommandStart, Command, CommandObject, BaseFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, User
+from aiogram.types import Message, CallbackQuery
 from aiogram.enums import ChatType
 
 from bot.keyboards.keyboards import get_main_menu_keyboard
 from bot.keyboards.onboarding_keyboards import get_onboarding_start_keyboard, get_onboarding_step_keyboard
 from bot.states.common_states import CommonStates
 from bot.utils.dependencies import Deps
-from bot.utils.formatters import format_price_info
 from bot.utils.text_utils import sanitize_html
-from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS, get_referral_success_text
+from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS
 
-# Импортируем все обработчики, чтобы эмулировать их вызов
-from . import (
-    price_handler,
-    asic_handler,
-    news_handler,
-    quiz_handler,
-    market_info_handler,
-    crypto_center_handler,
-    game_handler
-)
-from ..tools import calculator_handler
+# --- Корректный импорт всех необходимых обработчиков ---
+from bot.handlers.public import price_handler, asic_handler, news_handler, quiz_handler, market_info_handler, crypto_center_handler
+from bot.handlers.tools import calculator_handler
+from bot.handlers.game import mining_game_handler # ИСПРАВЛЕНО: Правильный импорт игрового хендлера
 
 from bot.keyboards.callback_factories import MenuCallback
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# --- Словарь текстовых команд, соответствующих кнопкам меню ---
+# --- Словарь для сопоставления текста кнопки с ее обработчиком ---
 TEXT_COMMAND_MAP: Dict[str, Any] = {
     "💹 Курс": (price_handler.handle_price_menu_start, "price"),
     "⚙️ Топ ASIC": (asic_handler.top_asics_start, "asics"),
@@ -49,17 +41,15 @@ TEXT_COMMAND_MAP: Dict[str, Any] = {
     "⏳ Халвинг": (market_info_handler.handle_halving_info, "halving"),
     "📡 Статус BTC": (market_info_handler.handle_btc_status, "btc_status"),
     "🧠 Викторина": (quiz_handler.handle_quiz_start, "quiz"),
-    "💎 Виртуальный Майнинг": (game_handler.handle_game_menu_entry, "game"),
-    "💎 Крипто-Центр": (crypto_center_handler.crypto_center_main_menu, "crypto_center")
+    # ИСПРАВЛЕНО: Указана правильная функция (handle_mining_menu) и ее источник (mining_game_handler)
+    "💎 Виртуальный Майнинг": (mining_game_handler.handle_mining_menu, "game"),
+    "💎 Крипто-Центр": (crypto_center_handler.crypto_center_entry, "crypto_center")
 }
 
 class AITriggerFilter(BaseFilter):
     async def __call__(self, message: Message, bot: Bot) -> bool:
-        # AI не должен срабатывать на команды
         if not message.text or message.text.startswith('/'):
             return False
-        
-        # AI не должен срабатывать на текст, который дублирует кнопки меню
         if message.text in TEXT_COMMAND_MAP:
             return False
 
@@ -76,19 +66,14 @@ class AITriggerFilter(BaseFilter):
 
 @router.message(CommandStart())
 async def handle_start(message: Message, state: FSMContext, command: CommandObject, deps: Deps):
-    """
-    Обработчик /start. Регистрирует пользователя и запускает онбординг.
-    """
     await state.clear()
     user = message.from_user
-    
     profile, is_new_user = await deps.user_service.get_or_create_user(user)
 
     if is_new_user and command.args:
         try:
             referrer_id = int(command.args)
             logger.info(f"Новый пользователь {user.id} пришел по реферальной ссылке от {referrer_id}")
-            # Логика начисления бонуса рефереру (если будет реализована)
         except (ValueError, TypeError):
             logger.warning(f"Некорректный deeplink-аргумент '{command.args}' от пользователя {user.id}")
     
@@ -141,21 +126,16 @@ async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps)
     """
     handler_func, action = TEXT_COMMAND_MAP[message.text]
     
-    # Создаем "фейковый" CallbackQuery, чтобы передать его в обработчик
-    # Важно, чтобы у него был объект message
     fake_callback_query = types.CallbackQuery(
         id=str(message.message_id),
         from_user=message.from_user,
         chat_instance="fake_chat_instance",
-        message=message, # Передаем исходное сообщение
+        message=message,
         data=MenuCallback(level=0, action=action).pack()
     )
     
-    # aiogram 3+ достаточно умен, чтобы передать в хэндлер только нужные ему аргументы
     await handler_func(call=fake_callback_query, state=state, deps=deps)
 
-
-# Обработчик для AI срабатывает только если фильтр AITriggerFilter вернет True
 @router.message(AITriggerFilter())
 async def handle_text_for_ai(message: Message, state: FSMContext, deps: Deps):
     """
