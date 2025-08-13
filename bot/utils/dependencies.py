@@ -1,15 +1,16 @@
 # =================================================================================
-# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: DI-контейнер с логированием инициализации и асинхронной настройкой сервисов.
-# ИСПРАВЛЕНИЕ: Добавлены недостающие сервисы ModerationService и StopWordService.
+# Файл: bot/utils/dependencies.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
+# Описание: DI-контейнер с логированием и отказоустойчивым подключением к Redis.
+# ИСПРАВЛЕНИЕ: Добавлена логика повторных попыток подключения к Redis при старте.
+#              Подключены все недостающие сервисы для модерации.
 # =================================================================================
-
 import logging
+import asyncio
 import aiohttp
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from pydantic import BaseModel, Field
-from redis.asyncio import Redis
+import redis.asyncio as redis
 
 from bot.config.settings import settings, Settings
 from bot.utils.keys import KeyFactory
@@ -33,7 +34,6 @@ from bot.services.market_service import AsicMarketService
 from bot.services.mining_game_service import MiningGameService
 from bot.services.verification_service import VerificationService
 from bot.services.mining_service import MiningService
-# ИСПРАВЛЕНО: Добавлены импорты для сервисов модерации
 from bot.services.stop_word_service import StopWordService
 from bot.services.moderation_service import ModerationService
 
@@ -43,12 +43,12 @@ class Deps(BaseModel):
     """Data Injection контейнер для всех сервисов и клиентов."""
     settings: Settings
     http_session: aiohttp.ClientSession
-    redis_pool: Redis
+    redis_pool: redis.Redis
     scheduler: AsyncIOScheduler
     bot: Bot
     keys: KeyFactory = Field(default_factory=KeyFactory)
 
-    # Сервисы
+    # Все сервисы приложения
     user_service: UserService
     admin_service: AdminService
     ai_content_service: AIContentService
@@ -67,7 +67,6 @@ class Deps(BaseModel):
     mining_game_service: MiningGameService
     verification_service: VerificationService
     mining_service: MiningService
-    # ИСПРАВЛЕНО: Добавлены сервисы модерации
     stop_word_service: StopWordService
     moderation_service: ModerationService
 
@@ -75,9 +74,27 @@ class Deps(BaseModel):
         arbitrary_types_allowed = True
 
     @classmethod
-    async def build(cls, settings: Settings, http_session: aiohttp.ClientSession, redis_pool: Redis, bot: Bot) -> "Deps":
+    async def build(cls, settings: Settings, http_session: aiohttp.ClientSession, bot: Bot) -> "Deps":
         """Асинхронный фабричный метод для безопасной сборки и настройки контейнера зависимостей."""
         logger.info("Начало сборки контейнера зависимостей (Deps)...")
+        
+        # --- УЛУЧШЕНИЕ: Отказоустойчивое подключение к Redis ---
+        redis_pool = None
+        max_retries = 5
+        retry_delay = 5  # seconds
+        for attempt in range(max_retries):
+            try:
+                redis_pool = redis.from_url(str(settings.REDIS_URL), encoding="utf-8", decode_responses=True)
+                await redis_pool.ping()
+                logger.info("Успешное подключение к Redis.")
+                break
+            except redis.exceptions.ConnectionError as e:
+                logger.warning(f"Не удалось подключиться к Redis (попытка {attempt + 1}/{max_retries}): {e}. Повтор через {retry_delay} сек...")
+                if attempt + 1 == max_retries:
+                    logger.critical("Не удалось подключиться к Redis после всех попыток. Остановка бота.")
+                    raise
+                await asyncio.sleep(retry_delay)
+        
         try:
             # Инициализация базовых сервисов
             user_service = UserService(redis=redis_pool)
@@ -88,8 +105,6 @@ class Deps(BaseModel):
             quiz_service = QuizService(ai_content_service=ai_content_service)
             event_service = MiningEventService(config=settings.events)
             coin_list_service = CoinListService(redis=redis_pool, http_session=http_session, settings=settings)
-            
-            # ИСПРАВЛЕНО: Инициализация сервисов модерации
             stop_word_service = StopWordService(redis_client=redis_pool)
             moderation_service = ModerationService(bot=bot, user_service=user_service, admin_service=admin_service,
                                                    stop_word_service=stop_word_service, config=settings.threat_filter)
