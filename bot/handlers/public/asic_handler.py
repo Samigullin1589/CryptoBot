@@ -1,9 +1,8 @@
 # =================================================================================
 # Файл: bot/handlers/public/asic_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полнофункциональный обработчик для раздела ASIC.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий `await call.answer()` в обработчик
-#              пагинации для устранения "вечной загрузки" кнопки.
-#              Оптимизирована логика редактирования сообщений.
+# ИСПРАВЛЕНИЕ: Добавлен недостающий обработчик top_asics_start для
+#              реагирования на кнопку в главном меню.
 # =================================================================================
 import logging
 from datetime import datetime, timezone
@@ -59,6 +58,7 @@ async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMC
 
 # --- ОБРАБОТЧИКИ ---
 
+# ИСПРАВЛЕНО: Добавлен этот обработчик. Он "ловит" нажатие на кнопку "⚙️ Топ ASIC" в главном меню.
 @router.callback_query(MenuCallback.filter(F.action == "asics"))
 async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps):
     """Входная точка для просмотра топа ASIC из главного меню."""
@@ -74,13 +74,8 @@ async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps):
     AsicExplorerStates.showing_passport
 )
 async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps):
-    """
-    Обрабатывает пагинацию и возврат к списку ASIC.
-    """
-    # ИСПРАВЛЕНО: Добавлен await call.answer() в самом начале.
-    # Это немедленно убирает "часики" на кнопке, решая проблему "вечной загрузки".
+    """Обрабатывает пагинацию и возврат к списку ASIC."""
     await call.answer()
-    
     page = int(call.data.split(":")[1])
     await state.update_data(page=page)
     await show_top_asics_page(call, state, deps)
