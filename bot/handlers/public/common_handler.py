@@ -2,9 +2,8 @@
 # Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УМНАЯ)
 # Описание: Обрабатывает общие команды и текстовый ввод, корректно
 #           различая нажатия на текстовые кнопки и запросы к AI.
-# ИСПРАВЛЕНИЕ: Добавлена логика для обработки текстовых сообщений,
-#              совпадающих с кнопками главного меню, чтобы избежать
-#              ложного срабатывания AI-консультанта.
+# ИСПРАВЛЕНИЕ: Логика handle_text_as_button адаптирована под новую
+#              систему навигации без единого роутера.
 # =================================================================================
 import logging
 from typing import Union, Dict, Any
@@ -23,20 +22,35 @@ from bot.utils.formatters import format_price_info
 from bot.utils.text_utils import sanitize_html
 from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS, get_referral_success_text
 
-# Импортируем навигатор, чтобы перенаправлять на него текстовые команды
-from . import menu_handlers
+# Импортируем все обработчики, чтобы эмулировать их вызов
+from . import (
+    price_handler,
+    asic_handler,
+    news_handler,
+    quiz_handler,
+    market_info_handler,
+    crypto_center_handler,
+    game_handler
+)
+from ..tools import calculator_handler
+
 from bot.keyboards.callback_factories import MenuCallback
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
 # --- Словарь текстовых команд, соответствующих кнопкам меню ---
-TEXT_COMMAND_MAP = {
-    "💹 Курс": "price", "⚙️ Топ ASIC": "asics",
-    "⛏️ Калькулятор": "calculator", "📰 Новости": "news",
-    "😱 Индекс Страха": "fear_index", "⏳ Халвинг": "halving",
-    "📡 Статус BTC": "btc_status", "🧠 Викторина": "quiz",
-    "💎 Виртуальный Майнинг": "game", "💎 Крипто-Центр": "crypto_center"
+TEXT_COMMAND_MAP: Dict[str, Any] = {
+    "💹 Курс": (price_handler.handle_price_menu_start, "price"),
+    "⚙️ Топ ASIC": (asic_handler.top_asics_start, "asics"),
+    "⛏️ Калькулятор": (calculator_handler.start_profit_calculator, "calculator"),
+    "📰 Новости": (news_handler.handle_news_menu_start, "news"),
+    "😱 Индекс Страха": (market_info_handler.handle_fear_greed_index, "fear_index"),
+    "⏳ Халвинг": (market_info_handler.handle_halving_info, "halving"),
+    "📡 Статус BTC": (market_info_handler.handle_btc_status, "btc_status"),
+    "🧠 Викторина": (quiz_handler.handle_quiz_start, "quiz"),
+    "💎 Виртуальный Майнинг": (game_handler.handle_game_menu_entry, "game"),
+    "💎 Крипто-Центр": (crypto_center_handler.crypto_center_main_menu, "crypto_center")
 }
 
 class AITriggerFilter(BaseFilter):
@@ -120,27 +134,26 @@ async def handle_onboarding_navigation(call: CallbackQuery, state: FSMContext):
 
 # --- ОБРАБОТКА ПРОИЗВОЛЬНОГО ТЕКСТА ---
 
-# ИСПРАВЛЕНО: Новый обработчик для текстовых сообщений, совпадающих с кнопками
-@router.message(F.text.in_(TEXT_COMMAND_MAP))
+@router.message(F.text.in_(TEXT_COMMAND_MAP.keys()))
 async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps):
     """
     Если текст сообщения совпадает с кнопкой меню, эмулируем нажатие на callback-кнопку.
     """
-    action = TEXT_COMMAND_MAP[message.text]
-    # Создаем "фейковый" CallbackQuery, чтобы передать его в навигатор
+    handler_func, action = TEXT_COMMAND_MAP[message.text]
+    
+    # Создаем "фейковый" CallbackQuery, чтобы передать его в обработчик
+    # Важно, чтобы у него был объект message
     fake_callback_query = types.CallbackQuery(
-        id="fake_cq",
+        id=str(message.message_id),
         from_user=message.from_user,
-        chat_instance="fake_chat",
-        message=message,
+        chat_instance="fake_chat_instance",
+        message=message, # Передаем исходное сообщение
         data=MenuCallback(level=0, action=action).pack()
     )
-    await menu_handlers.main_menu_navigator(
-        call=fake_callback_query,
-        callback_data=MenuCallback(level=0, action=action),
-        state=state,
-        deps=deps
-    )
+    
+    # aiogram 3+ достаточно умен, чтобы передать в хэндлер только нужные ему аргументы
+    await handler_func(call=fake_callback_query, state=state, deps=deps)
+
 
 # Обработчик для AI срабатывает только если фильтр AITriggerFilter вернет True
 @router.message(AITriggerFilter())

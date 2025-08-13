@@ -23,7 +23,7 @@ calculator_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
 @calculator_router.callback_query(MenuCallback.filter(F.action == "calculator"))
-async def start_profit_calculator(call: CallbackQuery, state: FSMContext, deps: Deps):
+async def start_profit_calculator(call: CallbackQuery, state: FSMContext, deps: Deps, **kwargs):
     """Запускает сценарий калькулятора доходности из главного меню."""
     await state.clear()
     await deps.admin_service.track_action(call.from_user.id, "nav:calculator")

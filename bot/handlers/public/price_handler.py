@@ -19,7 +19,7 @@ router = Router(name="price_handler_router")
 logger = logging.getLogger(__name__)
 
 @router.callback_query(MenuCallback.filter(F.action == "price"))
-async def handle_price_menu_start(call: CallbackQuery, state: FSMContext):
+async def handle_price_menu_start(call: CallbackQuery, state: FSMContext, **kwargs):
     """Точка входа в раздел курсов, вызывается из главного меню."""
     text = "Курс какой монеты вас интересует? Выберите из популярных или отправьте тикер/название."
     await call.message.edit_text(text, reply_markup=get_price_keyboard())

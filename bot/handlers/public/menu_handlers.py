@@ -15,5 +15,9 @@ logger = logging.getLogger(__name__)
 
 @router.callback_query(MenuCallback.filter(F.action == "main"))
 async def main_menu_returner(call: CallbackQuery, state: FSMContext):
+    """
+    Обрабатывает все нажатия на кнопки "Назад в главное меню"
+    и возвращает пользователя в исходное состояние.
+    """
     await state.clear()
     await show_main_menu_from_callback(call)
