@@ -15,6 +15,7 @@ __all__ = [
     "QuizCallback",
     "MarketCallback",
     "CryptoCenterCallback",
+    "OnboardingCallback",
 ]
 
 class MenuCallback(CallbackData, prefix="menu"):
@@ -125,3 +126,11 @@ class CryptoCenterCallback(CallbackData, prefix="crypto", sep="|"):
     section: Optional[str] = None
     page: Optional[int] = None
     q: Optional[str] = None
+
+
+# Онбординг/первичный запуск: шаги, возвраты, пропуски; sep="|" на случай сложных action.
+class OnboardingCallback(CallbackData, prefix="onb", sep="|"):
+    action: str                    # start | step | next | back | skip | finish
+    step: Optional[int] = None
+    value: Optional[str] = None
+    page: Optional[int] = None
