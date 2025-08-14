@@ -1,5 +1,5 @@
 # ===============================================================
-# Файл: bot/handlers/threats/threat_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
+# Файл: bot/handlers/threats/threat_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ФИНАЛЬНО ИСПРАВЛЕННАЯ)
 # Описание: "Тонкий" хэндлер, который ловит сообщения от ThreatFilter
 # и передает их в ModerationService для комплексной обработки.
 # ИСПРАВЛЕНИЕ: Изменен способ регистрации фильтра с ThreatFilter()
@@ -17,7 +17,7 @@ from bot.utils.dependencies import Deps
 threat_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# ИСПРАВЛЕНО: Передаем класс фильтра, а не его экземпляр.
+# ИСПРАВЛЕНО: Передаем КЛАСС фильтра, а не его экземпляр.
 # Это позволяет aiogram автоматически внедрять зависимости (deps) в фильтр.
 @threat_router.message(ThreatFilter)
 async def handle_threat_message(
