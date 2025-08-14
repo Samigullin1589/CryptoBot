@@ -49,3 +49,15 @@ class ThreatCallback(CallbackData, prefix="threat"):
     user_id: Optional[int] = None
     message_id: Optional[int] = None
     chat_id: Optional[int] = None
+
+
+# Цены/топ-ASIC/инфо — максимально совместимая фабрика:
+# поддерживает как value, так и именованные поля symbol/fiat/page/source,
+# чтобы соответствовать различным существующим вызовам .pack(...)
+class PriceCallback(CallbackData, prefix="price"):
+    action: str
+    value: Optional[str] = None
+    symbol: Optional[str] = None
+    fiat: Optional[str] = None
+    page: Optional[int] = None
+    source: Optional[str] = None
