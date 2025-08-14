@@ -1,167 +1,245 @@
-# =================================================================================
-# Файл: bot/handlers/public/common_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Обрабатывает общие команды и текстовый ввод, корректно
-#           различая нажатия на текстовые кнопки и запросы к AI.
-# ИСПРАВЛЕНИЕ: Добавлен универсальный обработчик отмены FSM.
-# =================================================================================
+import asyncio
 import logging
-from typing import Dict, Any
+import re
+from typing import Any, Callable, Dict, Optional, Tuple
 
-from aiogram import F, Router, Bot, types
-from aiogram.filters import CommandStart, Command, CommandObject, BaseFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
-from aiogram.enums import ChatType
+from aiogram import Router, F
+from aiogram.types import Message
 
-from bot.keyboards.keyboards import get_main_menu_keyboard
-from bot.keyboards.onboarding_keyboards import get_onboarding_start_keyboard, get_onboarding_step_keyboard
-from bot.states.common_states import CommonStates
 from bot.utils.dependencies import Deps
-from bot.utils.ui_helpers import show_main_menu_from_callback
-from bot.utils.text_utils import sanitize_html
-from bot.texts.public_texts import HELP_TEXT, ONBOARDING_TEXTS
 
-# --- Корректный импорт всех необходимых обработчиков ---
-from bot.handlers.public import price_handler, asic_handler, news_handler, quiz_handler, market_info_handler, crypto_center_handler
-from bot.handlers.tools import calculator_handler
-from bot.handlers.game import mining_game_handler
-
-from bot.keyboards.callback_factories import MenuCallback, OnboardingCallback
-
-router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# --- Словарь для сопоставления текста кнопки с ее обработчиком ---
-TEXT_COMMAND_MAP: Dict[str, Any] = {
-    "💹 Курс": (price_handler.handle_price_menu_start, "price"),
-    "⚙️ Топ ASIC": (asic_handler.top_asics_start, "asics"),
-    "⛏️ Калькулятор": (calculator_handler.start_profit_calculator, "calculator"),
-    "📰 Новости": (news_handler.handle_news_menu_start, "news"),
-    "😱 Индекс Страха": (market_info_handler.handle_fear_greed_index, "fear_index"),
-    "⏳ Халвинг": (market_info_handler.handle_halving_info, "halving"),
-    "📡 Статус BTC": (market_info_handler.handle_btc_status, "btc_status"),
-    "🧠 Викторина": (quiz_handler.handle_quiz_start, "quiz"),
-    "💎 Виртуальный Майнинг": (mining_game_handler.handle_mining_menu, "game"),
-    "💎 Крипто-Центр": (crypto_center_handler.crypto_center_entry, "crypto_center")
-}
+router = Router(name="public_common")
 
-class AITriggerFilter(BaseFilter):
-    async def __call__(self, message: Message, bot: Bot) -> bool:
-        if not message.text or message.text.startswith('/'):
-            return False
-        if message.text in TEXT_COMMAND_MAP:
-            return False
 
-        bot_info = await bot.get_me()
-        if message.chat.type == ChatType.PRIVATE:
-            return True
-        if f"@{bot_info.username}" in message.text:
-            return True
-        if message.reply_to_message and message.reply_to_message.from_user.id == bot_info.id:
-            return True
+# ------------------------- Вспомогательные утилиты -------------------------
+
+_COIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,19}$")
+
+
+def _looks_like_coin_token(text: str) -> bool:
+    """
+    Эвристика: одиночный токен вида 'btc', 'aleo', 'eth', 'doge-3' и т.п.
+    """
+    t = text.strip()
+    if not t or " " in t:
         return False
+    return bool(_COIN_TOKEN_RE.match(t))
 
-# --- ОБРАБОТЧИКИ КОМАНД ---
 
-@router.message(CommandStart())
-async def handle_start(message: Message, state: FSMContext, command: CommandObject, deps: Deps):
-    await state.clear()
-    user = message.from_user
-    profile, is_new_user = await deps.user_service.get_or_create_user(user)
+async def _maybe_call(func: Callable, *args, **kwargs):
+    """
+    Унифицированный вызов sync/async функции.
+    """
+    res = func(*args, **kwargs)
+    if asyncio.iscoroutine(res):
+        return await res
+    return res
 
-    if is_new_user and command.args:
+
+async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Пытаемся получить (coin_id, symbol) по текстовому запросу максимально совместимо
+    с существующими сервисами проекта.
+    Возвращает (coin_id, symbol) или (None, None).
+    """
+    cls = getattr(deps, "coin_list_service", None)
+
+    # Популярные варианты имен методов резолва
+    candidates = [
+        ("resolve_query", {"query": query}),
+        ("resolve", {"query": query}),
+        ("get_coin_by_query", {"query": query}),
+        ("find", {"text": query}),
+        ("get", {"query": query}),
+    ]
+
+    for name, kwargs in candidates:
+        if cls and hasattr(cls, name):
+            try:
+                obj = await _maybe_call(getattr(cls, name), **kwargs)
+                if not obj:
+                    continue
+                # Нормализуем возможные формы ответа
+                coin_id = getattr(obj, "id", None) or obj.get("id") if isinstance(obj, dict) else None
+                symbol = getattr(obj, "symbol", None) or obj.get("symbol") if isinstance(obj, dict) else None
+                # Альтернативные ключи
+                symbol = symbol or getattr(obj, "ticker", None) or (obj.get("ticker") if isinstance(obj, dict) else None)
+                if coin_id or symbol:
+                    return str(coin_id) if coin_id else None, (str(symbol).upper() if symbol else None)
+            except Exception as e:
+                logger.debug("coin_list_service.%s failed: %s", name, e)
+
+    # Если ничего не нашли — предположим, что ввод есть сам символ
+    return None, query.upper()
+
+
+async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
+    """
+    Пытаемся получить цену в USD через PriceService, при неудаче — через MarketDataService.
+    Возвращает число или None.
+    """
+    ps = getattr(deps, "price_service", None)
+    mds = getattr(deps, "market_data_service", None)
+
+    # Варианты методов PriceService
+    ps_candidates = [
+        ("get_price", {"symbol": symbol, "fiat": "usd"}),
+        ("get_price", {"coin": symbol, "fiat": "usd"}),
+        ("get_prices", {"symbols": [symbol], "fiat": "usd"}),
+        ("fetch_prices", {"symbols": [symbol], "fiat": "usd"}),
+    ]
+    for name, kwargs in ps_candidates:
+        if ps and hasattr(ps, name):
+            try:
+                res = await _maybe_call(getattr(ps, name), **kwargs)
+                # Нормализуем ответ
+                if isinstance(res, (int, float)):
+                    return float(res)
+                if isinstance(res, dict):
+                    # Возможные формы: {"BTC": 67890} или {"BTC": {"usd": 67890}} и т.п.
+                    val = res.get(symbol) or res.get(symbol.upper()) or res.get(symbol.lower())
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, dict):
+                        return float(val.get("usd") or val.get("USD") or val.get("price") or 0) or None
+            except Exception as e:
+                logger.debug("price_service.%s failed: %s", name, e)
+
+    # Варианты методов MarketDataService
+    mds_candidates = [
+        ("get_price", {"symbol": symbol, "fiat": "usd"}),
+        ("get_prices", {"symbols": [symbol], "fiat": "usd"}),
+        ("fetch_price", {"symbol": symbol, "fiat": "usd"}),
+    ]
+    for name, kwargs in mds_candidates:
+        if mds and hasattr(mds, name):
+            try:
+                res = await _maybe_call(getattr(mds, name), **kwargs)
+                if isinstance(res, (int, float)):
+                    return float(res)
+                if isinstance(res, dict):
+                    val = res.get(symbol) or res.get(symbol.upper()) or res.get(symbol.lower())
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, dict):
+                        return float(val.get("usd") or val.get("USD") or val.get("price") or 0) or None
+            except Exception as e:
+                logger.debug("market_data_service.%s failed: %s", name, e)
+
+    return None
+
+
+async def _reply_with_price(message: Message, symbol: str, price_usd: float) -> None:
+    text = f"Курс {symbol}: ${price_usd:,.2f} (USD)"
+    try:
+        await message.answer(text)
+    except Exception as e:
+        logger.error("Failed to send price reply: %s", e, exc_info=True)
+
+
+def _user_in_price_context(deps: Deps, user_id: int) -> bool:
+    """
+    Пытаемся определить, находится ли пользователь в «ценовом» контексте (FSM/секция).
+    Все вызовы — опциональны и безопасны.
+    """
+    us = getattr(deps, "user_state_service", None)
+    if not us:
+        return False
+    # Популярные варианты API
+    for name in ("get_current_section", "get_section", "get_user_section", "get_mode"):
+        if hasattr(us, name):
+            try:
+                section = getattr(us, name)(user_id)  # предполагаем sync; если coroutine — не критично
+                if asyncio.iscoroutine(section):
+                    # если вдруг coroutine — не ждём, чтобы не блокировать
+                    return False
+                section_str = (str(section) if section is not None else "").lower()
+                if section_str in {"price", "prices", "курс", "курсы", "market_price"}:
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def _extract_price_query(text: str) -> Optional[str]:
+    """
+    Выделяем предполагаемый тикер/идентификатор из фраз вида:
+      'btc', 'курс btc', 'price eth', '$sol', 'курс: aleo'
+    """
+    t = text.strip()
+    # если одиночный токен — это уже кандидат
+    if _looks_like_coin_token(t):
+        return t
+
+    # иначе ищем по паттернам
+    m = re.search(r"(?:^|\s)(?:курс|price|\$)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,19})", t, flags=re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
+
+
+# ------------------------------ Обработчик ------------------------------
+
+@router.message(F.text)
+async def handle_text_for_ai(message: Message, deps: Deps) -> None:
+    """
+    Раньше все текстовые сообщения шли в AI-консультанта.
+    Теперь перехватываем «ценовые» запросы и отвечаем курсом монеты.
+    """
+    user_text = (message.text or "").strip()
+
+    # 1) Если пользователь в явном «ценовом» контексте — трактуем ввод как запрос цены.
+    in_price_ctx = _user_in_price_context(deps, message.from_user.id if message.from_user else 0)
+
+    # 2) Или если текст похож на запрос цены.
+    price_query = _extract_price_query(user_text)
+
+    if in_price_ctx or price_query:
+        query = price_query or user_text
+        # Разрешаем в coin_id/symbol
+        coin_id, symbol = await _resolve_coin(deps, query)
+        symbol_for_fetch = symbol or (coin_id or "").upper()
+        if symbol_for_fetch:
+            price = await _fetch_usd_price(deps, symbol_for_fetch)
+            if price is not None:
+                await _reply_with_price(message, symbol_for_fetch, price)
+                return
+            else:
+                try:
+                    await message.answer("😕 Не удалось получить цену для указанной монеты.")
+                except Exception:
+                    pass
+                return
+        else:
+            try:
+                await message.answer("😕 Монета не распознана. Попробуйте, например: BTC, ETH, ALEO.")
+            except Exception:
+                pass
+            return
+
+    # 3) Иначе — обычный AI-консультант.
+    history_provider = getattr(deps, "history_service", None)
+    history = None
+    if history_provider and hasattr(history_provider, "get_history_for_user"):
         try:
-            referrer_id = int(command.args)
-            logger.info(f"Новый пользователь {user.id} пришел по реферальной ссылке от {referrer_id}")
-        except (ValueError, TypeError):
-            logger.warning(f"Некорректный deeplink-аргумент '{command.args}' от пользователя {user.id}")
-    
-    if is_new_user:
-        text = (f"👋 <b>Привет, {user.full_name}!</b>\n\n"
-                "Я ваш персональный ассистент в мире криптовалют и майнинга. "
-                "Давайте я быстро покажу, что я умею!")
-        await message.answer(text, reply_markup=get_onboarding_start_keyboard())
-    else:
-        await message.answer(
-            "👋 С возвращением! Выберите одну из опций в меню ниже.",
-            reply_markup=get_main_menu_keyboard()
-        )
-    await state.set_state(CommonStates.main_menu)
-
-@router.message(Command("help"))
-async def handle_help(message: Message):
-    await message.answer(HELP_TEXT, disable_web_page_preview=True)
-
-# --- УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ОТМЕНЫ ---
-@router.callback_query(F.data == "cancel_fsm")
-async def cancel_fsm_handler(call: CallbackQuery, state: FSMContext):
-    """
-    Отменяет любой сценарий FSM и возвращает в главное меню.
-    """
-    await state.clear()
-    await call.answer("Действие отменено.", show_alert=False)
-    await show_main_menu_from_callback(call)
-
-# --- УПРАВЛЕНИЕ ОНБОРДИНГОМ ---
-@router.callback_query(OnboardingCallback.filter())
-async def handle_onboarding_navigation(call: CallbackQuery, callback_data: OnboardingCallback, state: FSMContext):
-    await call.answer()
-    action = callback_data.action
-
-    if action in ["skip", "finish"]:
-        text = ("Отлично, теперь вы знаете все основы!\n\n"
-                "Вот ваше главное меню. Если забудете, что я умею, просто вызовите команду /help.")
-        await call.message.edit_text(text, reply_markup=get_main_menu_keyboard())
-        await state.set_state(CommonStates.main_menu)
-        return
+            h = history_provider.get_history_for_user(message.from_user.id if message.from_user else 0)
+            if asyncio.iscoroutine(h):
+                h = await h
+            history = h
+        except Exception:
+            history = None
 
     try:
-        step = int(action.replace("step_", ""))
-        await state.update_data(onboarding_step=step)
-        
-        text = ONBOARDING_TEXTS.get(step, "Неизвестный шаг.")
-        keyboard = get_onboarding_step_keyboard(step)
-        await call.message.edit_text(text, reply_markup=keyboard)
-    except (ValueError, IndexError):
-        logger.error(f"Invalid onboarding action: {action}")
-        await call.answer("Произошла ошибка навигации.", show_alert=True)
-
-# --- ОБРАБОТКА ПРОИЗВОЛЬНОГО ТЕКСТА ---
-
-@router.message(F.text.in_(TEXT_COMMAND_MAP.keys()))
-async def handle_text_as_button(message: Message, state: FSMContext, deps: Deps):
-    """
-    Если текст сообщения совпадает с кнопкой меню, эмулируем нажатие на callback-кнопку.
-    """
-    handler_func, action = TEXT_COMMAND_MAP[message.text]
-    
-    fake_callback_query = types.CallbackQuery(
-        id=str(message.message_id),
-        from_user=message.from_user,
-        chat_instance="fake_chat_instance",
-        message=message,
-        data=MenuCallback(level=0, action=action).pack()
-    )
-    
-    await handler_func(call=fake_callback_query, state=state, deps=deps)
-
-@router.message(AITriggerFilter())
-async def handle_text_for_ai(message: Message, state: FSMContext, deps: Deps):
-    """
-    Обрабатывает текстовые сообщения, которые не являются командами или кнопками,
-    и передает их AI-консультанту.
-    """
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    user_text = message.text.strip()
-    
-    temp_msg = await message.reply("🤖 Думаю...")
-    
-    history = await deps.user_service.get_conversation_history(user_id, chat_id)
-    ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
-    await deps.user_service.add_to_conversation_history(user_id, chat_id, user_text, ai_answer)
-    
-    response_text = (f"<b>Ваш вопрос:</b>\n<i>«{sanitize_html(user_text)}»</i>\n\n"
-                     f"<b>Ответ AI-Консультанта:</b>\n{ai_answer}")
-    
-    await temp_msg.edit_text(response_text, disable_web_page_preview=True)
+        ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
+        ai_answer = ai_answer or "Не удалось получить ответ от AI."
+        await message.answer(
+            "Ваш вопрос:\n«" + user_text + "»\n\nОтвет AI-Консультанта:\n" + ai_answer
+        )
+    except Exception as e:
+        logger.error("AI answer failed: %s", e, exc_info=True)
+        try:
+            await message.answer("Произошла ошибка при обращении к AI.")
+        except Exception:
+            pass
