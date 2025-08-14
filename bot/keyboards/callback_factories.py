@@ -18,6 +18,7 @@ __all__ = [
     "OnboardingCallback",
 ]
 
+
 class MenuCallback(CallbackData, prefix="menu"):
     level: int
     action: str
@@ -44,7 +45,8 @@ class CalculatorCallback(CallbackData, prefix="calc"):
     page: Optional[int] = None
 
 
-# Админские фабрики: используем разделитель "|" вместо ":" чтобы значения могли содержать двоеточия.
+# Админские фабрики: только здесь используем нестандартный разделитель,
+# т.к. в action встречаются значения с ':' (например, "stats:general").
 class AdminCallback(CallbackData, prefix="admin", sep="|"):
     action: str
     value: Optional[str] = None
@@ -52,21 +54,20 @@ class AdminCallback(CallbackData, prefix="admin", sep="|"):
     page: Optional[int] = None
 
 
-class GameAdminCallback(CallbackData, prefix="adgame", sep="|"):
+# Вернули стандартный разделитель ':' — многие обработчики матчат по "adgame:"
+class GameAdminCallback(CallbackData, prefix="adgame"):
     action: str
     value: Optional[str] = None
     page: Optional[int] = None
 
 
-# Угроза/модерация
 class ThreatCallback(CallbackData, prefix="threat"):
-    action: str            # ban | pardon | ignore
+    action: str  # ban | pardon | ignore
     user_id: Optional[int] = None
     message_id: Optional[int] = None
     chat_id: Optional[int] = None
 
 
-# Цены/топ-ASIC/инфо
 class PriceCallback(CallbackData, prefix="price"):
     action: str
     value: Optional[str] = None
@@ -77,9 +78,8 @@ class PriceCallback(CallbackData, prefix="price"):
     coin_id: Optional[str] = None  # используется в price_handler.show_price_for_coin
 
 
-# ASIC: используем гибкое множество полей (часто встречающиеся в проекте),
-# и разделитель "|" чтобы action мог содержать подтипы через ":" (например, "top:page").
-class AsicCallback(CallbackData, prefix="asic", sep="|"):
+# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "asic:"
+class AsicCallback(CallbackData, prefix="asic"):
     action: str
     value: Optional[str] = None
     asic_id: Optional[str] = None
@@ -88,18 +88,16 @@ class AsicCallback(CallbackData, prefix="asic", sep="|"):
     vendor: Optional[str] = None
 
 
-# Новости (источники, категории, пагинация)
 class NewsCallback(CallbackData, prefix="news"):
-    action: str                    # source | category | page | open | refresh
-    source: Optional[str] = None   # cryptopanic | newsapi | rss | ...
+    action: str  # source | category | page | open | refresh
+    source: Optional[str] = None
     category: Optional[str] = None
     value: Optional[str] = None
     page: Optional[int] = None
 
 
-# Викторина/квиз
 class QuizCallback(CallbackData, prefix="quiz"):
-    action: str                    # start | answer | next | hint | results | page
+    action: str  # start | answer | next | hint | results | page
     value: Optional[str] = None
     quiz_id: Optional[str] = None
     question_id: Optional[str] = None
@@ -107,31 +105,29 @@ class QuizCallback(CallbackData, prefix="quiz"):
     page: Optional[int] = None
 
 
-# Маркет (рынок оборудования/объявлений и т.п.)
-# Используем sep="|" для совместимости с action/значениями, где встречается двоеточие.
-class MarketCallback(CallbackData, prefix="market", sep="|"):
-    action: str                    # list | view | page | buy | filter | sort | vendor | back
+# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "market:"
+class MarketCallback(CallbackData, prefix="market"):
+    action: str  # list | view | page | buy | filter | sort | vendor | back
     value: Optional[str] = None
     item_id: Optional[str] = None
     page: Optional[int] = None
     sort: Optional[str] = None
     vendor: Optional[str] = None
-    q: Optional[str] = None  # поисковый запрос (если используется)
+    q: Optional[str] = None
 
 
-# Crypto Center (аггрегатор разделов/сервисов)
-# Делается максимально гибким: допускает section/value/q и пагинацию; sep="|" для значений с ":".
-class CryptoCenterCallback(CallbackData, prefix="crypto", sep="|"):
-    action: str                    # open | section | page | refresh | back
+# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "crypto:"
+class CryptoCenterCallback(CallbackData, prefix="crypto"):
+    action: str  # open | section | page | refresh | back
     value: Optional[str] = None
     section: Optional[str] = None
     page: Optional[int] = None
     q: Optional[str] = None
 
 
-# Онбординг/первичный запуск: шаги, возвраты, пропуски; sep="|" на случай сложных action.
-class OnboardingCallback(CallbackData, prefix="onb", sep="|"):
-    action: str                    # start | step | next | back | skip | finish
+# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "onb:"
+class OnboardingCallback(CallbackData, prefix="onb"):
+    action: str  # start | step | next | back | skip | finish
     step: Optional[int] = None
     value: Optional[str] = None
     page: Optional[int] = None
