@@ -1,8 +1,7 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Сервис для Gemini, использующий актуальную версию библиотеки.
-# ИСПРАВЛЕНИЕ: Восстановлен недостающий метод generate_summary и добавлен get_structured_response.
-#              Реализован роутинг моделей для оптимизации расхода квот.
+# ИСПРАВЛЕНИЕ: Добавлен новый метод explain_unlisted_coin с использованием поиска Google.
 # ===============================================================
 
 import logging
@@ -39,9 +38,13 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            self.pro_client = genai.GenerativeModel(self.config.model_name)
+            # Включаем поиск для Pro модели
+            self.pro_client = genai.GenerativeModel(
+                self.config.model_name,
+                tools=[genai.Tool.from_Google Search_retrieval(genai.GoogleSearchRetrieval())]
+            )
             self.flash_client = genai.GenerativeModel(self.config.flash_model_name)
-            logger.info(f"Клиенты Google AI успешно сконфигурированы для моделей {self.config.model_name} и {self.config.flash_model_name}.")
+            logger.info(f"Клиенты Google AI успешно сконфигурированы для моделей {self.config.model_name} (с поиском) и {self.config.flash_model_name}.")
         except Exception as e:
             logger.critical(f"Не удалось настроить клиент Google AI: {e}. Все функции AI будут отключены.", exc_info=True)
 
@@ -76,7 +79,6 @@ class AIContentService:
         """Генерирует структурированный JSON, используя быструю модель."""
         if not self.flash_client: return None
         try:
-            # Используем специальную возможность для генерации JSON
             json_model = genai.GenerativeModel(
                 self.config.flash_model_name,
                 generation_config=GenerationConfig(response_mime_type="application/json")
@@ -90,13 +92,11 @@ class AIContentService:
             logger.error(f"Непредвиденная ошибка при генерации структурированного контента: {e}", exc_info=True)
             return None
     
-    # [НОВЫЙ МЕТОД] для SecurityService
     async def get_structured_response(self, system_prompt: str, user_prompt: str, response_schema: Dict) -> Optional[Dict[str, Any]]:
         """Универсальный метод для получения JSON ответа от быстрой модели."""
         if not self.flash_client: return None
         return await self.generate_structured_content(f"{system_prompt}\n\n{user_prompt}", response_schema)
 
-    # ИСПРАВЛЕНО: Восстановлен недостающий метод
     async def generate_summary(self, text_to_summarize: str) -> str:
         """Генерирует краткое саммари, используя быструю Flash модель."""
         if not self.flash_client: return "Не удалось проанализировать."
@@ -117,7 +117,6 @@ class AIContentService:
             system_prompt = get_consultant_prompt()
             chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
             
-            # Создаем модель с системным промптом на лету
             consultant_model = genai.GenerativeModel(self.config.model_name, system_instruction=system_prompt)
             
             response = await self._make_request(consultant_model, contents=chat_history)
@@ -125,3 +124,21 @@ class AIContentService:
         except Exception as e:
             logger.error(f"Непредвиденная ошибка при ответе консультанта: {e}", exc_info=True)
             return "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
+            
+    async def explain_unlisted_coin(self, coin_ticker: str) -> str:
+        """
+        Использует Pro модель с поиском Google, чтобы объяснить статус монеты,
+        для которой не найдена цена.
+        """
+        if not self.pro_client: return "AI-консультант временно недоступен."
+        try:
+            prompt = (
+                f"Я не смог найти цену для криптовалюты с тикером '{coin_ticker}'. "
+                "Используя поиск Google, кратко (в 2-3 предложениях на русском языке) объясни, что это за проект и почему его цена может быть недоступна. "
+                "Возможные причины: проект еще в тестнете, токен еще не запущен, это скам, или он торгуется только на DEX."
+            )
+            response = await self._make_request(self.pro_client, contents=prompt)
+            return self._extract_text_from_response(response) or "AI не смог найти информацию."
+        except Exception as e:
+            logger.error(f"Ошибка при поиске информации о нелистинговой монете: {e}", exc_info=True)
+            return "Произошла ошибка при поиске дополнительной информации."
