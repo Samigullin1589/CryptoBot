@@ -67,4 +67,14 @@ class AsicCallback(CallbackData, prefix="asic", sep="|"):
     value: Optional[str] = None
     asic_id: Optional[str] = None
     page: Optional[int] = None
-    sort: Optional[str]
+    sort: Optional[str] = None
+    vendor: Optional[str] = None
+
+
+# Новости (источники, категории, пагинация)
+class NewsCallback(CallbackData, prefix="news"):
+    action: str                    # source | category | page | open | refresh
+    source: Optional[str] = None   # cryptopanic | newsapi | rss | ...
+    category: Optional[str] = None
+    value: Optional[str] = None
+    page: Optional[int] = None
