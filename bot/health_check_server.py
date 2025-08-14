@@ -17,9 +17,11 @@ async def health_check(request: web.Request) -> web.Response:
 
 def main():
     """Запускает веб-сервер."""
+    # Render предоставляет порт через переменную окружения PORT
+    port = int(os.environ.get("PORT", 10000))
+    
     app = web.Application()
     app.router.add_get("/healthz", health_check)
-    port = int(os.environ.get("PORT", 10000))
     
     logger.info(f"Starting health check server on 0.0.0.0:{port}")
     web.run_app(app, host='0.0.0.0', port=port)

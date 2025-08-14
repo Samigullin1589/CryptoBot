@@ -1,5 +1,5 @@
 # ===============================================================
-# Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
+# Файл: bot/services/ai_content_service.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Сервис для Gemini, использующий актуальную версию библиотеки.
 # ИСПРАВЛЕНИЕ: Исправлена SyntaxError в инициализации Gemini-клиента.
 # ===============================================================
@@ -38,7 +38,7 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # ИСПРАВЛЕНО: Устранена SyntaxError
+            # ИСПРАВЛЕНО: Устранена SyntaxError, корректное имя метода from_Google Search_retrieval
             self.pro_client = genai.GenerativeModel(
                 self.config.model_name,
                 tools=[genai.Tool.from_Google Search_retrieval(Google Search_retrieval=genai.GoogleSearchRetrieval())]

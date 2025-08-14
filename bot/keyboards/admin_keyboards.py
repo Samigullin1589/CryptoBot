@@ -1,21 +1,15 @@
 # =================================================================================
-# Файл: bot/keyboards/admin_keyboards.py (ВЕРСИЯ "ГЕНИЙ 3.0" - АВГУСТ 2025 - ИСПРАВЛЕННАЯ)
+# Файл: bot/keyboards/admin_keyboards.py (ВЕРСЯ "ГЕНИЙ 3.0" - АВГУСТ 2025 - ИСПРАВЛЕННАЯ)
 # Описание: Полный набор клавиатур для админ-панели, включая RBAC и системные действия.
-# ИСПРАВЛЕНИЕ: Удалена устаревшая константа GAME_ADMIN_CALLBACK_PREFIX.
+# ИСПРАВЛЕНИЕ: Полный переход на CallbackData фабрики.
 # =================================================================================
 
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ИСПРАВЛЕНО: Импортируем UserRole из нового, безопасного места
 from bot.utils.models import UserRole
 from .callback_factories import AdminCallback, GameAdminCallback
 
-# Константы для callback data - стандартная практика для предотвращения ошибок
-ADMIN_CB_PREFIX = "admin"
-# Используем двоеточие как разделитель для иерархии callback-ов
-STATS_CB_PREFIX = f"{ADMIN_CB_PREFIX}:stats"
-SYSTEM_CB_PREFIX = f"{ADMIN_CB_PREFIX}:system"
 
 # =================================================================
 # 1. Главное меню админки (с учетом ролей)
@@ -27,16 +21,13 @@ def get_admin_menu_keyboard(user_role: UserRole) -> InlineKeyboardMarkup:
     """
     builder = InlineKeyboardBuilder()
 
-    # Кнопки, доступные всем администраторам и модераторам
     builder.button(text="📊 Статистика", callback_data=AdminCallback(action="stats_menu").pack())
     builder.button(text="🎮 Управление Игрой", callback_data=GameAdminCallback(action="menu").pack())
     
-    # Кнопки, доступные только Администраторам и Супер-Админам
     if user_role >= UserRole.ADMIN:
         builder.button(text="📢 Рассылка", callback_data=AdminCallback(action="mailing_start").pack())
         builder.button(text="⚙️ Системные действия", callback_data=AdminCallback(action="system_menu").pack())
 
-    # Адаптивная раскладка (по 2 кнопки в ряд)
     builder.adjust(2)
     return builder.as_markup()
 
@@ -49,9 +40,9 @@ def get_stats_menu_keyboard() -> InlineKeyboardMarkup:
     Меню выбора категории статистики.
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="👤 Общая (Пользователи)", callback_data=f"{STATS_CB_PREFIX}:general")
-    builder.button(text="💎 Игровая (Майнинг)", callback_data=f"{STATS_CB_PREFIX}:mining")
-    builder.button(text="📈 Топ действий", callback_data=f"{STATS_CB_PREFIX}:commands")
+    builder.button(text="👤 Общая (Пользователи)", callback_data=AdminCallback(action="stats:general").pack())
+    builder.button(text="💎 Игровая (Майнинг)", callback_data=AdminCallback(action="stats:mining").pack())
+    builder.button(text="📈 Топ действий", callback_data=AdminCallback(action="stats:commands").pack())
     
     builder.adjust(1) 
     builder.row(get_back_to_admin_button())
@@ -66,7 +57,7 @@ def get_system_actions_keyboard() -> InlineKeyboardMarkup:
     Меню для выполнения системных операций.
     """
     builder = InlineKeyboardBuilder()
-    builder.button(text="🗑 Очистить кэш ASIC", callback_data=f"{SYSTEM_CB_PREFIX}:clear_asic_cache")
+    builder.button(text="🗑 Очистить кэш ASIC", callback_data=AdminCallback(action="system:clear_asic_cache").pack())
     
     builder.adjust(1)
     builder.row(get_back_to_admin_button())
@@ -111,7 +102,7 @@ def get_confirm_mailing_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура подтверждения рассылки."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="✅ Отправить всем", callback_data=f"{ADMIN_CB_PREFIX}:mailing_confirm"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data=f"{ADMIN_CB_PREFIX}:mailing_cancel")
+        InlineKeyboardButton(text="✅ Отправить всем", callback_data=AdminCallback(action="mailing_confirm").pack()),
+        InlineKeyboardButton(text="❌ Отмена", callback_data=AdminCallback(action="mailing_cancel").pack())
     )
     return builder.as_markup()

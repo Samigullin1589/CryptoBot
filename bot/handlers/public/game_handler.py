@@ -1,8 +1,8 @@
 # =================================================================================
-# Файл: bot/handlers/public/game_handler.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/handlers/public/game_handler.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полнофункциональный обработчик для раздела "Виртуальный Майнинг".
 # Управляет FSM, навигацией и запуском игровых сессий.
-# ИСПРАВЛЕНИЕ: Добавлена точка входа из главного меню через MenuCallback.
+# ИСПРАВЛЕНИЕ: Переход на использование GameCallback и MenuCallback.
 # =================================================================================
 import logging
 from aiogram import F, Router
@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery
 
 from bot.utils.dependencies import Deps
 from bot.states.game_states import MiningGameStates
-from bot.keyboards.callback_factories import MenuCallback
+from bot.keyboards.callback_factories import MenuCallback, GameCallback
 from bot.keyboards.game_keyboards import get_game_main_menu_keyboard, get_hangar_keyboard
 
 router = Router(name=__name__)
@@ -35,12 +35,12 @@ async def handle_game_menu_entry_from_main(call: CallbackQuery, deps: Deps, stat
     """Точка входа в игровой раздел из главного меню."""
     await show_game_menu(call, deps, state)
 
-@router.callback_query(F.data == "nav:mining_game")
+@router.callback_query(GameCallback.filter(F.action == "main_menu"))
 async def handle_game_menu_entry_from_game(call: CallbackQuery, deps: Deps, state: FSMContext):
     """Точка входа в игровой раздел (внутренняя навигация)."""
     await show_game_menu(call, deps, state)
 
-@router.callback_query(F.data == "game:start_session", MiningGameStates.main_menu)
+@router.callback_query(GameCallback.filter(F.action == "start_session"), MiningGameStates.main_menu)
 async def handle_start_session_prompt(call: CallbackQuery, deps: Deps, state: FSMContext):
     """Отображает ангар для выбора ASIC для запуска."""
     await state.set_state(MiningGameStates.choosing_asic_for_session)
@@ -56,10 +56,10 @@ async def handle_start_session_prompt(call: CallbackQuery, deps: Deps, state: FS
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()
 
-@router.callback_query(F.data.startswith("hangar_page:"), MiningGameStates.choosing_asic_for_session)
-async def handle_hangar_pagination(call: CallbackQuery, deps: Deps, state: FSMContext):
+@router.callback_query(GameCallback.filter(F.action == "hangar"), MiningGameStates.choosing_asic_for_session)
+async def handle_hangar_pagination(call: CallbackQuery, callback_data: GameCallback, deps: Deps, state: FSMContext):
     """Обрабатывает пагинацию в ангаре."""
-    page = int(call.data.split(":")[1])
+    page = callback_data.page
     await state.update_data(page=page)
 
     user_asics = await deps.mining_game_service.get_user_asics(call.from_user.id)
@@ -68,15 +68,14 @@ async def handle_hangar_pagination(call: CallbackQuery, deps: Deps, state: FSMCo
     await call.message.edit_reply_markup(reply_markup=keyboard)
     await call.answer()
 
-@router.callback_query(F.data.startswith("game_start:"), MiningGameStates.choosing_asic_for_session)
-async def handle_start_session_action(call: CallbackQuery, deps: Deps, state: FSMContext):
+@router.callback_query(GameCallback.filter(F.action == "session_start_confirm"), MiningGameStates.choosing_asic_for_session)
+async def handle_start_session_action(call: CallbackQuery, callback_data: GameCallback, deps: Deps, state: FSMContext):
     """Запускает сессию майнинга для выбранного ASIC."""
-    asic_id = call.data.split(":")[1]
+    asic_id = callback_data.value
 
     await call.answer("🚀 Запускаю сессию...")
 
     result_text = await deps.mining_game_service.start_session(call.from_user.id, asic_id)
 
-    # После запуска возвращаемся в главное меню игры
     await call.message.answer(result_text, disable_web_page_preview=True)
     await show_game_menu(call, deps, state)

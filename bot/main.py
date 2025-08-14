@@ -1,5 +1,5 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
+# Файл: bot/main.py (ВЕРСЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
 # Описание: Точка входа с обработкой сигналов для Graceful Shutdown на Render.
 # =================================================================================
 
@@ -27,13 +27,17 @@ logger = logging.getLogger(__name__)
 
 def register_all_routers(dp: Dispatcher):
     """Централизованно и явно регистрирует все роутеры приложения в правильном порядке."""
+    # Регистрируем роутеры из каждого пакета
     dp.include_router(admin.admin_router)
     dp.include_router(admin.verification_admin_router)
     dp.include_router(admin.stats_router)
     dp.include_router(admin.moderation_router)
     dp.include_router(admin.game_admin_router)
+    
     dp.include_router(tools.calculator_router)
+    
     dp.include_router(game.mining_game_router)
+    
     dp.include_router(public.price_router)
     dp.include_router(public.asic_router)
     dp.include_router(public.news_router)
@@ -45,7 +49,8 @@ def register_all_routers(dp: Dispatcher):
     dp.include_router(public.market_router)
     dp.include_router(public.game_router)
     dp.include_router(public.common_router)
-    dp.include_router(public.menu_router) # Важно, чтобы обработчик возврата в меню был
+    dp.include_router(public.menu_router) 
+    
     dp.include_router(threats.threat_router)
     logger.info("Все роутеры успешно зарегистрированы.")
 
