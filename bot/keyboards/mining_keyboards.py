@@ -53,7 +53,7 @@ def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMa
     
     total_pages = (len(asics) + PAGE_SIZE - 1) // PAGE_SIZE
     if total_pages > 1:
-         nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="do_nothing"))
+        nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="do_nothing"))
 
     if end_offset < len(asics):
         nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=GameCallback(action="shop_page", page=page + 1).pack()))
@@ -63,6 +63,19 @@ def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMa
 
     builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data=GameCallback(action="main_menu").pack()))
     builder.adjust(1)
+    return builder.as_markup()
+
+def get_confirm_purchase_keyboard(item_id: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура подтверждения покупки. Совместима с импортом в mining_game_handler.
+    Callback'и оформлены через фабрику GameCallback:
+    - action="buy_confirm" для подтверждения
+    - action="buy_cancel" для отмены
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Купить", callback_data=GameCallback(action="buy_confirm", value=item_id).pack())
+    builder.button(text="❌ Отмена", callback_data=GameCallback(action="buy_cancel", value=item_id).pack())
+    builder.adjust(2)
     return builder.as_markup()
 
 def get_my_farm_keyboard() -> InlineKeyboardMarkup:
