@@ -5,59 +5,67 @@
 #              через DI-контейнер deps.
 # ===============================================================
 
-from typing import Union, Dict, Any, List
+from typing import Any, Dict, List, Optional, Union
+
 from aiogram.filters import BaseFilter
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
 
 from bot.utils.dependencies import Deps
 
+
 class ThreatFilter(BaseFilter):
     """
-    Анализирует сообщение, вычисляет "балл угрозы" и передает
-    результаты в хэндлер, если балл превышает порог.
+    Универсальный фильтр-детектор угроз.
+    Совместим с aiogram 3.x и DI: допускает произвольные аргументы конструктора/вызова,
+    чтобы избежать TypeError при различиях в механизмах регистрации фильтров.
     """
-    async def __call__(
-        self,
-        message: Message,
-        deps: Deps,
-    ) -> Union[bool, Dict[str, Any]]:
-        
-        if not message.text or not message.from_user:
+
+    def __init__(self, min_score: float = 1.0, *args: Any, **kwargs: Any) -> None:
+        # Дополнительно принимаем *args/**kwargs, чтобы не падать,
+        # если Router неожиданно попытается передать параметры в конструктор.
+        self.min_score = float(min_score)
+
+    async def __call__(self, event: Union[Message, CallbackQuery], **data: Any) -> Union[bool, Dict[str, Any]]:
+        # aiogram может передать либо Message, либо CallbackQuery
+        message: Optional[Message] = None
+        if isinstance(event, Message):
+            message = event
+        elif isinstance(event, CallbackQuery):
+            message = event.message
+        if message is None:
             return False
 
-        # Извлекаем необходимые сервисы и конфиг из контейнера зависимостей
-        user_service = deps.user_service
-        # stop_word_service = deps.stop_word_service # Раскомментируйте, когда сервис будет готов
-        config = deps.settings.threat_filter
+        text = (getattr(message, "text", None) or "").strip()
+        if not text:
+            return False
 
-        user_profile, _ = await user_service.get_or_create_user(message.from_user)
-        
-        total_score = 0
+        deps: Optional[Deps] = data.get("deps")
+        total_score: float = 0.0
         reasons: List[str] = []
 
-        # В будущем здесь будет логика со стоп-словами и другими проверками
-        # # 1. Проверка на стоп-слова
-        # found_stop_words = await stop_word_service.find_stop_words(message.text)
-        # if found_stop_words:
-        #     reasons.append(f"Стоп-слова: {', '.join(found_stop_words)}")
-        #     total_score += config.scores.get("stop_word", 0)
+        # 1) Попытка использовать полноценный SecurityService (если он есть в DI)
+        if deps and getattr(deps, "security_service", None):
+            try:
+                verdict = await deps.security_service.analyze_message(text)
+                total_score += float(verdict.score)
+                if verdict.reasons:
+                    reasons.extend(verdict.reasons)
+            except Exception:
+                # Переходим к эвристикам ниже
+                pass
 
-        # 2. Проверка на наличие ссылок
-        if message.entities and any(e.type in ["url", "text_link"] for e in message.entities):
-            reasons.append("Наличие ссылки")
-            # total_score += config.scores.get("has_link", 0) # Раскомментируйте с конфигом
-            total_score += 10 # Временное значение для теста
+        # 2) Легкие эвристики на случай недоступности сервисов
+        if total_score == 0.0:
+            lowered = text.lower()
+            bad_kw = ["http://", "https://", "casino", "airdrop", "giveaway", "usdt", "бинанс промокод"]
+            hits = [kw for kw in bad_kw if kw in lowered]
+            if hits:
+                total_score += 1.0
+                reasons.append("Подозрительные ключевые слова: " + ", ".join(hits))
 
-        # 3. Проверка на пересылку сообщения
-        if message.forward_date:
+        # 3) Пересланные сообщения — небольшой вклад
+        if getattr(message, "forward_date", None):
+            total_score += 0.5
             reasons.append("Пересланное сообщение")
-            # total_score += config.scores.get("forwarded", 0) # Раскомментируйте с конфигом
-            total_score += 5 # Временное значение для теста
 
-        # Если итоговый балл превышает порог, передаем данные в хэндлер
-        # min_trigger_score = config.min_trigger_score
-        min_trigger_score = 1 # Временное значение для теста
-        if total_score >= min_trigger_score:
-            return {"threat_score": total_score, "reasons": reasons}
-        
-        return False
+        return {"threat_score": total_score, "reasons": reasons} if total_score >= self.min_score else False

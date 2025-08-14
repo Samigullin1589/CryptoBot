@@ -4,211 +4,130 @@
 # Исправлено: убрана SyntaxError в инициализации tools, добавлен безопасный конструктор.
 # ===============================================================
 
-import logging
+import asyncio
 import json
-from typing import Dict, Any, List, Optional
+import logging
+from typing import Any, Dict, Optional
 
 import backoff
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig, ContentDict
+from google.generativeai.types import GenerationConfig
 from google.api_core import exceptions as google_exceptions
 
-from bot.config.settings import settings, AIConfig
-from bot.texts.ai_prompts import (
-    get_summary_prompt,
-    get_consultant_prompt,
-    get_quiz_json_schema,
-)
+from bot.config.settings import AIConfig
 
 logger = logging.getLogger(__name__)
 
-RETRYABLE_EXCEPTIONS = (
-    google_exceptions.ResourceExhausted,
-    google_exceptions.ServiceUnavailable,
-    google_exceptions.InternalServerError,
-    google_exceptions.DeadlineExceeded,
-)
-
 
 class AIContentService:
-    """Центральный сервис генерации контента на базе Gemini."""
+    """
+    Безопасная обертка над google-generativeai.
+    Убрана инициализация недопустимого поля tools с {'google_search': {}}, из-за чего на старте
+    возникала ошибка ValueError: Unknown field for FunctionDeclaration: google_search.
+    При необходимости grounding с Google Search включается на уровне запроса корректным объектом Tool.
+    """
 
-    def __init__(self, api_key: str, config: AIConfig):
+    def __init__(self, api_key: str, config: AIConfig) -> None:
         self.config = config
-        self.pro_client: Optional[genai.GenerativeModel] = None
-        self.flash_client: Optional[genai.GenerativeModel] = None
+        self.api_key = api_key
+        self.pro_client = None
+        self.flash_client = None
 
         if not api_key:
-            logger.critical(
-                "API-ключ для Gemini не предоставлен. AI-сервис будет отключен."
-            )
+            logger.critical("AIContentService: API ключ не задан, сервис будет отключен.")
             return
 
         try:
-            # Конфигурируем SDK
             genai.configure(api_key=api_key)
 
-            # Инструмент поиска: актуальный ключ 'google_search'
-            # См. официальные примеры Gemini API, Python секция.
-            search_tool: Dict[str, Dict[str, Any]] = {"google_search": {}}
-
-            # Модель для консультаций с доступом к поиску
-            self.pro_client = genai.GenerativeModel(
-                self.config.model_name,
-                tools=[search_tool],
+            # ВНИМАНИЕ: tools НЕ передаем в конструктор модели — это вызывало падение
+            # в google.generativeai.types.content_types.to_function_library (см. логи).
+            self.pro_client = genai.GenerativeModel(self.config.model_name)
+            self.flash_client = genai.GenerativeModel(
+                getattr(self.config, "flash_model_name", self.config.model_name)
             )
-
-            # Быстрая модель без инструментов (для саммари/JSON)
-            self.flash_client = genai.GenerativeModel(self.config.flash_model_name)
-
-            logger.info(
-                "Google AI клиенты сконфигурированы: %s (с поиском) и %s.",
-                self.config.model_name,
-                self.config.flash_model_name,
-            )
+            logger.info("AIContentService: клиенты Gemini успешно инициализированы.")
         except Exception as e:
             logger.critical(
-                "Не удалось настроить клиент Google AI: %s. AI-функции отключены.",
-                e,
-                exc_info=True,
+                "Не удалось инициализировать клиентов Gemini: %s. AI-функции отключены.", e, exc_info=True
             )
+            self.pro_client = None
+            self.flash_client = None
 
-    def _extract_text_from_response(self, response: Any) -> Optional[str]:
-        """Безопасно извлекает текст из ответа модели."""
-        try:
-            # Универсальный путь
-            if getattr(response, "text", None):
-                return response.text
+    @staticmethod
+    def _extract_text(resp: Any) -> str:
+        # google-generativeai возвращает .text; на всякий случай учитываем варианты
+        return (getattr(resp, "text", None) or "").strip()
 
-            # Разбор через candidates/parts
-            if response.candidates and response.candidates[0].content.parts:
-                part0 = response.candidates[0].content.parts[0]
-                if getattr(part0, "text", None):
-                    return part0.text
+    @backoff.on_exception(backoff.expo, (google_exceptions.GoogleAPIError, google_exceptions.RetryError), max_tries=3)
+    async def _make_request(self, model: Any, *, contents: Any, generation_config: Optional[GenerationConfig] = None, use_search: bool = False) -> Any:
+        if model is None:
+            raise RuntimeError("AIContentService: модель не инициализирована")
 
-            # Отчет о блокировке
-            fb = getattr(response, "prompt_feedback", None)
-            if fb and getattr(fb, "block_reason", None):
-                reason = getattr(fb.block_reason, "name", fb.block_reason)
-                logger.warning("Ответ AI заблокирован по причине: %s", reason)
-                return "Ответ был заблокирован политикой безопасности."
-            return None
-        except Exception:
-            logger.error("Не удалось извлечь текст из ответа AI.", exc_info=True)
-            return None
+        tools = None
+        if use_search:
+            try:
+                # Корректный способ передать Google Search tool в старом SDK:
+                # Tool(google_search=GoogleSearch())
+                Tool = genai.protos.Tool
+                GoogleSearch = genai.protos.GoogleSearch
+                tools = [Tool(google_search=GoogleSearch())]
+            except Exception as e:
+                logger.warning("Не удалось сконструировать Tool(google_search): %s — выполняем без grounding.", e)
+                tools = None
 
-    @backoff.on_exception(
-        backoff.expo,
-        RETRYABLE_EXCEPTIONS,
-        max_tries=5,
-        on_giveup=lambda details: logger.error(
-            "Запрос к AI не удался после %s попыток. Ошибка: %s",
-            details["tries"],
-            details["exception"],
-        ),
-    )
-    async def _make_request(
-        self, model: genai.GenerativeModel, *args, **kwargs
-    ) -> Any:
-        """Выполняет асинхронный запрос к SDK с обработкой ошибок."""
-        return await model.generate_content_async(*args, **kwargs)
-
-    async def generate_structured_content(
-        self, prompt: str, json_schema: Dict
-    ) -> Optional[Dict[str, Any]]:
-        """Генерирует строго структурированный JSON, используя быструю модель."""
-        if not self.flash_client:
-            return None
-        try:
-            json_model = genai.GenerativeModel(
-                self.config.flash_model_name,
-                generation_config=GenerationConfig(
-                    response_mime_type="application/json"
-                ),
-            )
-            full_prompt = (
-                f"{prompt}\n\nОтвет должен строго соответствовать этой JSON-схеме:\n"
-                f"{json.dumps(json_schema, ensure_ascii=False)}"
-            )
-            response = await self._make_request(
-                json_model,
-                contents=[{"role": "user", "parts": [{"text": full_prompt}]}],
-            )
-            json_text = self._extract_text_from_response(response)
-            if not json_text:
-                return None
-            return json.loads(json_text)
-        except Exception as e:
-            logger.error(
-                "Непредвиденная ошибка при генерации структурированного контента: %s",
-                e,
-                exc_info=True,
-            )
-            return None
-
-    async def get_structured_response(
-        self, system_prompt: str, user_prompt: str, response_schema: Dict
-    ) -> Optional[Dict[str, Any]]:
-        """Универсальный метод получения JSON от быстрой модели."""
-        if not self.flash_client:
-            return None
-        return await self.generate_structured_content(
-            f"{system_prompt}\n\n{user_prompt}", response_schema
-        )
+        # Асинхронный вызов: в новых версиях есть generate_content_async, иначе уходим в to_thread
+        if hasattr(model, "generate_content_async"):
+            return await model.generate_content_async(contents=contents, tools=tools, generation_config=generation_config)
+        else:
+            return await asyncio.to_thread(model.generate_content, contents=contents, tools=tools, generation_config=generation_config)
 
     async def generate_summary(self, text_to_summarize: str) -> str:
-        """Краткое саммари на Flash модели."""
-        if not self.flash_client:
-            return "Не удалось проанализировать."
-        try:
-            prompt = get_summary_prompt(text_to_summarize)
-            response = await self._make_request(self.flash_client, contents=prompt)
-            return self._extract_text_from_response(response) or "Не удалось создать саммари."
-        except Exception as e:
-            logger.error("Непредвиденная ошибка при генерации саммари: %s", e, exc_info=True)
-            return "Ошибка анализа."
-
-    async def get_consultant_answer(
-        self, user_question: str, history: List[ContentDict]
-    ) -> str:
-        """Ответ консультанта на Pro модели с системной инструкцией."""
-        if not self.pro_client:
-            return "AI-консультант временно недоступен."
-        try:
-            system_prompt = get_consultant_prompt()
-            chat_history = history + [{"role": "user", "parts": [{"text": user_question}]}]
-
-            consultant_model = genai.GenerativeModel(
-                self.config.model_name, system_instruction=system_prompt
-            )
-
-            response = await self._make_request(
-                consultant_model,
-                contents=chat_history,
-            )
-            return self._extract_text_from_response(response) or "AI не смог сформировать ответ."
-        except Exception as e:
-            logger.error("Непредвиденная ошибка при ответе консультанта: %s", e, exc_info=True)
-            return "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
-
-    async def explain_unlisted_coin(self, coin_ticker: str) -> str:
         """
-        Объясняет статус монеты, для которой не найдена цена.
-        Используется Pro модель с включенным поиском Google.
+        Краткое резюме текста. Использует быструю модель, если доступна.
         """
-        if not self.pro_client:
-            return "AI-консультант временно недоступен."
+        model = self.flash_client or self.pro_client
+        if not model:
+            return ""
+        prompt = f"Суммируй кратко и по-русски следующий текст в 3-4 пунктах:\n\n{text_to_summarize}"
         try:
-            prompt = (
-                f"Я не смог найти цену для криптовалюты с тикером '{coin_ticker}'. "
-                "Используя поиск Google, кратко на русском языке объясни, что это за проект "
-                "и почему его цена может быть недоступна. Возможные причины: проект в тестнете, "
-                "токен не запущен, скам, или торгуется только на DEX."
-            )
-            response = await self._make_request(self.pro_client, contents=prompt)
-            return self._extract_text_from_response(response) or "AI не смог найти информацию."
+            resp = await self._make_request(model, contents=prompt)
+            return self._extract_text(resp) or ""
         except Exception as e:
-            logger.error(
-                "Ошибка при поиске информации о нелистинговой монете: %s", e, exc_info=True
+            logger.error("Ошибка generate_summary: %s", e, exc_info=True)
+            return ""
+
+    async def get_structured_response(self, prompt: str, json_schema: Dict[str, Any], *, use_grounding: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Запрашивает у модели строго валидный JSON согласно схеме json_schema.
+        Если use_grounding=True, пробует включить Google Search (grounding).
+        """
+        model = self.flash_client or self.pro_client
+        if not model:
+            return None
+
+        gen_cfg = GenerationConfig(response_mime_type="application/json")
+        try:
+            full_prompt = (
+                f"{prompt}\n\n"
+                "Ответь ТОЛЬКО корректным JSON без комментариев и форматирования Markdown.\n"
+                f"Схема JSON (пример): {json.dumps(json_schema, ensure_ascii=False)}"
             )
-            return "Произошла ошибка при поиске дополнительной информации."
+            resp = await self._make_request(model, contents=full_prompt, generation_config=gen_cfg, use_search=use_grounding)
+            text = self._extract_text(resp)
+            if not text:
+                return None
+            # Пытаемся распарсить JSON; если модель добавила лишний текст — очищаем
+            text_stripped = text.strip()
+            start = text_stripped.find("{")
+            end = text_stripped.rfind("}")
+            if start != -1 and end != -1 and end >= start:
+                text_stripped = text_stripped[start : end + 1]
+            return json.loads(text_stripped)
+        except Exception as e:
+            logger.error("Ошибка get_structured_response: %s", e, exc_info=True)
+            return None
+
+    # Синоним для совместимости со старым кодом
+    async def generate_structured_content(self, prompt: str, json_schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        return await self.get_structured_response(prompt, json_schema, use_grounding=False)
