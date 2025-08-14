@@ -1,12 +1,11 @@
 # =================================================================================
-# Файл: bot/main.py (ВЕРСЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
+# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
 # Описание: Точка входа с обработкой сигналов для Graceful Shutdown на Render.
 # =================================================================================
 
 import asyncio
 import logging
 import signal
-import argparse
 from typing import Coroutine
 
 from aiohttp import ClientSession
