@@ -78,3 +78,13 @@ class NewsCallback(CallbackData, prefix="news"):
     category: Optional[str] = None
     value: Optional[str] = None
     page: Optional[int] = None
+
+
+# Викторина/квиз
+class QuizCallback(CallbackData, prefix="quiz"):
+    action: str                    # start | answer | next | hint | results | page
+    value: Optional[str] = None
+    quiz_id: Optional[str] = None
+    question_id: Optional[str] = None
+    answer_id: Optional[str] = None
+    page: Optional[int] = None
