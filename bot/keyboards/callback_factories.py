@@ -74,6 +74,7 @@ class PriceCallback(CallbackData, prefix="price"):
     fiat: Optional[str] = None
     page: Optional[int] = None
     source: Optional[str] = None
+    coin_id: Optional[str] = None  # используется в price_handler.show_price_for_coin
 
 
 # ASIC: используем гибкое множество полей (часто встречающиеся в проекте),
