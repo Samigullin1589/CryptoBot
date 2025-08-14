@@ -1,11 +1,12 @@
 import asyncio
 import logging
 import re
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 from aiogram import Router, F
 from aiogram.types import Message
 
+from bot.filters.not_command_filter import NotCommandFilter
 from bot.utils.dependencies import Deps
 
 logger = logging.getLogger(__name__)
@@ -19,19 +20,13 @@ _COIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,19}$")
 
 
 def _looks_like_coin_token(text: str) -> bool:
-    """
-    Эвристика: одиночный токен вида 'btc', 'aleo', 'eth', 'doge-3' и т.п.
-    """
     t = text.strip()
     if not t or " " in t:
         return False
     return bool(_COIN_TOKEN_RE.match(t))
 
 
-async def _maybe_call(func: Callable, *args, **kwargs):
-    """
-    Унифицированный вызов sync/async функции.
-    """
+async def _maybe_call(func, *args, **kwargs):
     res = func(*args, **kwargs)
     if asyncio.iscoroutine(res):
         return await res
@@ -39,13 +34,7 @@ async def _maybe_call(func: Callable, *args, **kwargs):
 
 
 async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Пытаемся получить (coin_id, symbol) по текстовому запросу максимально совместимо
-    с существующими сервисами проекта.
-    Возвращает (coin_id, symbol) или (None, None).
-    """
     cls = getattr(deps, "coin_list_service", None)
-
     candidates = [
         ("resolve_query", {"query": query}),
         ("resolve", {"query": query}),
@@ -53,29 +42,23 @@ async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional
         ("find", {"text": query}),
         ("get", {"query": query}),
     ]
-
     for name, kwargs in candidates:
         if cls and hasattr(cls, name):
             try:
                 obj = await _maybe_call(getattr(cls, name), **kwargs)
                 if not obj:
                     continue
-                coin_id = getattr(obj, "id", None) or obj.get("id") if isinstance(obj, dict) else None
-                symbol = getattr(obj, "symbol", None) or obj.get("symbol") if isinstance(obj, dict) else None
+                coin_id = getattr(obj, "id", None) or (obj.get("id") if isinstance(obj, dict) else None)
+                symbol = getattr(obj, "symbol", None) or (obj.get("symbol") if isinstance(obj, dict) else None)
                 symbol = symbol or getattr(obj, "ticker", None) or (obj.get("ticker") if isinstance(obj, dict) else None)
                 if coin_id or symbol:
-                    return str(coin_id) if coin_id else None, (str(symbol).upper() if symbol else None)
+                    return (str(coin_id) if coin_id else None), (str(symbol).upper() if symbol else None)
             except Exception as e:
                 logger.debug("coin_list_service.%s failed: %s", name, e)
-
     return None, query.upper()
 
 
 async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
-    """
-    Пытаемся получить цену в USD через PriceService, при неудаче — через MarketDataService.
-    Возвращает число или None.
-    """
     ps = getattr(deps, "price_service", None)
     mds = getattr(deps, "market_data_service", None)
 
@@ -132,10 +115,6 @@ async def _reply_with_price(message: Message, symbol: str, price_usd: float) -> 
 
 
 def _user_in_price_context(deps: Deps, user_id: int) -> bool:
-    """
-    Пытаемся определить, находится ли пользователь в «ценовом» контексте (FSM/секция).
-    Все вызовы — опциональны и безопасны.
-    """
     us = getattr(deps, "user_state_service", None)
     if not us:
         return False
@@ -154,10 +133,6 @@ def _user_in_price_context(deps: Deps, user_id: int) -> bool:
 
 
 def _extract_price_query(text: str) -> Optional[str]:
-    """
-    Выделяем предполагаемый тикер/идентификатор из фраз вида:
-      'btc', 'курс btc', 'price eth', '$sol', 'курс: aleo'
-    """
     t = text.strip()
     if _looks_like_coin_token(t):
         return t
@@ -169,30 +144,16 @@ def _extract_price_query(text: str) -> Optional[str]:
 
 # ------------------------------ Обработчик ------------------------------
 
-@router.message(F.text)
+# ВАЖНО: добавлен NotCommandFilter(), чтобы /start и другие команды не попадали сюда
+@router.message(F.text, NotCommandFilter())
 async def handle_text_for_ai(message: Message, deps: Deps) -> None:
     """
-    Раньше все текстовые сообщения шли в AI-консультанта.
-    Теперь:
-      1) Не перехватываем бот-команды ("/start", "/help" и т.п.).
-      2) Перехватываем «ценовые» запросы и отвечаем курсом монеты.
-      3) Остальное — AI-консультант.
+    Для обычного текста:
+      1) Перехватываем «ценовые» запросы и отвечаем курсом монеты.
+      2) Остальное — передаём AI-консультанту.
     """
     user_text = (message.text or "").strip()
 
-    # --- 1) Игнорируем команды бота ---
-    if user_text.startswith("/"):
-        return
-    try:
-        if message.entities:
-            for ent in message.entities:
-                if getattr(ent, "type", "") == "bot_command":
-                    return
-    except Exception:
-        # если вдруг нет entities или тип другой — просто идём дальше
-        pass
-
-    # --- 2) Обработка ценовых запросов ---
     in_price_ctx = _user_in_price_context(deps, message.from_user.id if message.from_user else 0)
     price_query = _extract_price_query(user_text)
 
@@ -218,7 +179,7 @@ async def handle_text_for_ai(message: Message, deps: Deps) -> None:
                 pass
             return
 
-    # --- 3) Остальные тексты — к AI-консультанту ---
+    # Остальное — AI-консультант
     history_provider = getattr(deps, "history_service", None)
     history = None
     if history_provider and hasattr(history_provider, "get_history_for_user"):
