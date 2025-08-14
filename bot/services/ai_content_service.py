@@ -22,9 +22,7 @@ logger = logging.getLogger(__name__)
 class AIContentService:
     """
     Безопасная обертка над google-generativeai.
-    Убрана инициализация недопустимого поля tools с {'google_search': {}}, из-за чего на старте
-    возникала ошибка ValueError: Unknown field for FunctionDeclaration: google_search.
-    При необходимости grounding с Google Search включается на уровне запроса корректным объектом Tool.
+    Важно: tools не передаются в конструктор модели. Grounding (Google Search) подключается на уровне запроса.
     """
 
     def __init__(self, api_key: str, config: AIConfig) -> None:
@@ -39,9 +37,6 @@ class AIContentService:
 
         try:
             genai.configure(api_key=api_key)
-
-            # ВНИМАНИЕ: tools НЕ передаем в конструктор модели — это вызывало падение
-            # в google.generativeai.types.content_types.to_function_library (см. логи).
             self.pro_client = genai.GenerativeModel(self.config.model_name)
             self.flash_client = genai.GenerativeModel(
                 getattr(self.config, "flash_model_name", self.config.model_name)
@@ -56,19 +51,23 @@ class AIContentService:
 
     @staticmethod
     def _extract_text(resp: Any) -> str:
-        # google-generativeai возвращает .text; на всякий случай учитываем варианты
         return (getattr(resp, "text", None) or "").strip()
 
     @backoff.on_exception(backoff.expo, (google_exceptions.GoogleAPIError, google_exceptions.RetryError), max_tries=3)
-    async def _make_request(self, model: Any, *, contents: Any, generation_config: Optional[GenerationConfig] = None, use_search: bool = False) -> Any:
+    async def _make_request(
+        self,
+        model: Any,
+        *,
+        contents: Any,
+        generation_config: Optional[GenerationConfig] = None,
+        use_search: bool = False,
+    ) -> Any:
         if model is None:
             raise RuntimeError("AIContentService: модель не инициализирована")
 
         tools = None
         if use_search:
             try:
-                # Корректный способ передать Google Search tool в старом SDK:
-                # Tool(google_search=GoogleSearch())
                 Tool = genai.protos.Tool
                 GoogleSearch = genai.protos.GoogleSearch
                 tools = [Tool(google_search=GoogleSearch())]
@@ -76,16 +75,12 @@ class AIContentService:
                 logger.warning("Не удалось сконструировать Tool(google_search): %s — выполняем без grounding.", e)
                 tools = None
 
-        # Асинхронный вызов: в новых версиях есть generate_content_async, иначе уходим в to_thread
         if hasattr(model, "generate_content_async"):
             return await model.generate_content_async(contents=contents, tools=tools, generation_config=generation_config)
         else:
             return await asyncio.to_thread(model.generate_content, contents=contents, tools=tools, generation_config=generation_config)
 
     async def generate_summary(self, text_to_summarize: str) -> str:
-        """
-        Краткое резюме текста. Использует быструю модель, если доступна.
-        """
         model = self.flash_client or self.pro_client
         if not model:
             return ""
@@ -97,23 +92,40 @@ class AIContentService:
             logger.error("Ошибка generate_summary: %s", e, exc_info=True)
             return ""
 
-    async def get_structured_response(self, prompt: str, json_schema: Dict[str, Any], *, use_grounding: bool = False) -> Optional[Dict[str, Any]]:
+    async def get_structured_response(
+        self,
+        prompt: str,
+        json_schema: Dict[str, Any],
+        *,
+        use_grounding: bool = False,
+        system_prompt: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
         """
         Запрашивает у модели строго валидный JSON согласно схеме json_schema.
-        Если use_grounding=True, пробует включить Google Search (grounding).
+        Совместимо с вызовами вида get_structured_response(..., system_prompt="...").
+        Неиспользуемые **kwargs игнорируются.
         """
         model = self.flash_client or self.pro_client
         if not model:
             return None
 
+        # Если задан system_prompt, добавим его перед пользовательским запросом.
+        sys_txt = (system_prompt or "").strip()
+        full_prompt = f"{sys_txt}\n\n{prompt}" if sys_txt else prompt
+
         gen_cfg = GenerationConfig(response_mime_type="application/json")
         try:
-            full_prompt = (
-                f"{prompt}\n\n"
-                "Ответь ТОЛЬКО корректным JSON без комментариев и форматирования Markdown.\n"
+            full_prompt += (
+                "\n\nОтветь ТОЛЬКО корректным JSON без комментариев и форматирования Markdown.\n"
                 f"Схема JSON (пример): {json.dumps(json_schema, ensure_ascii=False)}"
             )
-            resp = await self._make_request(model, contents=full_prompt, generation_config=gen_cfg, use_search=use_grounding)
+            resp = await self._make_request(
+                model,
+                contents=full_prompt,
+                generation_config=gen_cfg,
+                use_search=use_grounding,
+            )
             text = self._extract_text(resp)
             if not text:
                 return None
@@ -128,6 +140,16 @@ class AIContentService:
             logger.error("Ошибка get_structured_response: %s", e, exc_info=True)
             return None
 
-    # Синоним для совместимости со старым кодом
-    async def generate_structured_content(self, prompt: str, json_schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        return await self.get_structured_response(prompt, json_schema, use_grounding=False)
+    async def generate_structured_content(
+        self,
+        prompt: str,
+        json_schema: Dict[str, Any],
+        *,
+        system_prompt: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        return await self.get_structured_response(
+            prompt,
+            json_schema,
+            use_grounding=False,
+            system_prompt=system_prompt,
+        )
