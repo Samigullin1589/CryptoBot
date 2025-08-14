@@ -1,25 +1,24 @@
-# ===============================================================
-# Файл: bot/handlers/public/__init__.py (ИСПРАВЛЕНО)
-# Описание: Этот файл служит для обозначения директории как пакета Python
-#           и для централизованного экспорта всех публичных роутеров.
-# ===============================================================
+from aiogram import Router
 
-from .menu_handlers import router as menu_router
-from .price_handler import router as price_router
-from .asic_handler import router as asic_router
-from .news_handler import router as news_router
-from .quiz_handler import router as quiz_router
-from .market_info_handler import router as market_info_router
-from .market_handler import router as market_router
-from .crypto_center_handler import router as crypto_center_router
-from .verification_public_handler import router as verification_public_router
-from .achievements_handler import router as achievements_router
-from .game_handler import router as game_router
-from .common_handler import router as common_router
+router = Router(name="public")
 
-__all__ = [
-    "menu_router", "price_router", "asic_router", "news_router",
-    "quiz_router", "market_info_handler", "market_router",
-    "crypto_center_router", "verification_public_router",
-    "achievements_router", "game_router", "common_router"
-]
+# Подключаем обработчики безопасно, чтобы отсутствие какого-либо модуля не ломало загрузку.
+# Порядок важен: start_handler раньше common_handler.
+for _mod in (
+    "start_handler",
+    "price_handler",
+    "asic_handler",
+    "news_handler",
+    "quiz_handler",
+    "market_handler",
+    "crypto_center_handler",
+    "common_handler",
+):
+    try:
+        module = __import__(f"{__package__}.{_mod}", fromlist=["router"])
+        sub_router = getattr(module, "router", None)
+        if sub_router is not None:
+            router.include_router(sub_router)
+    except Exception:
+        # Избегаем падений при частичной конфигурации.
+        pass
