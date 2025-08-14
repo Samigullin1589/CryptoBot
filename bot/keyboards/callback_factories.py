@@ -42,8 +42,7 @@ class GameAdminCallback(CallbackData, prefix="adgame", sep="|"):
     page: Optional[int] = None
 
 
-# Угроза/модерация: стандартный разделитель ":" подходит, значения — числа/простые строки.
-# Порядок полей важен — он соответствует ожидаемой схеме 'threat:<action>:<user_id>:<message_id>:<chat_id>'
+# Угроза/модерация
 class ThreatCallback(CallbackData, prefix="threat"):
     action: str            # ban | pardon | ignore
     user_id: Optional[int] = None
@@ -51,9 +50,7 @@ class ThreatCallback(CallbackData, prefix="threat"):
     chat_id: Optional[int] = None
 
 
-# Цены/топ-ASIC/инфо — максимально совместимая фабрика:
-# поддерживает как value, так и именованные поля symbol/fiat/page/source,
-# чтобы соответствовать различным существующим вызовам .pack(...)
+# Цены/топ-ASIC/инфо
 class PriceCallback(CallbackData, prefix="price"):
     action: str
     value: Optional[str] = None
@@ -61,3 +58,13 @@ class PriceCallback(CallbackData, prefix="price"):
     fiat: Optional[str] = None
     page: Optional[int] = None
     source: Optional[str] = None
+
+
+# ASIC: используем гибкое множество полей (часто встречающиеся в проекте),
+# и разделитель "|" чтобы action мог содержать подтипы через ":" (например, "top:page").
+class AsicCallback(CallbackData, prefix="asic", sep="|"):
+    action: str
+    value: Optional[str] = None
+    asic_id: Optional[str] = None
+    page: Optional[int] = None
+    sort: Optional[str]
