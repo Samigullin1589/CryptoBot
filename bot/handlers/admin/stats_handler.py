@@ -1,9 +1,8 @@
 # bot/handlers/admin/stats_handler.py
 # =================================================================================
 # Файл: bot/handlers/admin/stats_handler.py (ПРОДАКШН-ВЕРСИЯ 2025 - ИСПРАВЛЕННАЯ)
-# Описание: Единый динамический обработчик для отображения статистики,
-# полностью соответствующий архитектуре "тонкий хэндлер".
-# ИСПРАВЛЕНИЕ: Исправлена ошибка в префиксе callback-запросов.
+# Описание: Единый динамический обработчик для отображения статистики.
+# ИСПРАВЛЕНИЕ: Внедрение зависимостей унифицировано через deps: Deps.
 # =================================================================================
 import logging
 from aiogram import Router, F
@@ -11,10 +10,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 
 from bot.filters.access_filters import PrivilegeFilter, UserRole
-from bot.services.admin_service import AdminService
 from bot.states.admin_states import AdminStates
 from bot.keyboards.admin_keyboards import get_back_to_admin_menu_keyboard
 from bot.utils.ui_helpers import edit_or_send_message
+from bot.utils.dependencies import Deps
 
 stats_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
@@ -22,17 +21,15 @@ logger = logging.getLogger(__name__)
 # Применяем фильтр ко всему роутеру
 stats_router.callback_query.filter(PrivilegeFilter(min_role=UserRole.MODERATOR))
 
-# ИСПРАВЛЕНО: Префикс изменен с "admin_stats:" на "admin:stats:" для соответствия клавиатуре
 @stats_router.callback_query(F.data.startswith("admin:stats:"), AdminStates.stats_view)
 async def show_statistics_page(
     callback: CallbackQuery,
     state: FSMContext,
-    admin_service: AdminService
+    deps: Deps
 ):
     """
     Единый динамический обработчик для всех страниц статистики.
     """
-    # Теперь мы безопасно извлекаем тип статистики
     stats_type = callback.data.split(":")[-1]
     
     logger.info(f"Admin {callback.from_user.id} requested statistics page: '{stats_type}'")
@@ -40,8 +37,7 @@ async def show_statistics_page(
     await callback.answer(f"Загружаю статистику: {stats_type}...")
     
     try:
-        # Вся логика по получению текста и клавиатуры теперь в сервисе
-        text, keyboard = await admin_service.get_stats_page_content(stats_type)
+        text, keyboard = await deps.admin_service.get_stats_page_content(stats_type)
         await edit_or_send_message(callback, text, keyboard)
 
     except KeyError:

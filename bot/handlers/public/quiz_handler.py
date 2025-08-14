@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/public/quiz_handler.py (ВЕРСЯ "Distinguished Engineer" - НОВЫЙ)
 # Описание: Обрабатывает раздел "Викторина".
-# ИСПРАВЛЕНИЕ: Исправлены вызовы сервиса AI.
+# ИСПРАВЛЕНИЕ: Внедрение зависимостей унифицировано через deps: Deps.
 # =================================================================================
 import logging
 from aiogram import F, Router
@@ -10,7 +10,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.utils.dependencies import Deps
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
-from bot.keyboards.callback_factories import MenuCallback
+from bot.keyboards.callback_factories import MenuCallback, QuizCallback
+from bot.keyboards.quiz_keyboards import get_quiz_options_keyboard, get_quiz_next_keyboard
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
@@ -26,28 +27,19 @@ async def handle_quiz_start(call: CallbackQuery, deps: Deps):
 
     question, options, correct_index = question_data
     
-    builder = InlineKeyboardBuilder()
-    for i, option_text in enumerate(options):
-        # В callback_data передаем 1, если ответ верный, и 0, если нет
-        is_correct = 1 if i == correct_index else 0
-        builder.button(text=option_text, callback_data=f"quiz_answer:{is_correct}")
+    keyboard = get_quiz_options_keyboard(options, correct_index)
     
-    builder.adjust(1) # Каждая кнопка в новом ряду
-    
-    await call.message.edit_text(f"🧠 <b>Вопрос викторины:</b>\n\n{question}", reply_markup=builder.as_markup())
+    await call.message.edit_text(f"🧠 <b>Вопрос викторины:</b>\n\n{question}", reply_markup=keyboard)
 
-@router.callback_query(F.data.startswith("quiz_answer:"))
-async def handle_quiz_answer(call: CallbackQuery):
-    is_correct = int(call.data.split(":")[1])
+@router.callback_query(QuizCallback.filter(F.action == "answer"))
+async def handle_quiz_answer(call: CallbackQuery, callback_data: QuizCallback):
+    is_correct = callback_data.is_correct
     
-    next_keyboard = InlineKeyboardBuilder()
-    next_keyboard.button(text="🔄 Следующий вопрос", callback_data="menu:0:quiz")
-    next_keyboard.button(text="🏠 Главное меню", callback_data="menu:0:main")
-    next_keyboard.adjust(1)
+    next_keyboard = get_quiz_next_keyboard()
 
     if is_correct:
-        await call.message.edit_text(f"{call.message.text}\n\n✅ <b>Правильно!</b>", reply_markup=next_keyboard.as_markup())
+        await call.message.edit_text(f"{call.message.text}\n\n✅ <b>Правильно!</b>", reply_markup=next_keyboard)
     else:
-        await call.message.edit_text(f"{call.message.text}\n\n❌ <b>Неверно!</b> Попробуйте еще раз.", reply_markup=next_keyboard.as_markup())
+        await call.message.edit_text(f"{call.message.text}\n\n❌ <b>Неверно!</b> Попробуйте еще раз.", reply_markup=next_keyboard)
     
     await call.answer()

@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/handlers/admin/game_admin_handler.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Обработчики для администрирования игровой части бота.
-# ИСПРАВЛЕНИЕ: Удален некорректный импорт 'GAME_ADMIN_CALLBACK_PREFIX'.
+# ИСПРАВЛЕНИЕ: Внедрение зависимостей унифицировано через deps: Deps.
 # =================================================================================
 
 import logging
@@ -10,11 +10,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 
 from bot.filters.access_filters import PrivilegeFilter, UserRole
-from bot.services.admin_service import AdminService
-# ИСПРАВЛЕНО: Удален импорт GAME_ADMIN_CALLBACK_PREFIX
 from bot.keyboards.admin_keyboards import get_game_admin_menu_keyboard, get_back_to_game_admin_menu_keyboard
 from bot.keyboards.callback_factories import GameAdminCallback
 from bot.states.admin_states import GameAdmin
+from bot.utils.dependencies import Deps
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -23,10 +22,10 @@ router.message.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 router.callback_query.filter(PrivilegeFilter(min_role=UserRole.ADMIN))
 
 @router.callback_query(GameAdminCallback.filter(F.action == "menu"))
-async def game_admin_menu_handler(callback: types.CallbackQuery, admin_service: AdminService, state: FSMContext):
+async def game_admin_menu_handler(callback: types.CallbackQuery, deps: Deps, state: FSMContext):
     """Отображает главное меню управления игрой."""
     await state.clear()
-    stats = await admin_service.get_game_stats()
+    stats = await deps.admin_service.get_game_stats()
     text = "🎮 <b>Панель Управления Игрой</b>"
     keyboard = get_game_admin_menu_keyboard(stats)
     await callback.message.edit_text(text, reply_markup=keyboard)
@@ -57,7 +56,7 @@ async def change_balance_enter_id_handler(message: types.Message, state: FSMCont
                          "и отрицательное для списания (e.g., `-500`).")
 
 @router.message(StateFilter(GameAdmin.enter_balance_amount))
-async def change_balance_enter_amount_handler(message: types.Message, state: FSMContext, admin_service: AdminService):
+async def change_balance_enter_amount_handler(message: types.Message, state: FSMContext, deps: Deps):
     """Обрабатывает ввод суммы и завершает операцию."""
     try:
         amount = float(message.text)
@@ -68,7 +67,7 @@ async def change_balance_enter_amount_handler(message: types.Message, state: FSM
     data = await state.get_data()
     target_user_id = data.get("target_user_id")
     
-    new_balance = await admin_service.change_user_game_balance(target_user_id, amount)
+    new_balance = await deps.admin_service.change_user_game_balance(target_user_id, amount)
     await state.clear()
     
     if new_balance is not None:
