@@ -46,7 +46,6 @@ async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional
     """
     cls = getattr(deps, "coin_list_service", None)
 
-    # Популярные варианты имен методов резолва
     candidates = [
         ("resolve_query", {"query": query}),
         ("resolve", {"query": query}),
@@ -61,17 +60,14 @@ async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional
                 obj = await _maybe_call(getattr(cls, name), **kwargs)
                 if not obj:
                     continue
-                # Нормализуем возможные формы ответа
                 coin_id = getattr(obj, "id", None) or obj.get("id") if isinstance(obj, dict) else None
                 symbol = getattr(obj, "symbol", None) or obj.get("symbol") if isinstance(obj, dict) else None
-                # Альтернативные ключи
                 symbol = symbol or getattr(obj, "ticker", None) or (obj.get("ticker") if isinstance(obj, dict) else None)
                 if coin_id or symbol:
                     return str(coin_id) if coin_id else None, (str(symbol).upper() if symbol else None)
             except Exception as e:
                 logger.debug("coin_list_service.%s failed: %s", name, e)
 
-    # Если ничего не нашли — предположим, что ввод есть сам символ
     return None, query.upper()
 
 
@@ -83,7 +79,6 @@ async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
     ps = getattr(deps, "price_service", None)
     mds = getattr(deps, "market_data_service", None)
 
-    # Варианты методов PriceService
     ps_candidates = [
         ("get_price", {"symbol": symbol, "fiat": "usd"}),
         ("get_price", {"coin": symbol, "fiat": "usd"}),
@@ -94,11 +89,9 @@ async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
         if ps and hasattr(ps, name):
             try:
                 res = await _maybe_call(getattr(ps, name), **kwargs)
-                # Нормализуем ответ
                 if isinstance(res, (int, float)):
                     return float(res)
                 if isinstance(res, dict):
-                    # Возможные формы: {"BTC": 67890} или {"BTC": {"usd": 67890}} и т.п.
                     val = res.get(symbol) or res.get(symbol.upper()) or res.get(symbol.lower())
                     if isinstance(val, (int, float)):
                         return float(val)
@@ -107,7 +100,6 @@ async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
             except Exception as e:
                 logger.debug("price_service.%s failed: %s", name, e)
 
-    # Варианты методов MarketDataService
     mds_candidates = [
         ("get_price", {"symbol": symbol, "fiat": "usd"}),
         ("get_prices", {"symbols": [symbol], "fiat": "usd"}),
@@ -147,13 +139,11 @@ def _user_in_price_context(deps: Deps, user_id: int) -> bool:
     us = getattr(deps, "user_state_service", None)
     if not us:
         return False
-    # Популярные варианты API
     for name in ("get_current_section", "get_section", "get_user_section", "get_mode"):
         if hasattr(us, name):
             try:
-                section = getattr(us, name)(user_id)  # предполагаем sync; если coroutine — не критично
+                section = getattr(us, name)(user_id)
                 if asyncio.iscoroutine(section):
-                    # если вдруг coroutine — не ждём, чтобы не блокировать
                     return False
                 section_str = (str(section) if section is not None else "").lower()
                 if section_str in {"price", "prices", "курс", "курсы", "market_price"}:
@@ -169,11 +159,8 @@ def _extract_price_query(text: str) -> Optional[str]:
       'btc', 'курс btc', 'price eth', '$sol', 'курс: aleo'
     """
     t = text.strip()
-    # если одиночный токен — это уже кандидат
     if _looks_like_coin_token(t):
         return t
-
-    # иначе ищем по паттернам
     m = re.search(r"(?:^|\s)(?:курс|price|\$)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,19})", t, flags=re.IGNORECASE)
     if m:
         return m.group(1)
@@ -186,19 +173,31 @@ def _extract_price_query(text: str) -> Optional[str]:
 async def handle_text_for_ai(message: Message, deps: Deps) -> None:
     """
     Раньше все текстовые сообщения шли в AI-консультанта.
-    Теперь перехватываем «ценовые» запросы и отвечаем курсом монеты.
+    Теперь:
+      1) Не перехватываем бот-команды ("/start", "/help" и т.п.).
+      2) Перехватываем «ценовые» запросы и отвечаем курсом монеты.
+      3) Остальное — AI-консультант.
     """
     user_text = (message.text or "").strip()
 
-    # 1) Если пользователь в явном «ценовом» контексте — трактуем ввод как запрос цены.
-    in_price_ctx = _user_in_price_context(deps, message.from_user.id if message.from_user else 0)
+    # --- 1) Игнорируем команды бота ---
+    if user_text.startswith("/"):
+        return
+    try:
+        if message.entities:
+            for ent in message.entities:
+                if getattr(ent, "type", "") == "bot_command":
+                    return
+    except Exception:
+        # если вдруг нет entities или тип другой — просто идём дальше
+        pass
 
-    # 2) Или если текст похож на запрос цены.
+    # --- 2) Обработка ценовых запросов ---
+    in_price_ctx = _user_in_price_context(deps, message.from_user.id if message.from_user else 0)
     price_query = _extract_price_query(user_text)
 
     if in_price_ctx or price_query:
         query = price_query or user_text
-        # Разрешаем в coin_id/symbol
         coin_id, symbol = await _resolve_coin(deps, query)
         symbol_for_fetch = symbol or (coin_id or "").upper()
         if symbol_for_fetch:
@@ -219,7 +218,7 @@ async def handle_text_for_ai(message: Message, deps: Deps) -> None:
                 pass
             return
 
-    # 3) Иначе — обычный AI-консультант.
+    # --- 3) Остальные тексты — к AI-консультанту ---
     history_provider = getattr(deps, "history_service", None)
     history = None
     if history_provider and hasattr(history_provider, "get_history_for_user"):
