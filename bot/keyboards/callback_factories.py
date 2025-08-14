@@ -40,3 +40,12 @@ class GameAdminCallback(CallbackData, prefix="adgame", sep="|"):
     action: str
     value: Optional[str] = None
     page: Optional[int] = None
+
+
+# Угроза/модерация: стандартный разделитель ":" подходит, значения — числа/простые строки.
+# Порядок полей важен — он соответствует ожидаемой схеме 'threat:<action>:<user_id>:<message_id>:<chat_id>'
+class ThreatCallback(CallbackData, prefix="threat"):
+    action: str            # ban | pardon | ignore
+    user_id: Optional[int] = None
+    message_id: Optional[int] = None
+    chat_id: Optional[int] = None
