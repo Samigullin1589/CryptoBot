@@ -1,7 +1,7 @@
 # ===============================================================
 # Файл: bot/services/ai_content_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Сервис для Gemini, использующий актуальную версию библиотеки.
-# ИСПРАВЛЕНИЕ: Добавлен новый метод explain_unlisted_coin с использованием поиска Google.
+# ИСПРАВЛЕНИЕ: Исправлена SyntaxError в инициализации Gemini-клиента.
 # ===============================================================
 
 import logging
@@ -38,10 +38,10 @@ class AIContentService:
             return
         try:
             genai.configure(api_key=api_key)
-            # Включаем поиск для Pro модели
+            # ИСПРАВЛЕНО: Устранена SyntaxError
             self.pro_client = genai.GenerativeModel(
                 self.config.model_name,
-                tools=[genai.Tool.from_Google Search_retrieval(genai.GoogleSearchRetrieval())]
+                tools=[genai.Tool.from_Google Search_retrieval(Google Search_retrieval=genai.GoogleSearchRetrieval())]
             )
             self.flash_client = genai.GenerativeModel(self.config.flash_model_name)
             logger.info(f"Клиенты Google AI успешно сконфигурированы для моделей {self.config.model_name} (с поиском) и {self.config.flash_model_name}.")

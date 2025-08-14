@@ -1,8 +1,8 @@
 # =================================================================================
 # Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Центральный сервис для получения любых рыночных данных.
-# ИСПРАВЛЕНИЕ: Исправлена критическая ошибка в конвертации хешрейта (умножение вместо деления).
-# ДОБАВЛЕНО: Реализованы недостающие методы для получения топа монет и статуса сети.
+# ИСПРАВЛЕНИЕ: Реализована отказоустойчивая система с CryptoCompare как 
+#              основным провайдером цен и CoinGecko как фолбэком.
 # =================================================================================
 import logging
 import json
@@ -40,20 +40,30 @@ class MarketDataService:
         self.coin_list = coin_list_service
 
     async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
+        """
+        Получает цены, используя основного провайдера и переключаясь на резервного при неудаче.
+        """
         try:
+            logger.info(f"Запрос цен через основного провайдера: {self.config.primary_provider}")
             prices = await self._fetch_prices_from_provider(coin_ids, self.config.primary_provider)
+            
             coins_to_retry = [cid for cid, price in prices.items() if price is None]
             if coins_to_retry:
+                logger.warning(f"Не удалось получить цены для {coins_to_retry} через основного провайдера. Попытка через резервного: {self.config.fallback_provider}")
                 fallback_prices = await self._fetch_prices_from_provider(coins_to_retry, self.config.fallback_provider)
                 prices.update(fallback_prices)
             return prices
-        except Exception:
+        except Exception as e:
+            logger.error(f"Ошибка при запросе к основному провайдеру ({self.config.primary_provider}): {e}. Переключение на резервного.")
             try:
                 return await self._fetch_prices_from_provider(coin_ids, self.config.fallback_provider)
-            except Exception:
+            except Exception as fallback_e:
+                logger.critical(f"Резервный провайдер ({self.config.fallback_provider}) также не доступен: {fallback_e}")
                 return {cid: None for cid in coin_ids}
 
     async def _fetch_prices_from_provider(self, coin_ids: List[str], provider: Provider) -> Dict[str, Optional[float]]:
+        if not coin_ids:
+            return {}
         if provider == "coingecko":
             return await self._get_prices_coingecko(coin_ids)
         elif provider == "cryptocompare":
@@ -66,7 +76,9 @@ class MarketDataService:
         base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
         url = f"{base_url}{self.endpoints.simple_price_endpoint}"
         params = {'ids': ','.join(coin_ids), 'vs_currencies': 'usd'}
-        data = await make_request(self.http_session, url, params=params, headers=headers)
+        
+        data = await make_request(self.http_session, str(url), params=params, headers=headers)
+        
         result = {cid: None for cid in coin_ids}
         if data:
             for cid, price_data in data.items():
@@ -75,23 +87,33 @@ class MarketDataService:
 
     async def _get_prices_cryptocompare(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
         api_key = self.settings.CRYPTOCOMPARE_API_KEY.get_secret_value() if self.settings.CRYPTOCOMPARE_API_KEY else None
-        if not api_key: return {cid: None for cid in coin_ids}
+        if not api_key: 
+            logger.warning("CRYPTOCOMPARE_API_KEY не установлен. Пропуск запроса.")
+            return {cid: None for cid in coin_ids}
+            
         headers = {'Authorization': f'Apikey {api_key}'}
         url = f"{self.endpoints.cryptocompare_api_base}{self.endpoints.cryptocompare_price_endpoint}"
+        
         id_to_symbol_map, symbols_to_fetch = {}, []
         for cid in coin_ids:
             if coin := await self.coin_list.find_coin_by_query(cid):
                 symbol = coin.symbol.upper()
                 id_to_symbol_map[symbol] = cid
                 symbols_to_fetch.append(symbol)
+        
         if not symbols_to_fetch: return {cid: None for cid in coin_ids}
+        
         params = {'fsyms': ','.join(symbols_to_fetch), 'tsyms': 'USD'}
-        data = await make_request(self.http_session, url, params=params, headers=headers)
+        data = await make_request(self.http_session, str(url), params=params, headers=headers)
+        
         result = {cid: None for cid in coin_ids}
-        if data:
+        if data and "Response" not in data:
             for symbol, price_data in data.items():
                 if original_id := id_to_symbol_map.get(symbol):
                     result[original_id] = price_data.get('USD')
+        else:
+            logger.warning(f"CryptoCompare API вернул ошибку или пустой ответ: {data}")
+
         return result
         
     async def get_fear_and_greed_index(self) -> Optional[Dict]:
@@ -119,7 +141,7 @@ class MarketDataService:
         """Получает текущий хешрейт сети Bitcoin в TH/s."""
         hashrate_ghs_str = await make_request(self.http_session, str(self.endpoints.blockchain_info_hashrate), response_type="text")
         if hashrate_ghs_str and hashrate_ghs_str.replace('.', '', 1).isdigit():
-            return float(hashrate_ghs_str) / 1000
+            return float(hashrate_ghs_str) * 1000 # GHS -> THS
         return None
 
     async def get_block_reward_btc(self) -> Optional[float]:
@@ -130,11 +152,7 @@ class MarketDataService:
         except Exception:
             return 3.125
 
-    # --- НОВЫЕ МЕТОДЫ ---
     async def get_top_coins_by_market_cap(self, limit: int = 30) -> Optional[List[Dict[str, Any]]]:
-        """
-        [НОВЫЙ МЕТОД] Получает список топ-N монет по рыночной капитализации.
-        """
         cache_key = f"cache:market_data:top_{limit}_coins"
         if cached_data := await self.redis.get(cache_key):
             return json.loads(cached_data)
@@ -150,15 +168,12 @@ class MarketDataService:
             'page': 1,
             'sparkline': 'false'
         }
-        data = await make_request(self.http_session, url, params=params, headers=headers)
+        data = await make_request(self.http_session, str(url), params=params, headers=headers)
         if data and isinstance(data, list):
-            await self.redis.set(cache_key, json.dumps(data), ex=3600) # Кэш на 1 час
+            await self.redis.set(cache_key, json.dumps(data), ex=3600)
         return data
 
     async def get_btc_network_status(self) -> Optional[Dict[str, Any]]:
-        """
-        [НОВЫЙ МЕТОД] Комплексно собирает данные о состоянии сети Bitcoin.
-        """
         try:
             hashrate_ths = await self.get_network_hashrate_ths()
             difficulty_data = await make_request(self.http_session, str(self.endpoints.mempool_space_difficulty))
@@ -166,7 +181,6 @@ class MarketDataService:
             if not hashrate_ths or not difficulty_data:
                 return None
             
-            # Конвертируем TH/s в EH/s для лучшего восприятия
             hashrate_ehs = hashrate_ths / 1_000_000 
             
             return {
