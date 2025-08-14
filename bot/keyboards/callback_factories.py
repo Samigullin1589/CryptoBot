@@ -14,6 +14,7 @@ __all__ = [
     "NewsCallback",
     "QuizCallback",
     "MarketCallback",
+    "CryptoCenterCallback",
 ]
 
 class MenuCallback(CallbackData, prefix="menu"):
@@ -114,3 +115,13 @@ class MarketCallback(CallbackData, prefix="market", sep="|"):
     sort: Optional[str] = None
     vendor: Optional[str] = None
     q: Optional[str] = None  # поисковый запрос (если используется)
+
+
+# Crypto Center (аггрегатор разделов/сервисов)
+# Делается максимально гибким: допускает section/value/q и пагинацию; sep="|" для значений с ":".
+class CryptoCenterCallback(CallbackData, prefix="crypto", sep="|"):
+    action: str                    # open | section | page | refresh | back
+    value: Optional[str] = None
+    section: Optional[str] = None
+    page: Optional[int] = None
+    q: Optional[str] = None
