@@ -18,8 +18,8 @@ from .game_handler import router as game_router
 from .common_handler import router as common_router
 
 __all__ = [
-    "menu_router", "price_router", "asic_router", "news_handler",
+    "menu_router", "price_router", "asic_router", "news_router",
     "quiz_router", "market_info_handler", "market_router",
     "crypto_center_router", "verification_public_router",
-    "achievements_handler", "game_handler", "common_router"
+    "achievements_router", "game_router", "common_router"
 ]

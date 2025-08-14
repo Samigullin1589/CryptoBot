@@ -11,7 +11,7 @@ services:
     pythonVersion: "3.12.4"
     plan: free # Бесплатного плана достаточно для этой задачи
     buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5"
-    startCommand: "python -m bot.health_check_server"
+    startCommand: "python -m bot.main" # Запускаем main, который определит, что это web процесс
     envVars:
       - key: PYTHONPATH
         value: .
@@ -35,19 +35,19 @@ services:
       - key: IS_WEB_PROCESS
         value: "false"
       - key: BOT_TOKEN
-        sync: false
+        fromSecretFile: .env
       - key: ADMIN_USER_IDS
-        sync: false
+        fromSecretFile: .env
       - key: GEMINI_API_KEY
-        sync: false
+        fromSecretFile: .env
       - key: COINGECKO_API_KEY
-        sync: false
+        fromSecretFile: .env
       - key: CRYPTOCOMPARE_API_KEY
-        sync: false
+        fromSecretFile: .env
       - key: ADMIN_CHAT_ID
-        sync: false
+        fromSecretFile: .env
       - key: NEWS_CHAT_ID
-        sync: false
+        fromSecretFile: .env
       - key: REDIS_URL
         fromService:
           type: redis
@@ -64,23 +64,8 @@ services:
 # Cron Jobs: для выполнения регулярных задач по расписанию
 jobs:
   - type: cron
-    name: cryptobot-update-asics
+    name: update-asics-database
     schedule: "0 */6 * * *" # Каждые 6 часов
-    command: "python -m bot.jobs.scheduled_tasks --task=update_asics_db_job"
-    env: python
-    pythonVersion: "3.12.4"
-    plan: free
-    envVars:
-      - key: PYTHONPATH
-        value: .
-      - key: BOT_TOKEN
-        sync: false
-      - key: ADMIN_USER_IDS
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: cryptobot-redis
-          property: connectionString
+    command: "echo 'This is a placeholder cron job. APScheduler is used inside the worker.'"
+    # Примечание: Мы используем APScheduler внутри worker'а, этот Cron Job - пример
+    # как можно было бы вынести задачу, если бы она была ресурсоемкой.

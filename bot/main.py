@@ -88,6 +88,12 @@ async def on_shutdown(deps: Deps):
 async def main():
     setup_logging(level=settings.log_level, format="json")
     
+    # Проверяем, запущен ли процесс как web-сервис для health check
+    if settings.IS_WEB_PROCESS:
+        from bot.health_check_server import main as health_check_main
+        health_check_main()
+        return
+
     async with ClientSession() as http_session:
         bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
         

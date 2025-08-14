@@ -77,5 +77,6 @@ async def handle_start_session_action(call: CallbackQuery, callback_data: GameCa
 
     result_text = await deps.mining_game_service.start_session(call.from_user.id, asic_id)
 
+    # После запуска возвращаемся в главное меню игры
     await call.message.answer(result_text, disable_web_page_preview=True)
     await show_game_menu(call, deps, state)
