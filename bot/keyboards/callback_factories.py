@@ -1,6 +1,20 @@
 from typing import Optional
 from aiogram.filters.callback_data import CallbackData
 
+__all__ = [
+    "MenuCallback",
+    "GameCallback",
+    "PaginatorCallback",
+    "CalculatorCallback",
+    "AdminCallback",
+    "GameAdminCallback",
+    "ThreatCallback",
+    "PriceCallback",
+    "AsicCallback",
+    "NewsCallback",
+    "QuizCallback",
+    "MarketCallback",
+]
 
 class MenuCallback(CallbackData, prefix="menu"):
     level: int
@@ -88,3 +102,15 @@ class QuizCallback(CallbackData, prefix="quiz"):
     question_id: Optional[str] = None
     answer_id: Optional[str] = None
     page: Optional[int] = None
+
+
+# Маркет (рынок оборудования/объявлений и т.п.)
+# Используем sep="|" для совместимости с action/значениями, где встречается двоеточие.
+class MarketCallback(CallbackData, prefix="market", sep="|"):
+    action: str                    # list | view | page | buy | filter | sort | vendor | back
+    value: Optional[str] = None
+    item_id: Optional[str] = None
+    page: Optional[int] = None
+    sort: Optional[str] = None
+    vendor: Optional[str] = None
+    q: Optional[str] = None  # поисковый запрос (если используется)
