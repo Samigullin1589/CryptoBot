@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/config/settings.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Единая, строго типизированная система конфигурации.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий импорт 'logging' и поле IS_WEB_PROCESS.
+# ИСПРАВЛЕНИЕ: Добавлен эндпоинт для API курса валют.
 # =================================================================================
 
 import logging
@@ -67,6 +67,7 @@ class EndpointsConfig(BaseModel):
     asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
     minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
     mempool_space_tip_height: HttpUrl = "https://mempool.space/api/blocks/tip/height"
+    currency_rate_api: Optional[HttpUrl] = "https://api.exchangerate-api.com/v4/latest/USD"
 
 class ThreatFilterConfig(BaseModel):
     enabled: bool = True
@@ -124,7 +125,6 @@ class Settings(BaseSettings):
     CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
     ADMIN_CHAT_ID: Optional[int] = None
     NEWS_CHAT_ID: Optional[int] = None
-    # ИСПРАВЛЕНО: Добавлено поле для определения типа процесса
     IS_WEB_PROCESS: bool = False
     PORT: int = 10000
     log_level: str = "INFO"
@@ -160,10 +160,8 @@ class Settings(BaseSettings):
         env_nested_delimiter='__'
     )
 
-# --- СОЗДАНИЕ ЕДИНСТВЕННОГО ЭКЗЕМПЛЯРА НАСТРОЕК ---
 try:
     settings = Settings()
-    # Настраиваем базовый логгер, чтобы видеть сообщение о загрузке
     logging.basicConfig(level=logging.INFO)
     logging.info("Конфигурация успешно загружена и валидирована.")
 except ValidationError as e:

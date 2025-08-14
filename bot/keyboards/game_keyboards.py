@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/keyboards/game_keyboards.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
 # Описание: Клавиатуры для раздела "Виртуальный Майнинг".
-# ИСПРАВЛЕНИЕ: Переход на использование фабрик CallbackData.
+# ИСПРАВЛЕНИЕ: Добавлена клавиатура подтверждения покупки.
 # =================================================================================
 from typing import List, Dict
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -55,6 +55,14 @@ def get_hangar_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMark
 
     builder.button(text="⬅️ Назад в меню игры", callback_data=GameCallback(action="main_menu").pack())
     builder.adjust(1)
+    return builder.as_markup()
+
+def get_confirm_purchase_keyboard(asic_id: str) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для подтверждения покупки в магазине."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Купить и запустить", callback_data=GameCallback(action="confirm_purchase", value=asic_id).pack())
+    builder.button(text="❌ Отмена", callback_data=GameCallback(action="shop").pack()) # Возврат в магазин
+    builder.adjust(2)
     return builder.as_markup()
 
 def get_electricity_menu_keyboard(

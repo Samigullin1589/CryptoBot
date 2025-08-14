@@ -2,7 +2,7 @@
 # Файл: bot/services/market_data_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 # Описание: Центральный сервис для получения любых рыночных данных.
 # ИСПРАВЛЕНИЕ: Реализована отказоустойчивая система с CryptoCompare как 
-#              основным провайдером цен и CoinGecko как фолбэком.
+#              основным провайдером цен и CoinGecko как фолбэком. Добавлен курс RUB.
 # =================================================================================
 import logging
 import json
@@ -151,6 +151,23 @@ class MarketDataService:
             return INITIAL_BLOCK_REWARD / (2 ** halving_count)
         except Exception:
             return 3.125
+    
+    async def get_usd_rub_rate(self) -> float:
+        """Получает курс USD/RUB, возвращает значение по умолчанию при ошибке."""
+        cache_key = "cache:currency_rate:usd_rub"
+        if cached_rate := await self.redis.get(cache_key):
+            return float(cached_rate)
+
+        try:
+            if not self.endpoints.currency_rate_api:
+                return 95.0
+            data = await make_request(self.http_session, str(self.endpoints.currency_rate_api))
+            rate = float(data['rates']['RUB'])
+            await self.redis.set(cache_key, rate, ex=3600 * 12) # Кэш на 12 часов
+            return rate
+        except Exception as e:
+            logger.error(f"Не удалось получить курс USD/RUB, используется значение по умолчанию: {e}")
+            return 95.0 # Значение по умолчанию
 
     async def get_top_coins_by_market_cap(self, limit: int = 30) -> Optional[List[Dict[str, Any]]]:
         cache_key = f"cache:market_data:top_{limit}_coins"

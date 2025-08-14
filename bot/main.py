@@ -6,6 +6,7 @@
 import asyncio
 import logging
 import signal
+import argparse
 from typing import Coroutine
 
 from aiohttp import ClientSession
@@ -85,15 +86,8 @@ async def on_shutdown(deps: Deps):
         await deps.http_session.close()
     logger.info("Процедуры on_shutdown завершены.")
 
-async def main():
-    setup_logging(level=settings.log_level, format="json")
-    
-    # Проверяем, запущен ли процесс как web-сервис для health check
-    if settings.IS_WEB_PROCESS:
-        from bot.health_check_server import main as health_check_main
-        health_check_main()
-        return
-
+async def main_bot():
+    """Основная функция для запуска бота."""
     async with ClientSession() as http_session:
         bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
         
@@ -125,10 +119,22 @@ async def main():
         logger.info("Запуск бота...")
         await dp.start_polling(bot)
 
+async def main():
+    """Главная точка входа, управляющая запуском процессов."""
+    setup_logging(level=settings.log_level, format="json")
+    
+    # Проверяем, запущен ли процесс как web-сервис для health check
+    if settings.IS_WEB_PROCESS:
+        from bot.health_check_server import main as health_check_main
+        health_check_main()
+        return
+
+    await main_bot()
+
+
 async def graceful_shutdown(s: signal.Signals, dp: Dispatcher):
     logger.warning(f"Получен сигнал {s.name}, начинаю graceful shutdown...")
     await dp.stop_polling()
-    # on_shutdown будет вызван автоматически через dp.shutdown.register
     logger.warning("Graceful shutdown завершен.")
 
 

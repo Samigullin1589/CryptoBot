@@ -1,7 +1,7 @@
 # =================================================================================
-# Файл: bot/states/game_states.py (ВЕРСЯ "Distinguished Engineer" - УНИФИЦИРОВАННАЯ)
+# Файл: bot/states/game_states.py (ВЕРСИЯ "Distinguished Engineer" - УНИФИЦИРОВАННАЯ)
 # Описание: Определяет все состояния (FSM) для сценариев внутри игрового модуля.
-# ИСПРАВЛЕНИЕ: Добавлено недостающее состояние `in_shop`.
+# ИСПРАВЛЕНИЕ: Добавлено состояние `confirm_purchase` для корректной покупки.
 # =================================================================================
 
 from aiogram.fsm.state import State, StatesGroup
@@ -13,5 +13,6 @@ class MiningGameStates(StatesGroup):
     in_market = State()
     in_tariffs = State()
     in_shop = State()
+    confirm_purchase = State() # <-- НОВОЕ СОСТОЯНИЕ ДЛЯ ПОДТВЕРЖДЕНИЯ ПОКУПКИ
     confirm_tariff_purchase = State()
     confirm_withdraw = State()

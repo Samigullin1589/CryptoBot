@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
 # Описание: Полный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Перемещен Enum UserRole для устранения циклического импорта.
+# ИСПРАВЛЕНИЕ: Добавлено поле `vendor` в модель AsicMiner.
 # =================================================================================
 
 from __future__ import annotations
@@ -88,6 +88,7 @@ class MiningEvent(BaseModel):
 class AsicMiner(BaseModel):
     id: str
     name: str
+    vendor: Optional[str] = "Unknown"
     hashrate: str
     power: int
     algorithm: str

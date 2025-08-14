@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/services/mining_game_service.py (ФИНАЛЬНАЯ ИНТЕГРИРОВАННАЯ ВЕРСИЯ, АВГУСТ 2025)
 # Описание: Главный сервис-оркестратор для игровой механики.
-# ИСПРАВЛЕНИЕ: Устранена циклическая зависимость с помощью TYPE_CHECKING.
+# ИСПРАВЛЕНИЕ: Исправлена логика покупки ASIC для корректной работы экономики.
 # =================================================================================
 
 import time
@@ -65,7 +65,7 @@ class MiningGameService:
         if not profile_data:
             default_tariff = self.settings.game.default_electricity_tariff
             initial_data = {
-                "balance": "0.0",
+                "balance": "500.0", # Стартовый баланс
                 "total_earned": "0.0",
                 "current_tariff": default_tariff,
                 "owned_tariffs": default_tariff,
@@ -123,19 +123,30 @@ class MiningGameService:
         return (f"✅ Сессия майнинга на <b>{asic.name}</b> запущена!\n\n"
                 f"Она автоматически завершится через <b>{self.settings.game.session_duration_minutes / 60:.0f} часов</b>.")
 
-    # ИСПРАВЛЕНО: Добавлен недостающий метод
-    async def start_session_with_new_asic(self, user_id: int, asic: AsicMiner) -> str:
+    async def purchase_and_start_session(self, user_id: int, asic: AsicMiner) -> Tuple[str, bool]:
         """
-        Добавляет новый ASIC в ангар пользователя и сразу запускает сессию.
-        Используется при "покупке" в магазине.
+        Обрабатывает покупку ASIC и, в случае успеха, запускает сессию.
         """
-        # В текущей логике цена ASIC не учитывается, он просто добавляется.
-        hangar_key = self.keys.user_hangar(user_id)
-        await self.redis.hset(hangar_key, asic.id, asic.model_dump_json())
-        logger.info(f"User {user_id} acquired new ASIC '{asic.name}' from shop.")
+        profile = await self.get_user_game_profile(user_id)
+        price = asic.price or 0
         
-        # После добавления в ангар, вызываем стандартный метод запуска сессии.
-        return await self.start_session(user_id, asic.id)
+        if profile.balance < price:
+            return f"❌ Недостаточно средств. Для покупки {asic.name} требуется {price:,.2f} монет, у вас на балансе {profile.balance:,.2f}.", False
+
+        # Списываем средства и добавляем ASIC в ангар
+        profile_key = self.keys.user_game_profile(user_id)
+        hangar_key = self.keys.user_hangar(user_id)
+        
+        async with self.redis.pipeline(transaction=True) as pipe:
+            pipe.hincrbyfloat(profile_key, "balance", -price)
+            pipe.hset(hangar_key, asic.id, asic.model_dump_json())
+            await pipe.execute()
+        
+        logger.info(f"User {user_id} purchased ASIC '{asic.name}' for {price} coins.")
+        
+        # Запускаем сессию с только что купленным ASIC
+        start_message = await self.start_session(user_id, asic.id)
+        return f"✅ Покупка прошла успешно!\n\n{start_message}", True
 
     async def end_session(self, user_id: int) -> Optional[MiningSessionResult]:
         """Завершает майнинг-сессию, вызывается планировщиком."""
@@ -202,7 +213,7 @@ class MiningGameService:
         
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.hincrbyfloat(profile_key, "balance", -balance)
-            pipe.hincrby(self.keys.global_stats(), "pending_withdrawals", 1)
+            pipe.hincrby(self.keys.game_stats(), "pending_withdrawals", 1)
             await pipe.execute()
         
         if self.settings.ADMIN_CHAT_ID:

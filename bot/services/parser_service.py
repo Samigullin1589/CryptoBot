@@ -2,8 +2,7 @@
 # Файл: bot/services/parser_service.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ УСИЛЕННАЯ)
 # Описание: Отказоустойчивый сервис для парсинга данных с внешних
 # источников с улучшенной логикой обхода защиты.
-# ИСПРАВЛЕНИЕ: Добавлены полные браузерные заголовки и улучшен
-#              селектор для AsicMinerValue.
+# ИСПРАВЛЕНИЕ: Добавлено извлечение производителя (vendor) из названия ASIC.
 # ===============================================================
 import logging
 import asyncio
@@ -19,7 +18,6 @@ from bot.utils.text_utils import parse_power, normalize_asic_name
 
 logger = logging.getLogger(__name__)
 
-# Определяем ошибки, при которых стоит повторять запрос
 RETRYABLE_EXCEPTIONS = (
     aiohttp.ClientError,
     aiohttp.ClientResponseError,
@@ -33,6 +31,16 @@ class ParserService:
     def __init__(self, http_session: aiohttp.ClientSession, config: EndpointsConfig):
         self.session = http_session
         self.config = config
+
+    @staticmethod
+    def _extract_vendor_from_name(name: str) -> str:
+        """Извлекает известного производителя из названия."""
+        name_lower = name.lower()
+        vendors = ["antminer", "whatsminer", "jasminer", "goldshell", "canaan", "innosilicon", "bombax", "elphapex"]
+        for vendor in vendors:
+            if vendor in name_lower:
+                return vendor.capitalize()
+        return "Unknown"
 
     @backoff.on_exception(backoff.expo, RETRYABLE_EXCEPTIONS, max_tries=3, on_giveup=lambda details: logger.error(
         f"HTTP request failed after {details['tries']} tries. Giving up. Error: {details.get('exception')}"
@@ -64,7 +72,11 @@ class ParserService:
                 logger.warning("Парсер: Не получены валидные данные от WhatToMine.")
                 return []
 
-            asics = [AsicMiner(id=asic_id, **details) for asic_id, details in data["asics"].items()]
+            asics = []
+            for asic_id, details in data["asics"].items():
+                details['vendor'] = self._extract_vendor_from_name(details.get('name', ''))
+                asics.append(AsicMiner(id=asic_id, **details))
+
             logger.info(f"Парсер: Успешно получено {len(asics)} ASIC с WhatToMine.")
             return asics
         except Exception as e:
@@ -107,6 +119,7 @@ class ParserService:
                     asics.append(AsicMiner(
                         id=normalize_asic_name(name),
                         name=name,
+                        vendor=self._extract_vendor_from_name(name),
                         profitability=float(profit_text) if profit_text != 'N/A' else 0.0,
                         power=parse_power(power_text) or 0,
                         hashrate=cols[2].text.strip(),

@@ -2,6 +2,7 @@
 # Файл: bot/services/achievement_service.py (ВЕРСЯ "Distinguished Engineer" - ДИНАМИЧЕСКАЯ)
 # Описание: Управляемый событиями сервис для динамической системы достижений,
 # интегрированный с рыночными данными в реальном времени.
+# ИСПРАВЛЕНИЕ: Добавлена проверка контекста для предотвращения повторной выдачи динамических достижений.
 # =================================================================================
 
 import json
@@ -36,7 +37,6 @@ class AchievementService:
             with open(config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             for ach_data in data.get("achievements", []):
-                # Добавляем 'type', если его нет, для обратной совместимости
                 if 'type' not in ach_data:
                     ach_data['type'] = 'static'
                 achievement = Achievement(**ach_data)
@@ -50,6 +50,10 @@ class AchievementService:
         except Exception as e:
             logger.error(f"Критическая ошибка при загрузке достижений: {e}", exc_info=True)
 
+    async def get_all_achievements(self) -> List[Achievement]:
+        """Возвращает полный список всех достижений."""
+        return list(self.static_achievements.values()) + list(self.dynamic_achievements.values())
+
     async def get_user_achievements(self, user_id: int) -> List[Dict[str, Any]]:
         """Возвращает список разблокированных пользователем достижений с их описаниями."""
         unlocked_data = await self.redis.hgetall(self.keys.user_achievements(user_id))
@@ -59,25 +63,30 @@ class AchievementService:
         """Атомарно выдает достижение, форматируя описание с контекстом, и начисляет награду."""
         if context is None: context = {}
         
+        # ИСПРАВЛЕНО: instance_id теперь включает контекст (ID монеты) для уникальности
         instance_id = f"{achievement.id}:{context.get('coin_id', 'global')}"
         
         if await self.redis.hget(self.keys.user_achievements(user_id), instance_id):
-            return None
+            return None # Достижение с этим контекстом уже выдано
 
         formatted_description = achievement.description.format(**context)
         
-        achievement_data = {
-            "name": achievement.name,
-            "description": formatted_description,
-            "reward": achievement.reward_coins
+        unlocked_achievement = achievement.model_copy(deep=True)
+        unlocked_achievement.description = formatted_description
+        
+        achievement_data_to_store = {
+            "id": unlocked_achievement.id,
+            "name": unlocked_achievement.name,
+            "description": unlocked_achievement.description,
+            "reward_coins": unlocked_achievement.reward_coins
         }
 
         async with self.redis.pipeline(transaction=True) as pipe:
-            pipe.hset(self.keys.user_achievements(user_id), instance_id, json.dumps(achievement_data, ensure_ascii=False))
+            pipe.hset(self.keys.user_achievements(user_id), instance_id, json.dumps(achievement_data_to_store, ensure_ascii=False))
             pipe.hincrbyfloat(self.keys.user_game_profile(user_id), "balance", achievement.reward_coins)
             await pipe.execute()
         logger.info(f"Пользователь {user_id} разблокировал достижение '{achievement.name}' ({formatted_description})")
-        return achievement
+        return unlocked_achievement
 
     async def check_market_events(self, user_id: int) -> List[Achievement]:
         """
@@ -88,28 +97,20 @@ class AchievementService:
         if not top_coins:
             return unlocked
 
-        for i, coin in enumerate(top_coins[:30]): # Анализируем топ-30
+        for i, coin in enumerate(top_coins[:30]):
             coin_id = coin.get('id')
             coin_name = coin.get('name')
             
-            # Проверка на новый ATH
             if coin.get('ath') and coin.get('current_price') and coin.get('current_price') >= coin.get('ath'):
                 if ach := self.dynamic_achievements.get("dynamic_witness_ath"):
                     if unlocked_ach := await self._unlock_achievement(user_id, ach, context={"coin_name": coin_name, "coin_id": coin_id}):
                         unlocked.append(unlocked_ach)
             
-            # Проверка на рост > 25%
             price_change = coin.get('price_change_percentage_24h')
             if price_change and price_change > 25:
                  if ach := self.dynamic_achievements.get("dynamic_pump_rider"):
                     if unlocked_ach := await self._unlock_achievement(user_id, ach, context={"coin_name": coin_name, "coin_id": coin_id}):
                         unlocked.append(unlocked_ach)
-            
-            # Проверка на вхождение в топ-10
-            if i < 10:
-                # Здесь нужна логика проверки, что пользователь взаимодействовал с монетой ДО того, как она вошла в топ-10
-                # Это требует хранения истории взаимодействий, что является следующим шагом в развитии.
-                pass
 
         return unlocked
 
@@ -118,20 +119,20 @@ class AchievementService:
         if event_data is None: event_data = {}
         
         counters_key = self.keys.user_event_counters(user_id)
-        await self.redis.hincrby(counters_key, f"{event_name}_count", 1)
+        current_count = await self.redis.hincrby(counters_key, f"{event_name}_count", 1)
 
         unlocked_ids_raw = await self.redis.hkeys(self.keys.user_achievements(user_id))
         unlocked_ids = {uid.decode('utf-8').split(':')[0] for uid in unlocked_ids_raw}
-
-        user_counters = await self.redis.hgetall(counters_key)
-        user_counters = {k.decode('utf-8'): int(v) for k, v in user_counters.items()}
-
+        
         for ach_id, achievement in self.static_achievements.items():
             if ach_id not in unlocked_ids and achievement.trigger_event == event_name:
                 conditions_met = True
                 if achievement.trigger_conditions:
                     for key, required_value in achievement.trigger_conditions.items():
-                        if user_counters.get(key, 0) < required_value:
+                        if key == f"{event_name}_count" and current_count < required_value:
+                            conditions_met = False
+                            break
+                        if key in event_data and event_data[key] != required_value:
                             conditions_met = False
                             break
                 
