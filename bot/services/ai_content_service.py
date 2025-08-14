@@ -1,13 +1,7 @@
-# ===============================================================
-# Файл: bot/services/ai_content_service.py
-# Описание: Сервис для Gemini на google-generativeai c поддержкой Grounding.
-# Исправлено: убрана SyntaxError в инициализации tools, добавлен безопасный конструктор.
-# ===============================================================
-
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import backoff
 import google.generativeai as genai
@@ -153,3 +147,72 @@ class AIContentService:
             use_grounding=False,
             system_prompt=system_prompt,
         )
+
+    # ===================== НОВОЕ: консультативный ответ =====================
+
+    @staticmethod
+    def _format_history(history: Optional[List[Any]]) -> str:
+        """
+        Преобразует историю диалога в текст.
+        Поддерживаются форматы:
+          - список строк
+          - список словарей {'role': 'user'|'assistant'|'system', 'content': '...'}
+        """
+        if not history:
+            return ""
+        lines: List[str] = []
+        for h in history:
+            if isinstance(h, str):
+                lines.append(h.strip())
+            elif isinstance(h, dict):
+                role = str(h.get("role", "user")).strip()
+                content = str(h.get("content", "")).strip()
+                if content:
+                    lines.append(f"{role}: {content}")
+            else:
+                # неизвестный тип — приводим к строке
+                lines.append(str(h).strip())
+        return "\n".join(lines[:20])  # ограничим контекст разумно
+
+    async def get_consultant_answer(
+        self,
+        user_text: str,
+        history: Optional[List[Any]] = None,
+        *,
+        system_prompt: Optional[str] = None,
+        use_grounding: bool = False,
+        temperature: Optional[float] = None,
+    ) -> str:
+        """
+        Возвращает развернутый ответ ассистента для пользовательского текста.
+        Совместимо с вызовом из common_handler: get_consultant_answer(user_text, history)
+        """
+        model = self.flash_client or self.pro_client
+        if not model:
+            return ""
+
+        sys_preamble = (
+            system_prompt
+            or "Ты — помощник по криптовалютам и майнингу. Отвечай лаконично, по делу и по-русски."
+        )
+        history_block = self._format_history(history)
+        prompt_parts = [sys_preamble]
+        if history_block:
+            prompt_parts.append("Контекст диалога:\n" + history_block)
+        prompt_parts.append("Вопрос пользователя:\n" + (user_text or "").strip())
+        full_prompt = "\n\n".join(p for p in prompt_parts if p)
+
+        try:
+            gen_cfg = GenerationConfig(
+                temperature=temperature if temperature is not None else 0.6
+            )
+            resp = await self._make_request(
+                model,
+                contents=full_prompt,
+                generation_config=gen_cfg,
+                use_search=use_grounding,
+            )
+            return self._extract_text(resp)
+        except Exception as e:
+            logger.error("Ошибка get_consultant_answer: %s", e, exc_info=True)
+            return ""
