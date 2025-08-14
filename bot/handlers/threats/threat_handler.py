@@ -14,42 +14,34 @@ from aiogram.types import Message
 from bot.filters.threat_filter import ThreatFilter
 from bot.utils.dependencies import Deps
 
-threat_router = Router(name=__name__)
 logger = logging.getLogger(__name__)
 
-# ИСПРАВЛЕНО: Передаем КЛАСС фильтра, а не его экземпляр.
-# Это позволяет aiogram автоматически внедрять зависимости (deps) в фильтр.
-@threat_router.message(ThreatFilter)
-async def handle_threat_message(
+threat_router = Router(name="threats")
+
+@threat_router.message(ThreatFilter())
+async def on_threat_message(
     message: Message,
     deps: Deps,
     threat_score: float,
-    reasons: List[str]
+    reasons: List[str],
 ):
-    """
-    Обрабатывает сообщение, определенное как угроза.
-    - Вызывает ModerationService для наказания и уведомления.
-    - Удаляет исходное сообщение.
-    """
-    if not message.from_user:
-        return
-
-    logger.warning(
-        f"Threat detected from user {message.from_user.id} in chat {message.chat.id}. "
-        f"Score: {threat_score:.2f}. Reasons: {reasons}"
-    )
-    
     try:
-        # Получаем сервис из DI-контейнера deps
         await deps.moderation_service.process_detected_threat(
             message=message,
             threat_score=threat_score,
-            reasons=reasons
+            reasons=reasons,
         )
     except Exception as e:
-        logger.error(f"Could not process threat notification: {e}", exc_info=True)
+        logger.error(
+            "Could not process threat notification: %s", e, exc_info=True
+        )
 
     try:
         await message.delete()
     except Exception as e:
-        logger.error(f"Could not delete threat message {message.message_id} in chat {message.chat.id}: {e}")
+        logger.error(
+            "Could not delete threat message %s in chat %s: %s",
+            message.message_id,
+            message.chat.id,
+            e,
+        )
