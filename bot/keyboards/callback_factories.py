@@ -1,9 +1,3 @@
-# =================================================================================
-# Файл: bot/keyboards/callback_factories.py (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
-# Описание: Централизованное определение всех структур данных для инлайн-кнопок.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая фабрика `CryptoCenterCallback`.
-# =================================================================================
-
 from typing import Optional
 from aiogram.filters.callback_data import CallbackData
 
@@ -34,12 +28,15 @@ class CalculatorCallback(CallbackData, prefix="calc"):
     page: Optional[int] = None
 
 
-# ВНИМАНИЕ:
-# По логу 2025-08-14 13:30:25,352 падение происходило из-за того, что в значении action использовался двоеточие,
-# а у CallbackData по умолчанию разделитель ':' — поэтому pack() выбрасывал ValueError.
-# Устанавливаем sep="|" для AdminCallback, чтобы строки вида "stats:general" были допустимы.
+# Админские фабрики: используем разделитель "|" вместо ":" чтобы значения могли содержать двоеточия.
 class AdminCallback(CallbackData, prefix="admin", sep="|"):
-    action: str  # допускает значения с ':' внутри (например, "stats:general")
+    action: str
     value: Optional[str] = None
     section: Optional[str] = None
+    page: Optional[int] = None
+
+
+class GameAdminCallback(CallbackData, prefix="adgame", sep="|"):
+    action: str
+    value: Optional[str] = None
     page: Optional[int] = None
