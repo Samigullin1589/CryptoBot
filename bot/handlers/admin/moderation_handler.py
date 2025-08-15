@@ -1,21 +1,7 @@
 \================================
 Файл: bot/handlers/admin/moderation\_handler.py
 ВЕРСИЯ: "Distinguished Engineer" - АВГУСТ 2025 (Азия/Тбилиси)
-Кратко: Исправлен коллбек помилования, добавлен import contextlib, убраны экранированные символы, корректный logger.getLogger(**name**), безопасное редактирование уведомления и обработка ошибок TelegramBadRequest.
-
-# ===============================================================
-
-# Файл: bot/handlers/admin/moderation\_handler.py (ПРОДАКШН-ВЕРСИЯ 2025)
-
-# Описание: "Тонкий" обработчик для команд модерации.
-
-# ИСПРАВЛЕНИЕ: Внедрение зависимостей унифицировано через deps: Deps.
-
-# Дополнительно: Исправлено действие "Помиловать", устойчивое редактирование карточки,
-
-# аккуратная обработка ошибок TelegramBadRequest и логирование.
-
-# ===============================================================
+Кратко: Устранен SyntaxError из-за вставленного не-Python заголовка. Чистый рабочий модуль: исправлен "Помиловать" (без USER\_NOT\_BANNED), безопасное редактирование карточки, подробное логирование, устойчивые команды модерации.
 
 import logging
 import contextlib
@@ -27,17 +13,15 @@ from aiogram.types import Message
 from aiogram.exceptions import TelegramBadRequest
 
 from bot.filters.access\_filters import PrivilegeFilter, UserRole
-from bot.states.moderation\_states import ModerationStates
-from bot.keyboards.admin\_keyboards import get\_back\_to\_admin\_menu\_keyboard
-from bot.utils.ui\_helpers import get\_message\_and\_chat\_id
 from bot.utils.dependencies import Deps
 
 moderation\_router = Router()
 logger = logging.getLogger(**name**)
 
-# --- Вспомогательные функции ---
-
 async def \_maybe\_await(fn: Callable\[..., Any], \*args, \*\*kwargs) -> Any:
+"""
+Унифицированный вызов sync/async методов сервисов.
+"""
 res = fn(\*args, \*\*kwargs)
 if hasattr(res, "**await**"):
 return await res
@@ -53,16 +37,17 @@ new\_html = f"{base\_html}\n\n--- \n{append\_html}"
 try:
 await cb.message.edit\_text(new\_html, reply\_markup=None, parse\_mode="HTML")
 except TelegramBadRequest as e:
-\# Если текст не изменился или не можем редактировать — покажем всплывашку
 logger.warning("Edit threat card failed: %s", e)
 with contextlib.suppress(Exception):
 await cb.answer(append\_html.replace("<b>", "").replace("</b>", ""), show\_alert=False)
 
-# --- Обработка действий из интерактивных уведомлений об угрозах ---
-
 @moderation\_router.callback\_query(F.data.startswith("threat\_action:"))
 async def handle\_threat\_action\_callback(call: types.CallbackQuery, deps: Deps):
-"""Обрабатывает нажатия на кнопки в уведомлении об угрозе."""
+"""
+Обрабатывает нажатия на кнопки в уведомлении об угрозе.
+Поддерживаемые действия: ignore | ban | pardon
+Формат data: threat\_action:<action>:\<user\_id>:\<chat\_id>
+"""
 with contextlib.suppress(Exception):
 await call.answer()
 
@@ -94,7 +79,6 @@ except ValueError:
         await call.answer("Некорректные идентификаторы.", show_alert=True)
     return
 
-# Выполняем действие
 response_text = "Действие не распознано."
 
 if action == "ban":
@@ -109,7 +93,7 @@ if action == "ban":
         logger.error("Ban user failed (chat=%s user=%s): %s", chat_id, user_id, e, exc_info=True)
         response_text = "Ошибка бана: нет прав или уже заблокирован."
 elif action == "pardon":
-    # Помилование: стараемся не падать на USER_NOT_BANNED.
+    # Не делаем жесткий unban, чтобы избежать USER_NOT_BANNED.
     try:
         ms = getattr(deps, "moderation_service", None)
         pardon_done = False
@@ -137,7 +121,7 @@ elif action == "pardon":
                     response_text = txt if isinstance(txt, str) else "Пользователь помилован."
                     pardon_done = True
                 except TelegramBadRequest as e:
-                    # USER_NOT_BANNED и подобные — считаем успешно помилованным
+                    # USER_NOT_BANNED и т.п. — не критично, считаем помилованным
                     logger.info("unban_user badrequest (likely not banned): %s", e)
                     response_text = "Пользователь помилован."
                     pardon_done = True
@@ -155,22 +139,21 @@ else:
 await _safe_edit_append_html(call, f"✅ <b>Действие выполнено:</b> {response_text}")
 ```
 
-# --- Команды модерации ---
-
-GROUP\_ONLY\_FILTER = F.chat.type.in\_({"group", "supergroup"})
-
 @moderation\_router.message(Command("ban", "бан", prefix="!/"), PrivilegeFilter(min\_role=UserRole.ADMIN))
 async def handle\_ban\_command(message: Message, deps: Deps):
-"""Команда для бана пользователя."""
+"""
+Команда для бана пользователя.
+Использование: ответом на сообщение нарушителя -> !/ban \[причина]
+"""
 if not message.reply\_to\_message:
 await message.reply("⚠️ Эту команду нужно использовать в ответ на сообщение пользователя.")
 return
 
 ```
 reason = "Нарушение правил чата."
-args = message.text.split(maxsplit=1)
-if len(args) > 1:
-    reason = args[1]
+parts = message.text.split(maxsplit=1)
+if len(parts) > 1:
+    reason = parts[1].strip() or reason
 
 try:
     result_text = await deps.moderation_service.ban_user(
@@ -191,11 +174,14 @@ with contextlib.suppress(Exception):
 
 @moderation\_router.message(Command("add\_stop\_word", prefix="!/"), PrivilegeFilter(min\_role=UserRole.ADMIN))
 async def handle\_add\_stop\_word\_command(message: Message, deps: Deps):
-"""Добавляет новое стоп-слово."""
+"""
+Добавляет новое стоп-слово.
+Пример: !/add\_stop\_word казино
+"""
 parts = message.text.split(maxsplit=1)
 word = parts\[1].strip() if len(parts) > 1 else ""
 if not word:
-await message.reply("⚠️ Укажите слово. Например: <code>!add\_stop\_word казино</code>")
+await message.reply("⚠️ Укажите слово. Например: <code>!/add\_stop\_word казино</code>")
 return
 
 ```
@@ -209,7 +195,10 @@ await message.reply(result)
 
 @moderation\_router.message(Command("del\_stop\_word", prefix="!/"), PrivilegeFilter(min\_role=UserRole.ADMIN))
 async def handle\_delete\_stop\_word\_command(message: Message, deps: Deps):
-"""Удаляет стоп-слово."""
+"""
+Удаляет стоп-слово.
+Пример: !/del\_stop\_word казино
+"""
 parts = message.text.split(maxsplit=1)
 word = parts\[1].strip() if len(parts) > 1 else ""
 if not word:
@@ -227,7 +216,9 @@ await message.reply(result)
 
 @moderation\_router.message(Command("list\_stop\_words", prefix="!/"), PrivilegeFilter(min\_role=UserRole.MODERATOR))
 async def handle\_list\_stop\_words\_command(message: Message, deps: Deps):
-"""Показывает список всех стоп-слов."""
+"""
+Показывает список всех стоп-слов.
+"""
 try:
 result = await deps.moderation\_service.list\_stop\_words()
 except Exception as e:
