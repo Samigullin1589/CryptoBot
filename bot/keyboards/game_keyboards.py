@@ -1,14 +1,15 @@
 # =============================================================================
 # File: bot/keyboards/game_keyboards.py
-# Version: "Distinguished Engineer" - SAFE BUILD (merged)
+# Version: PRODUCTION 2025 — SAFE BUILD (merged)
 # Notes:
 #   - Electricity tariffs keyboard supports dicts and objects
 #   - Uses GameCallback from your project; keeps payload shape
-#   - Shows proper actions:
+#   - Actions:
 #       • not owned  -> 🛒 tariff_buy
 #       • owned      -> 🔌 tariff_select
 #       • current    -> ✅ <name> (текущий)
 #   - Safe money formatting, stable order, Back button
+#   - Back-compat alias: get_game_main_menu_keyboard(...)
 # =============================================================================
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from aiogram.types import InlineKeyboardMarkup
 # keep fallbacks to avoid import errors in custom layouts.
 GameCallback = None  # type: ignore[assignment]
 try:
-    from bot.keyboards.callback_factories import GameCallback as _GC  # main path in your repo
+    from bot.keyboards.callback_factories import GameCallback as _GC  # main path
     GameCallback = _GC  # type: ignore[assignment]
 except Exception:  # noqa: BLE001
     try:
@@ -35,6 +36,8 @@ except Exception:  # noqa: BLE001
         except Exception:  # noqa: BLE001
             GameCallback = None  # final fallback – plain strings (see _pack_callback)
 
+
+# ---------------------------- helpers ----------------------------
 
 def _get(obj: Any, key: str, default=None):
     """Fetch attribute from object or key from dict."""
@@ -57,8 +60,6 @@ def _pack_callback(action: str, value: str) -> str:
     """
     Pack callback_data using GameCallback if available,
     otherwise fall back to a plain 'action:value' string.
-    NOTE: fallback will not match GameCallback.filter, so make sure
-    your handlers can accept it if the factory isn't importable.
     """
     if GameCallback:
         return GameCallback(action=action, value=value).pack()
@@ -83,6 +84,8 @@ def _normalize_items(
         items.append((inferred or f"Тариф {i + 1}", t))
     return items
 
+
+# ------------------- electricity tariffs keyboard -------------------
 
 def get_electricity_menu_keyboard(
     tariffs: Iterable[Any] | Mapping[str, Any],
@@ -126,19 +129,34 @@ def get_electricity_menu_keyboard(
                 )
         else:
             # Not owned — show price and buy action
-            price_txt = "бесплатно" if unlock_price in (None, 0, "0", "0.0") else f"{_fmt_money(unlock_price, 0)} монет"
+            price_txt = (
+                "бесплатно"
+                if unlock_price in (None, 0, "0", "0.0")
+                else f"{_fmt_money(unlock_price, 0)} монет"
+            )
             builder.button(
                 text=f"🛒 {name} ({price_txt})",
                 callback_data=_pack_callback("tariff_buy", name),
             )
 
-        builder.adjust(1)
-
     # Back to main menu
     builder.button(
-        text="⬅️ Назад",
+        text="⬅️ Назад в меню",
         callback_data=_pack_callback("main_menu", "0"),
     )
-    builder.adjust(1)
 
+    builder.adjust(1)
     return builder.as_markup()
+
+
+# ----------------- BACK-COMPAT main menu keyboard alias -----------------
+
+def get_game_main_menu_keyboard(is_session_active: bool) -> InlineKeyboardMarkup:
+    """
+    Compatibility for legacy imports:
+    MiningGameService expects get_game_main_menu_keyboard in game_keyboards.
+    We proxy to the actual implementation in mining_keyboards.
+    """
+    # Lazy import to avoid circular dependencies on module load
+    from bot.keyboards.mining_keyboards import get_mining_menu_keyboard
+    return get_mining_menu_keyboard(is_session_active)
