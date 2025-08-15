@@ -1,21 +1,7 @@
 \================================
 Файл: bot/services/security\_service.py
 ВЕРСИЯ: "Distinguished Engineer" - АВГУСТ 2025 (Азия/Тбилиси)
-Кратко: Исправлен вызов AIContentService.get\_structured\_response по фактической сигнатуре (prompt, json\_schema, system\_prompt). Добавлен безопасный фолбэк на позиционную форму. Совместимость с DI сохранена, заглушек нет.
-
-# =================================================================================
-
-# Файл: bot/services/security\_service.py (ВЕРСИЯ "Distinguished Engineer" - АВГУСТ 2025)
-
-# Описание: Сервис безопасности:
-
-# 1) AI-анализ текста на угрозы (спам/фишинг/токсичность) — analyze\_message()
-
-# 2) Полноценная проверка пользователя по /check — verify\_user()
-
-# Реализован без заглушек. Соответствует DI-архитектуре и совместим с AIContentService.
-
-# =================================================================================
+Кратко: Убран не-Python заголовок, добавлена совместимость с обеими сигнатурами AIContentService.get\_structured\_response (новая: system\_prompt/user\_prompt/response\_schema и старая: prompt/json\_schema). Исправлены вызовы и усилено логирование.
 
 from **future** import annotations
 
@@ -41,9 +27,8 @@ class SecurityService:
 """
 
 ```
-# --- базовые списки/паттерны эвристик ---
+# базовые списки/паттерны эвристик
 _SUSPICIOUS_SUBSTRINGS = {
-    # типичные маркеры «продаж»/скама/фишинга/арбитража
     "airdrop", "giveaway", "bonus", "earn", "profit", "x100",
     "investment", "broker", "whatsapp", "binance-support",
     "trustwallet", "metamask", "support", "recovery", "private-sale",
@@ -68,11 +53,10 @@ def __init__(self, ai_service: "AIContentService", config: ThreatFilterConfig):
     )
 
 # ==========================
-# 1) AI-анализ СООБЩЕНИЯ
+# Внутренние промпты/схемы
 # ==========================
 
 def _get_system_prompt_for_text(self) -> str:
-    """Системный промпт для AI-анализатора ТЕКСТА."""
     return (
         "You are a security analysis bot for a Telegram chat about cryptocurrency. "
         "Analyze the following message. Respond with ONLY a valid JSON object. "
@@ -81,7 +65,6 @@ def _get_system_prompt_for_text(self) -> str:
     )
 
 def _get_response_schema_for_text(self) -> Dict[str, Any]:
-    """JSON-схема для ответа AI по анализу ТЕКСТА."""
     return {
         "type": "OBJECT",
         "properties": {
@@ -109,58 +92,7 @@ def _get_response_schema_for_text(self) -> Dict[str, Any]:
         "required": ["intent", "toxicity_score", "is_potential_scam", "is_potential_phishing"]
     }
 
-@alru_cache(maxsize=1024, ttl=300)
-async def analyze_message(self, text: str) -> AIVerdict:
-    """
-    Анализирует текст сообщения для выявления угроз.
-    Возвращает валидную Pydantic-модель AIVerdict даже при ошибках AI.
-    """
-    default_verdict = AIVerdict()
-
-    if not self.config.enabled or not text or not text.strip():
-        return default_verdict
-
-    user_prompt = f"Проанализируй следующее сообщение: '{text}'"
-    try:
-        # Корректный вызов: ожидаются prompt и json_schema
-        verdict_dict = await self.ai_service.get_structured_response(
-            prompt=user_prompt,
-            json_schema=self._get_response_schema_for_text(),
-            system_prompt=self._get_system_prompt_for_text(),
-        )
-    except TypeError as te:
-        # Фолбэк: позиционные аргументы (совместимость со старой реализацией)
-        logger.warning("get_structured_response keyword call failed: %s; trying positional fallback", te)
-        try:
-            verdict_dict = await self.ai_service.get_structured_response(
-                user_prompt,
-                self._get_response_schema_for_text(),
-                self._get_system_prompt_for_text(),
-            )
-        except Exception as e:
-            logger.error("Ошибка AI при анализе текста (fallback): %s", e, exc_info=True)
-            return default_verdict
-    except Exception as e:
-        logger.error("Ошибка AI при анализе текста: %s", e, exc_info=True)
-        return default_verdict
-
-    if not verdict_dict:
-        logger.warning("AI-анализ текста вернул пустой результат: '%s...'", text[:50])
-        return default_verdict
-
-    logger.info("AI Security Verdict for '%s...': %s", text[:30], verdict_dict)
-    try:
-        return AIVerdict(**verdict_dict)
-    except Exception as e:
-        logger.error("Валидация AIVerdict не удалась: %s; payload=%s", e, verdict_dict, exc_info=True)
-        return default_verdict
-
-# ==========================
-# 2) Проверка ПОЛЬЗОВАТЕЛЯ (/check)
-# ==========================
-
 def _get_system_prompt_for_user(self) -> str:
-    """Системный промпт для AI-проверки пользователя."""
     return (
         "You are a Telegram account risk assessor for a crypto community. "
         "You must return ONLY a JSON object. No explanations.\n"
@@ -172,7 +104,6 @@ def _get_system_prompt_for_user(self) -> str:
     )
 
 def _get_response_schema_for_user(self) -> Dict[str, Any]:
-    """JSON-схема для ответа AI по проверке ПОЛЬЗОВАТЕЛЯ."""
     return {
         "type": "OBJECT",
         "properties": {
@@ -197,6 +128,78 @@ def _get_response_schema_for_user(self) -> Dict[str, Any]:
         "required": ["is_scam", "risk_score"]
     }
 
+async def _call_structured(
+    self,
+    system_prompt: str,
+    user_prompt: str,
+    schema: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    """
+    Унифицированный вызов AIContentService.get_structured_response с поддержкой
+    двух сигнатур:
+      - новая: (system_prompt=..., user_prompt=..., response_schema=...)
+      - старая: (prompt=..., json_schema=...)
+    """
+    try:
+        # попытка новой сигнатуры
+        return await self.ai_service.get_structured_response(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_schema=schema,
+        )
+    except TypeError as e:
+        logger.info("Fallback to legacy get_structured_response signature: %s", e)
+        try:
+            # fallback к старой сигнатуре
+            merged_prompt = f"{system_prompt}\n\n{user_prompt}"
+            return await self.ai_service.get_structured_response(
+                prompt=merged_prompt,
+                json_schema=schema,
+            )
+        except Exception as e2:
+            logger.error("Legacy get_structured_response failed: %s", e2, exc_info=True)
+            return None
+    except Exception as e:
+        logger.error("get_structured_response failed: %s", e, exc_info=True)
+        return None
+
+# ==========================
+# 1) AI-анализ СООБЩЕНИЯ
+# ==========================
+
+@alru_cache(maxsize=1024, ttl=300)
+async def analyze_message(self, text: str) -> AIVerdict:
+    """
+    Анализирует текст сообщения для выявления угроз.
+    Возвращает валидную Pydantic-модель AIVerdict даже при ошибках AI.
+    """
+    default_verdict = AIVerdict()
+
+    if not self.config.enabled or not text or not text.strip():
+        return default_verdict
+
+    user_prompt = f"Проанализируй следующее сообщение: '{text}'"
+    try:
+        verdict_dict = await self._call_structured(
+            system_prompt=self._get_system_prompt_for_text(),
+            user_prompt=user_prompt,
+            schema=self._get_response_schema_for_text(),
+        )
+        if not verdict_dict:
+            logger.warning("AI-анализ текста вернул пустой результат: '%s...'", text[:50])
+            return default_verdict
+
+        logger.info("AI Security Verdict for '%s...': %s", text[:30], verdict_dict)
+        return AIVerdict(**verdict_dict)
+
+    except Exception as e:
+        logger.error("Ошибка AI при анализе текста: %s", e, exc_info=True)
+        return default_verdict
+
+# ==========================
+# 2) Проверка ПОЛЬЗОВАТЕЛЯ (/check)
+# ==========================
+
 @staticmethod
 def _normalize_username(username: Optional[str]) -> Optional[str]:
     if not username:
@@ -218,42 +221,34 @@ def _heuristics_for_user(self, username: Optional[str], user_id: Optional[int]) 
     labels: List[str] = []
     notes: List[str] = []
 
-    # базовый старт доверия
     trust = 85
 
-    # username-правила
     if username:
         uname = username.lower()
 
-        # валидность по правилам Telegram
         if not self._RE_ALLOWED_USERNAME.match(username):
             labels.append("invalid_format")
             notes.append("Несоответствие правилам Telegram (допускаются A-Z/a-z/0-9/_)")
             trust -= 10
 
-        # подозрительные подстроки
         for token in self._SUSPICIOUS_SUBSTRINGS:
             if token in uname:
                 labels.append(f"token:{token}")
                 trust -= 20
-                break  # одного флага достаточно
+                break
 
-        # 4+ цифр в конце
         if self._RE_NUMERIC_TAIL.search(uname):
             labels.append("numeric_tail")
             trust -= 10
 
-        # повторяющиеся символы
         if self._RE_REPEAT_CHARS.search(uname):
             labels.append("repeated_chars")
             trust -= 5
 
-        # выдаёт себя за «поддержку»/биржу/кошелёк
         if self._RE_UNSAFE_PREFIX.search(uname):
             labels.append("impersonation_prefix")
             trust -= 20
 
-        # слишком короткие/длинные ники (хотя Telegram не должен допускать)
         if len(uname) < 5:
             labels.append("too_short")
             trust -= 10
@@ -261,7 +256,6 @@ def _heuristics_for_user(self, username: Optional[str], user_id: Optional[int]) 
             labels.append("too_long")
             trust -= 10
 
-    # user_id-правила (мягкие)
     if user_id is not None:
         try:
             if user_id > 10_000_000_000:
@@ -270,7 +264,6 @@ def _heuristics_for_user(self, username: Optional[str], user_id: Optional[int]) 
         except Exception:
             pass
 
-    # нормализация
     trust = max(0, min(100, trust))
     if not labels:
         notes.append("Явных красных флагов не найдено по эвристикам")
@@ -287,16 +280,14 @@ async def verify_user(
     Полная проверка пользователя. Совмещает эвристики и AI.
     Возвращает dict:
       {
-        "ok": bool,              # безопасен ли (true/false)
-        "score": int,            # 0..100, чем выше — тем безопаснее
-        "reason": str,           # краткие детали
-        "labels": [str, ...]     # набор меток
+        "ok": bool,
+        "score": int,        # 0..100, чем выше — тем безопаснее
+        "reason": str,
+        "labels": [str, ...]
       }
     """
-    # нормализация входа
     username = self._normalize_username(username)
 
-    # если передали только строку с цифрами в username — трактуем как user_id
     if username and username.isdigit() and user_id is None:
         try:
             user_id = int(username)
@@ -304,17 +295,14 @@ async def verify_user(
         except ValueError:
             pass
 
-    # эвристики
     heur = self._heuristics_for_user(username, user_id)
     heur_trust = heur["trust_score"]
     labels: List[str] = list(heur["labels"])
     reasons: List[str] = list(heur["notes"])
 
-    # AI-компонент (если защита включена)
     ai_trust: Optional[int] = None
     if self.config.enabled:
         try:
-            # собираем единый user_prompt
             who = f"username=@{username}" if username else ""
             if user_id is not None:
                 who = (who + (" " if who else "")) + f"user_id={user_id}"
@@ -325,26 +313,16 @@ async def verify_user(
                 "Return ONLY JSON per the schema."
             )
 
-            try:
-                ai_dict = await self.ai_service.get_structured_response(
-                    prompt=user_prompt,
-                    json_schema=self._get_response_schema_for_user(),
-                    system_prompt=self._get_system_prompt_for_user(),
-                )
-            except TypeError as te:
-                logger.warning("get_structured_response keyword call failed: %s; trying positional fallback", te)
-                ai_dict = await self.ai_service.get_structured_response(
-                    user_prompt,
-                    self._get_response_schema_for_user(),
-                    self._get_system_prompt_for_user(),
-                )
+            ai_dict = await self._call_structured(
+                system_prompt=self._get_system_prompt_for_user(),
+                user_prompt=user_prompt,
+                schema=self._get_response_schema_for_user(),
+            )
 
             if ai_dict:
-                # risk_score: 0..100 (0 — безопасно), конвертируем в trust
                 risk = int(max(0, min(100, int(ai_dict.get("risk_score", 0)))))
                 ai_trust = 100 - risk
 
-                # переносим метки/причину из AI
                 ai_labels = ai_dict.get("labels") or []
                 if isinstance(ai_labels, list):
                     labels.extend(str(x) for x in ai_labels if x)
@@ -356,17 +334,10 @@ async def verify_user(
         except Exception as e:
             logger.error("Ошибка AI при проверке пользователя: %s", e, exc_info=True)
 
-    # объединение оценок
-    if ai_trust is not None:
-        # простая усредняющая модель: 60% эвристики + 40% AI
-        combined_trust = round(0.6 * heur_trust + 0.4 * ai_trust)
-    else:
-        combined_trust = heur_trust
-
+    combined_trust = heur_trust if ai_trust is None else round(0.6 * heur_trust + 0.4 * ai_trust)
     combined_trust = max(0, min(100, combined_trust))
     ok = combined_trust >= 50
 
-    # финальная причина
     reason = "; ".join(r for r in reasons if r).strip()
     labels = sorted(set(labels)) or None
 
