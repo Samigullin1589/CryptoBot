@@ -7,6 +7,7 @@ __all__ = [
     "news_router",
     "quiz_router",
     "market_router",
+    "market_info_router",
     "crypto_center_router",
     "common_router",
     "router",
@@ -28,16 +29,16 @@ def _safe_import(module_path: str, attr: str = "router") -> Router:
     return Router(name=f"{module_path.rsplit('.', 1)[-1]}_empty")
 
 
-# Именованные роутеры (совместимость с вызовами вида dp.include_router(public.price_router))
+# Именованные роутеры (совместимость с вызовами вида dp.include_router(public.X_router))
 start_router = _safe_import("bot.handlers.public.start_handler")
 price_router = _safe_import("bot.handlers.public.price_handler")
 asic_router = _safe_import("bot.handlers.public.asic_handler")
 news_router = _safe_import("bot.handlers.public.news_handler")
 quiz_router = _safe_import("bot.handlers.public.quiz_handler")
 market_router = _safe_import("bot.handlers.public.market_handler")
+market_info_router = _safe_import("bot.handlers.public.market_info_handler")
 crypto_center_router = _safe_import("bot.handlers.public.crypto_center_handler")
 common_router = _safe_import("bot.handlers.public.common_handler")
 
-# Общий роутер-плейсхолдер. НИЧЕГО не включает внутрь себя, чтобы не блокировать
-# прямое подключение подроутеров в main.py (во избежание "Router is already attached ...").
+# Плейсхолдер общего роутера, ничего не включает внутрь себя
 router = Router(name="public")
