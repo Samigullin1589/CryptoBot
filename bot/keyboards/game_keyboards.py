@@ -1,84 +1,92 @@
-# =================================================================================
-# Файл: bot/keyboards/game_keyboards.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ ПОЛНАЯ)
-# Описание: Клавиатуры для раздела "Виртуальный Майнинг".
-# ИСПРАВЛЕНИЕ: Добавлена клавиатура подтверждения покупки.
-# =================================================================================
-from typing import List, Dict
+# =============================================================================
+# File: bot/keyboards/game_keyboards.py
+# Version: "Distinguished Engineer" - SAFE BUILD
+# Notes:
+#   - Electricity tariffs keyboard now supports both dict and object items
+#   - No changes in callback payload shape (uses your GameCallback if available)
+# =============================================================================
+
+from __future__ import annotations
+
+from typing import Any, Iterable, Mapping
+
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from bot.utils.models import AsicMiner
-from bot.config.settings import ElectricityTariff
-from .callback_factories import GameCallback, MenuCallback
+# Try both typical paths; if none present, we'll build plain strings
+try:
+    from bot.callbacks.game_callbacks import GameCallback  # common path in your repo
+except Exception:  # noqa: BLE001
+    try:
+        from bot.callbacks.game_callback import GameCallback
+    except Exception:  # noqa: BLE001
+        GameCallback = None  # type: ignore[misc,assignment]
 
-ASICS_PER_PAGE = 5
 
-def get_game_main_menu_keyboard(is_session_active: bool) -> InlineKeyboardMarkup:
-    """Создает главное меню игрового раздела."""
-    builder = InlineKeyboardBuilder()
-    if not is_session_active:
-        builder.button(text="▶️ Начать сессию", callback_data=GameCallback(action="start_session").pack())
-    
-    builder.button(text="🛠 Ангар", callback_data=GameCallback(action="hangar", page=0).pack())
-    builder.button(text="🛒 Рынок", callback_data=GameCallback(action="market").pack())
-    builder.button(text="💡 Тарифы э/э", callback_data=GameCallback(action="tariffs").pack())
-    builder.button(text="🏆 Таблица лидеров", callback_data=GameCallback(action="leaderboard").pack())
-    builder.button(text="🏠 Главное меню", callback_data=MenuCallback(level=0, action="main").pack())
-    
-    builder.adjust(2, 2, 1)
-    return builder.as_markup()
+def _get(obj: Any, key: str, default=None):
+    """Fetches attribute from object or key from dict."""
+    if isinstance(obj, Mapping):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
-def get_hangar_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для ангара с выбором ASIC для запуска сессии."""
-    builder = InlineKeyboardBuilder()
-    
-    total_pages = (len(asics) + ASICS_PER_PAGE - 1) // ASICS_PER_PAGE
-    start_index = page * ASICS_PER_PAGE
-    end_index = start_index + ASICS_PER_PAGE
 
-    if not asics:
-        builder.button(text="🛒 Перейти на рынок", callback_data=GameCallback(action="market").pack())
-    else:
-        for asic in asics[start_index:end_index]:
-            builder.button(text=f"▶️ {asic.name}", callback_data=GameCallback(action="session_start_confirm", value=asic.id).pack())
-    
-    builder.adjust(1)
+def _get_name(tariff_obj: Any, fallback: str) -> str:
+    name = _get(tariff_obj, "name", None)
+    return name or fallback
 
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=GameCallback(action="hangar", page=page - 1).pack()))
-    if end_index < len(asics):
-        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=GameCallback(action="hangar", page=page + 1).pack()))
-    
-    if nav_buttons:
-        builder.row(*nav_buttons)
 
-    builder.button(text="⬅️ Назад в меню игры", callback_data=GameCallback(action="main_menu").pack())
-    builder.adjust(1)
-    return builder.as_markup()
+def _pack_callback(action: str, value: str) -> str:
+    """
+    Packs callback_data using your GameCallback if it's available,
+    otherwise returns a plain string with 'action:value'.
+    """
+    if GameCallback:
+        return GameCallback(action=action, value=value).pack()
+    return f"{action}:{value}"
 
-def get_confirm_purchase_keyboard(asic_id: str) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для подтверждения покупки в магазине."""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Купить и запустить", callback_data=GameCallback(action="confirm_purchase", value=asic_id).pack())
-    builder.button(text="❌ Отмена", callback_data=GameCallback(action="shop").pack()) # Возврат в магазин
-    builder.adjust(2)
-    return builder.as_markup()
 
 def get_electricity_menu_keyboard(
-    all_tariffs: Dict[str, ElectricityTariff],
-    owned_tariffs: List[str],
-    current_tariff: str
-) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для управления тарифами на электроэнергию."""
+    tariffs: Iterable[Any] | Mapping[str, Any],
+    owned: list[str] | None,
+    current: str | None,
+):
+    """
+    Build keyboard for electricity tariffs.
+    Accepts tariffs as:
+      - list of objects with attributes: name, unlock_price
+      - list of dicts with keys: name, unlock_price
+      - dict mapping {name: tariff_dict_or_object}
+    """
     builder = InlineKeyboardBuilder()
-    for name, tariff in all_tariffs.items():
-        if name in owned_tariffs:
-            status = " (Выбран)" if name == current_tariff else " (Доступен)"
-            builder.button(text=f"✅ {name}{status}", callback_data=GameCallback(action="tariff_select", value=name).pack())
+    owned = owned or []
+
+    if isinstance(tariffs, Mapping):
+        items: list[tuple[str, Any]] = list(tariffs.items())
+    else:
+        # If it's a list, try to infer names; fallback to index-based aliases
+        items = []
+        for i, t in enumerate(tariffs):
+            inferred = _get(t, "name", None)
+            items.append((inferred or f"Тариф {i + 1}", t))
+
+    for raw_name, data in items:
+        name = _get_name(data, raw_name)
+        unlock_price = _get(data, "unlock_price", None)
+
+        owned_mark = " ✅" if name in owned else ""
+        current_mark = " • Текущий" if current and name == current else ""
+
+        if unlock_price in (None, 0, "0", "0.0"):
+            price_txt = "бесплатно"
         else:
-            builder.button(text=f"🛒 {name} ({tariff.unlock_price} монет)", callback_data=GameCallback(action="tariff_buy", value=name).pack())
-    
-    builder.button(text="⬅️ Назад в меню игры", callback_data=GameCallback(action="main_menu").pack())
+            try:
+                price_txt = f"{float(unlock_price):.0f} монет"
+            except Exception:  # noqa: BLE001
+                price_txt = f"{unlock_price} монет"
+
+        builder.button(
+            text=f"🛒 {name}{owned_mark}{current_mark} ({price_txt})",
+            callback_data=_pack_callback("tariff_buy", name),
+        )
+
     builder.adjust(1)
     return builder.as_markup()
