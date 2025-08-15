@@ -38,19 +38,6 @@ market_router = _safe_import("bot.handlers.public.market_handler")
 crypto_center_router = _safe_import("bot.handlers.public.crypto_center_handler")
 common_router = _safe_import("bot.handlers.public.common_handler")
 
-# Общий роутер публичного раздела
+# Общий роутер-плейсхолдер. НИЧЕГО не включает внутрь себя, чтобы не блокировать
+# прямое подключение подроутеров в main.py (во избежание "Router is already attached ...").
 router = Router(name="public")
-
-# ВАЖНО: /start должен обрабатываться раньше остальных
-router.include_router(start_router)
-
-# Базовые разделы
-router.include_router(price_router)
-router.include_router(asic_router)
-router.include_router(news_router)
-router.include_router(quiz_router)
-router.include_router(market_router)
-router.include_router(crypto_center_router)
-
-# Общий обработчик текстов — в самом конце
-router.include_router(common_router)
