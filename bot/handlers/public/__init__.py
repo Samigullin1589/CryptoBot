@@ -11,6 +11,7 @@ __all__ = [
     "verification_public_router",
     "achievements_router",
     "game_router",
+    "menu_router",
     "crypto_center_router",
     "common_router",
     "router",
@@ -47,6 +48,10 @@ def _safe_import_any(module_path: str, attrs: list[str]) -> Router:
     return Router(name=f"{module_path.rsplit('.', 1)[-1]}_empty")
 
 
+def _is_empty_router(r: Router) -> bool:
+    return isinstance(r, Router) and r.name.endswith("_empty")
+
+
 # Именованные роутеры (совместимость с dp.include_router(public.X_router))
 start_router = _safe_import("bot.handlers.public.start_handler")
 price_router = _safe_import("bot.handlers.public.price_handler")
@@ -59,6 +64,9 @@ verification_public_router = _safe_import("bot.handlers.public.verification_hand
 achievements_router = _safe_import("bot.handlers.public.achievements_handler")
 # В некоторых версиях пакет game экспортирует либо game_router, либо router
 game_router = _safe_import_any("bot.handlers.game", ["game_router", "router"])
+# Попытка найти отдельный обработчик меню; если его нет — используем стартовый
+_menu_try = _safe_import_any("bot.handlers.public.menu_handler", ["menu_router", "router"])
+menu_router = start_router if _is_empty_router(_menu_try) else _menu_try
 crypto_center_router = _safe_import("bot.handlers.public.crypto_center_handler")
 common_router = _safe_import("bot.handlers.public.common_handler")
 
