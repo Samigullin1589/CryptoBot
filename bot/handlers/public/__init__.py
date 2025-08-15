@@ -10,6 +10,7 @@ __all__ = [
     "market_info_router",
     "verification_public_router",
     "achievements_router",
+    "game_router",
     "crypto_center_router",
     "common_router",
     "router",
@@ -31,6 +32,21 @@ def _safe_import(module_path: str, attr: str = "router") -> Router:
     return Router(name=f"{module_path.rsplit('.', 1)[-1]}_empty")
 
 
+def _safe_import_any(module_path: str, attrs: list[str]) -> Router:
+    """
+    Пытается получить любой Router из списка имен атрибутов.
+    """
+    try:
+        module = __import__(module_path, fromlist=attrs)
+        for attr in attrs:
+            r = getattr(module, attr, None)
+            if isinstance(r, Router):
+                return r
+    except Exception:
+        pass
+    return Router(name=f"{module_path.rsplit('.', 1)[-1]}_empty")
+
+
 # Именованные роутеры (совместимость с dp.include_router(public.X_router))
 start_router = _safe_import("bot.handlers.public.start_handler")
 price_router = _safe_import("bot.handlers.public.price_handler")
@@ -41,6 +57,8 @@ market_router = _safe_import("bot.handlers.public.market_handler")
 market_info_router = _safe_import("bot.handlers.public.market_info_handler")
 verification_public_router = _safe_import("bot.handlers.public.verification_handler")
 achievements_router = _safe_import("bot.handlers.public.achievements_handler")
+# В некоторых версиях пакет game экспортирует либо game_router, либо router
+game_router = _safe_import_any("bot.handlers.game", ["game_router", "router"])
 crypto_center_router = _safe_import("bot.handlers.public.crypto_center_handler")
 common_router = _safe_import("bot.handlers.public.common_handler")
 
