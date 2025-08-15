@@ -1,7 +1,7 @@
 \==============================
 Файл: bot/utils/models.py
 ВЕРСИЯ: "Distinguished Engineer" — Август 2025 (Азия/Тбилиси)
-Кратко: Убрал не-Python заголовок. Добавил в AIVerdict поля score и reasons для ThreatFilter. Остальные интерфейсы без изменений.
+Кратко: Перенёс шапку в комментарии, чтобы не было SyntaxError. Добавил поля score и reasons в AIVerdict для совместимости с ThreatFilter. Остальные интерфейсы без изменений.
 
 # =================================================================================
 
@@ -14,11 +14,11 @@
 # =================================================================================
 
 from **future** import annotations
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Iterable
 from pydantic import BaseModel, Field, ConfigDict
 from enum import IntEnum
 
-# --- ИЕРАРХИЯ РОЛЕЙ (ПЕРЕНЕСЕНО СЮДА) ---
+# --- ИЕРАРХИЯ РОЛЕЙ ---
 
 class UserRole(IntEnum):
 BANNED = 0
@@ -27,7 +27,7 @@ MODERATOR = 2
 ADMIN = 3
 SUPER\_ADMIN = 4
 
-# --- МОДЕЛЬ ВЕРИФИКАЦИИ ---
+# --- ВЕРИФИКАЦИЯ ---
 
 class VerificationData(BaseModel):
 is\_verified: bool = False
@@ -35,7 +35,7 @@ passport\_verified: bool = False
 deposit: float = 0.0
 country\_code: str = "🇷🇺"
 
-# --- МОДЕЛЬ ДЛЯ ИГРОВЫХ ДАННЫХ ---
+# --- ИГРОВАЯ МОДЕЛЬ ---
 
 class UserGameProfile(BaseModel):
 balance: float = 0.0
@@ -61,7 +61,7 @@ model_config = ConfigDict(
 )
 ```
 
-# --- Модели для сервиса майнинга и калькулятора ---
+# --- КАЛЬКУЛЯТОР ---
 
 class CalculationInput(BaseModel):
 hashrate\_str: str
@@ -80,7 +80,7 @@ pool\_fee\_usd\_daily: float
 total\_expenses\_usd\_daily: float
 net\_profit\_usd\_daily: float
 
-# --- Остальные модели проекта ---
+# --- ПРОЧИЕ МОДЕЛИ ---
 
 class Coin(BaseModel):
 id: str
@@ -161,11 +161,13 @@ options: List\[str]
 correct\_option\_index: int
 explanation: Optional\[str] = None
 
+# --- ВЕРДИКТ ДЛЯ ФИЛЬТРА УГРОЗ ---
+
 class AIVerdict(BaseModel):
 intent: str = "other"
 toxicity\_score: float = 0.0
 is\_potential\_scam: bool = False
 is\_potential\_phishing: bool = False
-\# для ThreatFilter и логирования
+\# нужно ThreatFilter
 score: float = 0.0
 reasons: List\[str] = Field(default\_factory=list)
