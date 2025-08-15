@@ -9,6 +9,7 @@ __all__ = [
     "market_router",
     "market_info_router",
     "verification_public_router",
+    "achievements_router",
     "crypto_center_router",
     "common_router",
     "router",
@@ -39,6 +40,7 @@ quiz_router = _safe_import("bot.handlers.public.quiz_handler")
 market_router = _safe_import("bot.handlers.public.market_handler")
 market_info_router = _safe_import("bot.handlers.public.market_info_handler")
 verification_public_router = _safe_import("bot.handlers.public.verification_handler")
+achievements_router = _safe_import("bot.handlers.public.achievements_handler")
 crypto_center_router = _safe_import("bot.handlers.public.crypto_center_handler")
 common_router = _safe_import("bot.handlers.public.common_handler")
 
