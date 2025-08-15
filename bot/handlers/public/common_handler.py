@@ -11,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.enums import ChatType
 
 from bot.filters.not_command_filter import NotCommandFilter
 from bot.utils.dependencies import Deps
@@ -26,16 +27,16 @@ class AIConsultantState(StatesGroup):
     waiting_question = State()
 
 
-@router.message(Command("ask"))
+@router.message(F.chat.type == ChatType.PRIVATE, Command("ask"))
 async def cmd_ask(message: Message, state: FSMContext):
-    """Вход в режим вопроса к ИИ (только по явной команде)."""
+    """Вход в режим вопроса к ИИ (только по явной команде, только в ЛС)."""
     await state.set_state(AIConsultantState.waiting_question)
     await message.answer("Напишите свой вопрос для ИИ одним сообщением:")
 
 
-@router.message(AIConsultantState.waiting_question, F.text)
+@router.message(F.chat.type == ChatType.PRIVATE, AIConsultantState.waiting_question, F.text)
 async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
-    """Обрабатываем вопрос к ИИ только когда пользователь в соответствующем состоянии."""
+    """Обрабатываем вопрос к ИИ только когда пользователь в соответствующем состоянии (ЛС)."""
     user_text = (message.text or "").strip()
 
     # История (если есть сервис)
@@ -60,13 +61,14 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
         await state.clear()
 
 
-# ------------------------- Команда /check -------------------------
+# ------------------------- Команда /check (разрешена и в группах) -------------------------
 
 @router.message(Command("check"))
 async def cmd_check(message: Message, command: CommandObject, deps: Deps):
     """
     Проверка пользователя: /check @username
     Также можно ответить /check на сообщение нужного пользователя.
+    Доступно в ЛС и в группах.
     """
     args = (command.args or "").strip()
     target = args
@@ -87,44 +89,87 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
     else:
         target_username = target
 
-    await message.answer(f"Проверяю @{target_username}…")
+    try:
+        await message.answer(f"Проверяю @{target_username}…")
+    except Exception:
+        pass
 
     # Если подключены сервисы безопасности/верификации — пытаемся вызвать
-    svc = getattr(deps, "security_service", None) or getattr(deps, "verification_service", None)
+    svc = getattr(deps, "verification_service", None) or getattr(deps, "security_service", None)
     result_text = None
     if svc:
         for name in ("check_user", "verify_user", "check", "verify"):
             if hasattr(svc, name):
                 try:
-                    # Пытаемся передать username универсально
-                    res = getattr(svc, name)
-                    res = res(username=target_username)
+                    call = getattr(svc, name)
+                    res = call(username=target_username)
                     res = await res if asyncio.iscoroutine(res) else res
 
+                    # Строка — отдаем как есть
                     if isinstance(res, str):
                         result_text = res
-                    elif isinstance(res, dict):
-                        ok = res.get("ok") or res.get("safe") or res.get("verified")
-                        reason = res.get("reason") or res.get("details")
+                        break
+
+                    # Словарь — собираем удобный формат
+                    if isinstance(res, dict):
+                        # ожидаемые поля, но не требуемые
+                        verified = bool(res.get("verified") or res.get("safe") or res.get("ok"))
                         score = res.get("score")
-                        parts = []
-                        parts.append("✅ Безопасен" if ok else "⚠️ Возможен риск / нет данных")
-                        if score is not None:
-                            parts.append(f"рейтинг: {score}")
-                        if reason:
-                            parts.append(f"детали: {reason}")
-                        result_text = "; ".join(parts)
-                    else:
-                        result_text = "Готово."
+                        reason = res.get("reason") or res.get("details")
+                        profile = res.get("profile") or {}
+                        uid = profile.get("id") or res.get("user_id")
+                        name = profile.get("name") or res.get("name")
+                        uname = profile.get("username") or target_username
+                        country = profile.get("country") or "-"
+                        passport_ok = profile.get("passport_ok")
+                        deposit = profile.get("deposit")
+
+                        header = "Команда /check\nВерифицированный" if verified else "Команда /check\nНе верифицированный"
+                        curator = "Бот-куратор @НашБот\n--------------------"
+                        status_line = "✅ ПРОВЕРЕННЫЙ ПОСТАВЩИК ✅" if verified else "⚠️ НЕ ПРОВЕРЕН ⚠️\nПри переводе предоплаты есть риск потерять денежные средства"
+                        passport_line = "✅ Проверен ✅" if passport_ok else "⚠️ НЕ ПРОВЕРЕН ⚠️"
+                        deposit_line = f"${deposit}" if isinstance(deposit, (int, float, str)) and str(deposit) else "Отсутствует"
+
+                        lines = [
+                            header,
+                            "",
+                            curator,
+                            "Статус :",
+                            status_line,
+                            "",
+                            "Пользователь",
+                            f"Идентификатор пользователя: {uid or '-'}",
+                            f"Имя: {name or '-'}",
+                            f"Имя пользователя:\n@{uname}" if uname else "Имя пользователя:\n-",
+                            "",
+                            f"Страна: {country}",
+                            f"Паспорт : {passport_line}",
+                            f"Депозит : {deposit_line}",
+                        ]
+
+                        # добавим краткие детали, если есть
+                        if score is not None or reason:
+                            tail = []
+                            if score is not None:
+                                tail.append(f"рейтинг: {score}")
+                            if reason:
+                                tail.append(f"детали: {reason}")
+                            lines += ["", "—", "", ("; ".join(tail))]
+
+                        result_text = "\n".join(lines)
+                        break
+
+                    # Иное — нейтральный ответ
+                    result_text = "Готово."
                     break
+
                 except TypeError:
-                    # Возможно метод принимает другой набор аргументов — пробуем id
+                    # возможно метод принимает user_id
                     try:
                         user_id = int(target_username)
-                        res = getattr(svc, name)
-                        res = res(user_id=user_id)
+                        res = getattr(svc, name)(user_id=user_id)
                         res = await res if asyncio.iscoroutine(res) else res
-                        result_text = "Готово." if not isinstance(res, str) else res
+                        result_text = res if isinstance(res, str) else "Готово."
                         break
                     except Exception as e:
                         logger.debug("verification call (id) failed: %s", e)
@@ -139,7 +184,8 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
 
 # ------------------------- Вспомогательные утилиты -------------------------
 
-_COIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{0,19}$")
+# Более строгий токен монеты: латиница/цифры/дефис, 2–10 символов (типично BTC, ETH, ALEO)
+_COIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{1,9}$")
 
 
 def _looks_like_coin_token(text: str) -> bool:
@@ -256,38 +302,45 @@ def _user_in_price_context(deps: Deps, user_id: int) -> bool:
 
 
 def _extract_price_query(text: str) -> Optional[str]:
+    """
+    Строгий детект запроса цены:
+      - чистый токен монеты (BTC)
+      - или фраза вида: 'курс BTC' / 'Курс btc'
+    НЕ реагируем на одиночный знак '$' и длинные строки.
+    """
     t = text.strip()
+    if len(t) > 32:  # слишком длинно для короткого «курса»
+        return None
     if _looks_like_coin_token(t):
         return t
-    m = re.search(r"(?:^|\s)(?:курс|price|\$)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{0,19})", t, flags=re.IGNORECASE)
+    m = re.search(r"(?:^|\s)(?:курс)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{1,9})", t, flags=re.IGNORECASE)
     if m:
         return m.group(1)
     return None
 
 
-# ------------------------- Глушилка объявлений/прайсов -------------------------
+# ------------------------- Глушилка объявлений/прайсов (молчаливо) -------------------------
 
 AD_LIKE = re.compile(
-    r'(?:\+7|8)\d{10}|@\w+|[$€₽]|S\d{2}\s?[A-Z]+|L7|M50|XP\s?\d+th|j\s?pro\+',
+    r'(?:\+7|8)\d{10}|@\w+|[$€₽]|S\d{2}\s?[A-Z]+|L7|M50|M30s\+\+|XP\s?\d+th|j\s?pro\+|S21|M60|M64|Avalon',
     re.IGNORECASE,
 )
 
-@router.message(F.text.regexp(AD_LIKE), NotCommandFilter())
-async def ignore_ads_like(message: Message):
-    """Не запускаем ИИ на объявления/прайсы; даём мягкую подсказку."""
-    await message.answer("Чтобы спросить ИИ, используйте команду /ask. Для курса монеты — раздел «Курс».")
+@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), F.text.regexp(AD_LIKE), NotCommandFilter())
+async def ignore_ads_like_group(_: Message):
+    """В группах: объявления/прайсы игнорируем полностью (без ответов)."""
+    return
 
 
 # ------------------------------ Общий текстовый обработчик ------------------------------
 
-# ВАЖНО: добавлен NotCommandFilter(), чтобы /start и другие команды не попадали сюда
-@router.message(F.text, NotCommandFilter())
+# Только ЛС, и без команд
+@router.message(F.chat.type == ChatType.PRIVATE, F.text, NotCommandFilter())
 async def handle_text_common(message: Message, deps: Deps) -> None:
     """
-    Поведение:
+    Поведение в ЛС:
       1) Если пользователь в разделе «Курс» ИЛИ текст похож на запрос цены — отвечаем курсом монеты.
-      2) Иначе — НЕ вызываем ИИ автоматически (чтобы не реагировать на любые тексты).
-         Подсказываем про команду /ask.
+      2) Иначе — не запускаем ИИ автоматически. Бот молчит.
     """
     user_text = (message.text or "").strip()
 
@@ -303,16 +356,8 @@ async def handle_text_common(message: Message, deps: Deps) -> None:
             price = await _fetch_usd_price(deps, symbol_for_fetch)
             if price is not None:
                 await _reply_with_price(message, symbol_for_fetch, price)
-                return
-            else:
-                await message.answer("😕 Не удалось получить цену для указанной монеты.")
-                return
-        else:
-            await message.answer("😕 Монета не распознана. Пример: BTC, ETH, ALEO.")
-            return
+            # если цены нет — молчим, чтобы не спамить
+        return
 
-    # 2) Больше никакого автозапуска ИИ — только явная команда /ask
-    if "?" in user_text:
-        await message.answer("Хотите спросить ИИ? Введите /ask и отправьте вопрос одним сообщением.")
-    else:
-        await message.answer("Откройте меню. Для вопроса ИИ используйте /ask. Для курса — раздел «Курс».")
+    # 2) Никакого автозапуска ИИ: молчим
+    return
