@@ -1,8 +1,3 @@
-================================
-Файл: bot/services/security_service.py
-ВЕРСИЯ: "Distinguished Engineer" — 15 августа 2025 (Asia/Tbilisi)
-Кратко: Корневая причина падения — в файл попал не-Python текст (ASCII-шапка). Это видно в логах Render: File "/opt/render/project/src/bot/services/security_service.py", line 1 и SyntaxError: unexpected character after line continuation character — первая строка начиналась с \================================. Ниже — чистый рабочий код без декоративных строк. Публичные методы сохранены: analyze_message(text)->AIVerdict и verify_user(username=None, user_id=None)->dict. Добавлены лёгкие эвристики, совместимость с существующим AIContentService.get_structured_response(...), логирование и кэширование (alru_cache).
-
 from __future__ import annotations
 
 import logging
@@ -15,26 +10,26 @@ from bot.config.settings import ThreatFilterConfig
 from bot.utils.models import AIVerdict
 
 if TYPE_CHECKING:
-    from bot.services.ai_content_service import AIContentService  # тайп-хинты только
+    from bot.services.ai_content_service import AIContentService  # только для тайп-хинтов
 
 logger = logging.getLogger(__name__)
 
 
 class SecurityService:
     """
-    Сервис для анализа текста и проверки пользователей.
-    Сочетает лёгкие эвристики и (по возможности) вызовы AI через AIContentService.
-    Публичные методы:
-      - analyze_message(text) -> AIVerdict
-      - verify_user(username=None, user_id=None) -> dict
+    Анализирует сообщения и проверяет аккаунты на риск скама/фишинга.
+    Публичные методы (сохранены сигнатуры):
+      - analyze_message(text: str) -> AIVerdict
+      - verify_user(username: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]
     """
 
+    # словари/шаблоны для лёгких эвристик
     _SUSPICIOUS_SUBSTRINGS = {
         "airdrop", "giveaway", "bonus", "earn", "profit", "x100",
         "investment", "broker", "whatsapp", "binance-support",
         "trustwallet", "metamask", "support", "recovery", "private-sale",
         "pump", "dump", "signals", "crypto-signals", "change_number",
-        "bet", "casino", "1win", "gg.bet", "p2p-help", "usdt", "ton"
+        "bet", "casino", "1win", "gg.bet", "p2p-help", "usdt", "ton",
     }
     _RE_NUMERIC_TAIL = re.compile(r"(\d{4,})$")
     _RE_REPEAT_CHARS = re.compile(r"(.)\1{3,}")
@@ -46,7 +41,7 @@ class SecurityService:
         self.ai_service = ai_service
         self.config = config
         logger.info("SecurityService инициализирован. Защита %s.",
-                    "включена" if self.config.enabled else "выключена")
+                    "включена" if getattr(self.config, "enabled", True) else "выключена")
 
     # ---------- Промпты/схемы для AI ----------
     def _get_system_prompt_for_text(self) -> str:
@@ -63,9 +58,9 @@ class SecurityService:
                 "intent": {"type": "STRING"},
                 "toxicity_score": {"type": "NUMBER"},
                 "is_potential_scam": {"type": "BOOLEAN"},
-                "is_potential_phishing": {"type": "BOOLEAN"}
+                "is_potential_phishing": {"type": "BOOLEAN"},
             },
-            "required": ["intent", "toxicity_score", "is_potential_scam", "is_potential_phishing"]
+            "required": ["intent", "toxicity_score", "is_potential_scam", "is_potential_phishing"],
         }
 
     def _get_system_prompt_for_user(self) -> str:
@@ -81,9 +76,9 @@ class SecurityService:
                 "is_scam": {"type": "BOOLEAN"},
                 "risk_score": {"type": "INTEGER"},
                 "reason": {"type": "STRING"},
-                "labels": {"type": "ARRAY", "items": {"type": "STRING"}}
+                "labels": {"type": "ARRAY", "items": {"type": "STRING"}},
             },
-            "required": ["is_scam", "risk_score"]
+            "required": ["is_scam", "risk_score"],
         }
 
     async def _call_structured(
@@ -95,18 +90,18 @@ class SecurityService:
     ) -> Optional[Dict[str, Any]]:
         """
         Универсальный вызов AIContentService.get_structured_response.
-        Используем «старую» сигнатуру (prompt/json_schema) с передачей system_prompt как kwargs.
+        Сначала пытаемся передать system_prompt отдельным параметром (некоторые реализации поддерживают),
+        если падает TypeError — склеиваем в единый prompt.
         """
         if not self.ai_service:
             return None
         try:
-            return await self.ai_service.get_structured_response(
+            return await self.ai_service.get_structured_response(  # type: ignore[call-arg]
                 prompt=user_prompt,
                 json_schema=schema,
                 system_prompt=system_prompt,
             )
         except TypeError:
-            # На всякий случай: поддержка альтернативных реализаций
             try:
                 merged = f"{system_prompt or ''}\n\n{user_prompt}"
                 return await self.ai_service.get_structured_response(
@@ -125,11 +120,11 @@ class SecurityService:
     async def analyze_message(self, text: str) -> AIVerdict:
         """
         Возвращает AIVerdict с полями score и reasons (для ThreatFilter).
-        Сначала — лёгкие эвристики, затем — попытка уточнить через AI.
+        Эвристики + (если доступно) AI.
         """
         verdict = AIVerdict()
         txt = (text or "").strip()
-        if not self.config.enabled or not txt:
+        if not getattr(self.config, "enabled", True) or not txt:
             return verdict
 
         low = txt.lower()
@@ -234,17 +229,18 @@ class SecurityService:
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Возвращает объединённую оценку доверия к аккаунту.
-        Результат:
+        Интегральная оценка доверия к аккаунту.
+        Возвращает:
           {
             ok: bool,
-            score: int,       # 0..100 — интегральная «доверие/надёжность»
+            score: int,       # 0..100 — доверие
             reason: str,
             labels: [str]|None
           }
         """
         username = self._normalize_username(username)
 
+        # если пришёл только цифровой username — трактуем как id
         if username and username.isdigit() and user_id is None:
             try:
                 user_id = int(username)
@@ -269,11 +265,18 @@ class SecurityService:
                 schema=self._get_response_schema_for_user(),
             )
             if ai:
-                risk = int(max(0, min(100, int(ai.get("risk_score", 0))))))
+                # risk_score -> 0..100; переводим в trust
+                try:
+                    risk_val = int(ai.get("risk_score", 0))
+                except Exception:
+                    risk_val = 0
+                risk = max(0, min(100, risk_val))
                 ai_trust = 100 - risk
+
                 ai_labels = ai.get("labels") or []
                 if isinstance(ai_labels, list):
                     labels.extend(str(x) for x in ai_labels if x)
+
                 ai_reason = ai.get("reason")
                 if ai_reason:
                     reasons.append(str(ai_reason))
