@@ -1,7 +1,7 @@
 \==============================
 Файл: bot/utils/models.py
 ВЕРСИЯ: "Distinguished Engineer" — Август 2025 (Азия/Тбилиси)
-Кратко: Добавлены поля score и reasons в AIVerdict для совместимости с ThreatFilter. Остальные публичные интерфейсы без изменений. Заголовок оформлен как комментарий, чтобы избежать SyntaxError.
+Кратко: Убрал не-Python заголовок. Добавил в AIVerdict поля score и reasons для ThreatFilter. Остальные интерфейсы без изменений.
 
 # =================================================================================
 
@@ -166,6 +166,6 @@ intent: str = "other"
 toxicity\_score: float = 0.0
 is\_potential\_scam: bool = False
 is\_potential\_phishing: bool = False
-\# Для ThreatFilter и логирования:
+\# для ThreatFilter и логирования
 score: float = 0.0
 reasons: List\[str] = Field(default\_factory=list)
