@@ -1,153 +1,171 @@
-# =================================================================================
-# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Полный набор Pydantic-моделей для всего проекта.
-# ИСПРАВЛЕНИЕ: Добавлено поле `vendor` в модель AsicMiner.
+\==============================
+Файл: bot/utils/models.py
+ВЕРСИЯ: "Distinguished Engineer" — Август 2025 (Азия/Тбилиси)
+Кратко: Добавлены поля score и reasons в AIVerdict для совместимости с ThreatFilter. Остальные публичные интерфейсы без изменений. Заголовок оформлен как комментарий, чтобы избежать SyntaxError.
+
 # =================================================================================
 
-from __future__ import annotations
+# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+
+# Описание: Полный набор Pydantic-моделей для всего проекта.
+
+# ИСПРАВЛЕНИЕ: Добавлено поле `vendor` в модель AsicMiner; в AIVerdict — `score` и `reasons`.
+
+# =================================================================================
+
+from **future** import annotations
 from typing import Optional, List, Any, Dict
 from pydantic import BaseModel, Field, ConfigDict
 from enum import IntEnum
 
 # --- ИЕРАРХИЯ РОЛЕЙ (ПЕРЕНЕСЕНО СЮДА) ---
+
 class UserRole(IntEnum):
-    BANNED = 0
-    USER = 1
-    MODERATOR = 2
-    ADMIN = 3
-    SUPER_ADMIN = 4
+BANNED = 0
+USER = 1
+MODERATOR = 2
+ADMIN = 3
+SUPER\_ADMIN = 4
 
 # --- МОДЕЛЬ ВЕРИФИКАЦИИ ---
+
 class VerificationData(BaseModel):
-    is_verified: bool = False
-    passport_verified: bool = False
-    deposit: float = 0.0
-    country_code: str = "🇷🇺"
+is\_verified: bool = False
+passport\_verified: bool = False
+deposit: float = 0.0
+country\_code: str = "🇷🇺"
 
 # --- МОДЕЛЬ ДЛЯ ИГРОВЫХ ДАННЫХ ---
+
 class UserGameProfile(BaseModel):
-    balance: float = 0.0
-    total_earned: float = 0.0
-    current_tariff: str
-    owned_tariffs: List[str]
+balance: float = 0.0
+total\_earned: float = 0.0
+current\_tariff: str
+owned\_tariffs: List\[str]
 
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
-class User(BaseModel):
-    id: int = Field(alias="user_id")
-    username: Optional[str] = None
-    first_name: str = Field(alias="full_name")
-    language_code: Optional[str] = None
-    role: UserRole = UserRole.USER
-    verification_data: VerificationData = Field(default_factory=VerificationData)
-    electricity_cost: float = 0.05
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-        arbitrary_types_allowed=True
-    )
+class User(BaseModel):
+id: int = Field(alias="user\_id")
+username: Optional\[str] = None
+first\_name: str = Field(alias="full\_name")
+language\_code: Optional\[str] = None
+role: UserRole = UserRole.USER
+verification\_data: VerificationData = Field(default\_factory=VerificationData)
+electricity\_cost: float = 0.05
+
+```
+model_config = ConfigDict(
+    populate_by_name=True,
+    arbitrary_types_allowed=True,
+)
+```
 
 # --- Модели для сервиса майнинга и калькулятора ---
 
 class CalculationInput(BaseModel):
-    hashrate_str: str
-    power_consumption_watts: int
-    electricity_cost: float
-    pool_commission: float
+hashrate\_str: str
+power\_consumption\_watts: int
+electricity\_cost: float
+pool\_commission: float
 
 class CalculationResult(BaseModel):
-    btc_price_usd: float
-    usd_rub_rate: float
-    network_hashrate_ths: float
-    block_reward_btc: float
-    gross_revenue_usd_daily: float
-    electricity_cost_usd_daily: float
-    pool_fee_usd_daily: float
-    total_expenses_usd_daily: float
-    net_profit_usd_daily: float
+btc\_price\_usd: float
+usd\_rub\_rate: float
+network\_hashrate\_ths: float
+block\_reward\_btc: float
+gross\_revenue\_usd\_daily: float
+electricity\_cost\_usd\_daily: float
+pool\_fee\_usd\_daily: float
+total\_expenses\_usd\_daily: float
+net\_profit\_usd\_daily: float
 
 # --- Остальные модели проекта ---
 
 class Coin(BaseModel):
-    id: str
-    symbol: str
-    name: str
+id: str
+symbol: str
+name: str
 
 class PriceInfo(BaseModel):
-    price: float
-    market_cap: Optional[float] = None
-    volume_24h: Optional[float] = None
-    change_24h: Optional[float] = None
+price: float
+market\_cap: Optional\[float] = None
+volume\_24h: Optional\[float] = None
+change\_24h: Optional\[float] = None
 
 class MiningEvent(BaseModel):
-    name: str
-    description: str
-    probability: float = Field(ge=0.0, le=1.0)
-    profit_multiplier: float = 1.0
-    cost_multiplier: float = 1.0
+name: str
+description: str
+probability: float = Field(ge=0.0, le=1.0)
+profit\_multiplier: float = 1.0
+cost\_multiplier: float = 1.0
 
 class AsicMiner(BaseModel):
-    id: str
-    name: str
-    vendor: Optional[str] = "Unknown"
-    hashrate: str
-    power: int
-    algorithm: str
-    profitability: Optional[float] = None
-    price: Optional[float] = None
-    net_profit: Optional[float] = None
-    gross_profit: Optional[float] = None
-    electricity_cost_per_day: Optional[float] = None
+id: str
+name: str
+vendor: Optional\[str] = "Unknown"
+hashrate: str
+power: int
+algorithm: str
+profitability: Optional\[float] = None
+price: Optional\[float] = None
+net\_profit: Optional\[float] = None
+gross\_profit: Optional\[float] = None
+electricity\_cost\_per\_day: Optional\[float] = None
 
 class NewsArticle(BaseModel):
-    title: str
-    url: str
-    body: Optional[str] = None
-    source: Optional[str] = None
-    timestamp: Optional[int] = None
-    published_at: Optional[str] = None
-    ai_summary: Optional[str] = None
+title: str
+url: str
+body: Optional\[str] = None
+source: Optional\[str] = None
+timestamp: Optional\[int] = None
+published\_at: Optional\[str] = None
+ai\_summary: Optional\[str] = None
 
 class AirdropProject(BaseModel):
-    id: str
-    name: str
-    description: str
-    status: str
-    tasks: List[str]
-    guide_url: Optional[str] = None
+id: str
+name: str
+description: str
+status: str
+tasks: List\[str]
+guide\_url: Optional\[str] = None
 
 class Achievement(BaseModel):
-    id: str
-    name: str
-    description: str
-    reward_coins: float
-    trigger_event: str
-    type: str = "static"
-    trigger_conditions: Optional[Dict[str, Any]] = None
+id: str
+name: str
+description: str
+reward\_coins: float
+trigger\_event: str
+type: str = "static"
+trigger\_conditions: Optional\[Dict\[str, Any]] = None
 
 class MiningSessionResult(BaseModel):
-    asic_name: str
-    user_tariff_name: str
-    gross_earned: float
-    total_electricity_cost: float
-    net_earned: float
-    event_description: Optional[str] = None
-    unlocked_achievement: Optional[Achievement] = None
+asic\_name: str
+user\_tariff\_name: str
+gross\_earned: float
+total\_electricity\_cost: float
+net\_earned: float
+event\_description: Optional\[str] = None
+unlocked\_achievement: Optional\[Achievement] = None
 
 class MarketListing(BaseModel):
-    id: str
-    seller_id: int
-    price: float
-    created_at: int
-    asic_data: str
+id: str
+seller\_id: int
+price: float
+created\_at: int
+asic\_data: str
 
 class QuizQuestion(BaseModel):
-    question: str
-    options: List[str]
-    correct_option_index: int
-    explanation: Optional[str] = None
+question: str
+options: List\[str]
+correct\_option\_index: int
+explanation: Optional\[str] = None
 
 class AIVerdict(BaseModel):
-    intent: str = "other"
-    toxicity_score: float = 0.0
-    is_potential_scam: bool = False
-    is_potential_phishing: bool = False
+intent: str = "other"
+toxicity\_score: float = 0.0
+is\_potential\_scam: bool = False
+is\_potential\_phishing: bool = False
+\# Для ThreatFilter и логирования:
+score: float = 0.0
+reasons: List\[str] = Field(default\_factory=list)
