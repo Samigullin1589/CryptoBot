@@ -1,3 +1,13 @@
+# =============================================================================
+# Файл: bot/keyboards/callback_factories.py
+# Версия: PRODUCTION 2025 — согласовано с mining_keyboards.py и mining_game_handler.py
+# Примечания:
+#   • Единые фабрики CallbackData для всех модулей.
+#   • Совместимы с действиями: shop/shop_page/start/confirm_purchase/main_menu/
+#     my_farm/electricity/invite/withdraw/tariff_select/tariff_buy и др.
+#   • Для AdminCallback используется sep="|" (в action могут быть двоеточия).
+# =============================================================================
+
 from typing import Optional
 from aiogram.filters.callback_data import CallbackData
 
@@ -27,6 +37,8 @@ class MenuCallback(CallbackData, prefix="menu"):
 
 
 class GameCallback(CallbackData, prefix="game"):
+    # Примеры: shop | shop_page | start | confirm_purchase | main_menu |
+    # my_farm | electricity | invite | withdraw | tariff_select | tariff_buy
     action: str
     value: Optional[str] = None
     page: Optional[int] = None
@@ -45,7 +57,7 @@ class CalculatorCallback(CallbackData, prefix="calc"):
     page: Optional[int] = None
 
 
-# Админские фабрики: только здесь используем нестандартный разделитель,
+# Админские фабрики: используем нестандартный разделитель,
 # т.к. в action встречаются значения с ':' (например, "stats:general").
 class AdminCallback(CallbackData, prefix="admin", sep="|"):
     action: str
@@ -54,7 +66,7 @@ class AdminCallback(CallbackData, prefix="admin", sep="|"):
     page: Optional[int] = None
 
 
-# Вернули стандартный разделитель ':' — многие обработчики матчат по "adgame:"
+# Стандартный разделитель ':' — хендлеры ожидают префикс "adgame:"
 class GameAdminCallback(CallbackData, prefix="adgame"):
     action: str
     value: Optional[str] = None
@@ -62,7 +74,8 @@ class GameAdminCallback(CallbackData, prefix="adgame"):
 
 
 class ThreatCallback(CallbackData, prefix="threat"):
-    action: str  # ban | pardon | ignore
+    # actions: ban | pardon | ignore
+    action: str
     user_id: Optional[int] = None
     message_id: Optional[int] = None
     chat_id: Optional[int] = None
@@ -75,10 +88,11 @@ class PriceCallback(CallbackData, prefix="price"):
     fiat: Optional[str] = None
     page: Optional[int] = None
     source: Optional[str] = None
-    coin_id: Optional[str] = None  # используется в price_handler.show_price_for_coin
+    # используется в price_handler.show_price_for_coin
+    coin_id: Optional[str] = None
 
 
-# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "asic:"
+# Стандартный разделитель ':' — хендлеры ожидают префикс "asic:"
 class AsicCallback(CallbackData, prefix="asic"):
     action: str
     value: Optional[str] = None
@@ -89,7 +103,8 @@ class AsicCallback(CallbackData, prefix="asic"):
 
 
 class NewsCallback(CallbackData, prefix="news"):
-    action: str  # source | category | page | open | refresh
+    # actions: source | category | page | open | refresh
+    action: str
     source: Optional[str] = None
     category: Optional[str] = None
     value: Optional[str] = None
@@ -97,7 +112,8 @@ class NewsCallback(CallbackData, prefix="news"):
 
 
 class QuizCallback(CallbackData, prefix="quiz"):
-    action: str  # start | answer | next | hint | results | page
+    # actions: start | answer | next | hint | results | page
+    action: str
     value: Optional[str] = None
     quiz_id: Optional[str] = None
     question_id: Optional[str] = None
@@ -105,9 +121,10 @@ class QuizCallback(CallbackData, prefix="quiz"):
     page: Optional[int] = None
 
 
-# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "market:"
+# Стандартный разделитель ':' — хендлеры ожидают префикс "market:"
 class MarketCallback(CallbackData, prefix="market"):
-    action: str  # list | view | page | buy | filter | sort | vendor | back
+    # actions: list | view | page | buy | filter | sort | vendor | back
+    action: str
     value: Optional[str] = None
     item_id: Optional[str] = None
     page: Optional[int] = None
@@ -116,18 +133,20 @@ class MarketCallback(CallbackData, prefix="market"):
     q: Optional[str] = None
 
 
-# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "crypto:"
+# Стандартный разделитель ':' — хендлеры ожидают префикс "crypto:"
 class CryptoCenterCallback(CallbackData, prefix="crypto"):
-    action: str  # open | section | page | refresh | back
+    # actions: open | section | page | refresh | back
+    action: str
     value: Optional[str] = None
     section: Optional[str] = None
     page: Optional[int] = None
     q: Optional[str] = None
 
 
-# Вернули стандартный разделитель ':' — хендлеры ожидают префикс "onb:"
+# Стандартный разделитель ':' — хендлеры ожидают префикс "onb:"
 class OnboardingCallback(CallbackData, prefix="onb"):
-    action: str  # start | step | next | back | skip | finish
+    # actions: start | step | next | back | skip | finish
+    action: str
     step: Optional[int] = None
     value: Optional[str] = None
     page: Optional[int] = None

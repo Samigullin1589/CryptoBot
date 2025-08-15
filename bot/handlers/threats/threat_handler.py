@@ -1,32 +1,63 @@
+# =============================================================================
+# Файл: bot/handlers/threats/threat_handler.py
+# Версия: PRODUCTION 2025 — совместимо со старыми и новыми кнопками
+#
+# Что делает:
+#   • Поддерживает ВСЕ форматы callback_data для карточек угроз:
+#       - "pardon:<user_id>:<chat_id>"
+#       - "ban:<user_id>:<chat_id>"
+#       - "threat_action:pardon:<user_id>:<chat_id>"
+#       - "threat_action:ban:<user_id>:<chat_id>"
+#       - "threat:pardon:<user_id>:<chat_id>"
+#   • Если chat_id не удаётся вытащить из callback_data, парсит его из
+#     текста карточки (строки вида "ID: 123" и "Чат ID: -100...").
+#   • Безопасно делает unban: ловит TelegramBadRequest ("method is available
+#     for supergroup and channel chats only") и другие исключения — карточка
+#     не падает, пользователю показывается мягкий успех.
+#   • Совместимо с текущей зависимостью Deps и moderation_service.ban_user.
+# =============================================================================
+
 from __future__ import annotations
 
 import contextlib
 import logging
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 from aiogram import F, Router, types
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramForbiddenError,
+)
 from aiogram.filters import Command
 from aiogram.types import Message
 
 from bot.utils.dependencies import Deps
 
-# Экспортируем под разными именами на случай разных импорта в пакетах
+# --- необязательная поддержка новой фабрики (если вы её используете где-то ещё) ---
+try:
+    from bot.keyboards.callback_factories import ThreatCallback  # noqa: F401
+    _HAS_THREAT_FACTORY = True
+except Exception:  # фабрики может не быть — это ок
+    _HAS_THREAT_FACTORY = False
+
+# Экспортируем под разными именами на случай разных импортов в проекте
 threats_router = Router()
 threat_router = threats_router
 router = threats_router
 
 logger = logging.getLogger(__name__)
 
-
-# --------- Вспомогательные ---------
+# ------------------------------- ВСПОМОГАТЕЛЬНЫЕ -------------------------------
 
 def _parse_ids_from_callback_data(data: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
     """
     Поддерживаем форматы:
       - "threat_action:pardon:<user_id>:<chat_id>"
       - "threat_action:ban:<user_id>:<chat_id>"
+      - "threat:pardon:<user_id>:<chat_id>"
+      - "threat:ban:<user_id>:<chat_id>"
       - "pardon:<user_id>:<chat_id>"
       - "ban:<user_id>:<chat_id>"
     Возвращает (user_id, chat_id) или (None, None).
@@ -53,7 +84,7 @@ _CHAT_ID_RE = re.compile(r"Чат\s+ID:\s*([\-]?\d+)", re.IGNORECASE)
 
 def _parse_ids_from_card_text(text: str) -> Tuple[Optional[int], Optional[int]]:
     """
-    Парсинг из текста карточки (как на скриншоте):
+    Парсинг из текста карточки (пример):
       ID: 161465196
       Чат ID: -1002408729915
     """
@@ -110,32 +141,38 @@ def _choose_ids_for_action(
     Выбирает user_id и chat_id:
     1) из callback_data,
     2) из текста карточки,
-    3) (chat) из cq.message.chat.id как последний шанс.
+    3) (chat) из cq.message.chat.id как последний шанс (может быть личка).
     """
     from_cb_user, from_cb_chat = _parse_ids_from_callback_data(cq.data)
 
     user_id = from_cb_user
     chat_id = from_cb_chat
 
+    card_text = (getattr(cq.message, "html_text", None) or getattr(cq.message, "text", None) or "")
+
     if need_user and user_id is None:
-        user_id, _ = _parse_ids_from_card_text((cq.message.text or cq.message.html_text or ""))
+        user_id, _ = _parse_ids_from_card_text(card_text)
 
     if need_chat and chat_id is None:
-        _, chat_id = _parse_ids_from_card_text((cq.message.text or cq.message.html_text or ""))
+        _, chat_id = _parse_ids_from_card_text(card_text)
 
     if need_chat and chat_id is None and cq.message:
-        # Последний шанс — но это может быть личка админа, и unban там не сработает.
+        # Последний шанс — но это может быть личка админа (unban не сработает).
         chat_id = cq.message.chat.id
 
     return user_id, chat_id
 
 
-# --------- Обработчики коллбеков «Бан/Помиловать» ---------
+def _fmt_done(text: str) -> str:
+    return f"✅ <b>Действие выполнено:</b> {text}"
+
+
+# ------------------------ ОБРАБОТЧИКИ КОЛЛБЭКОВ (СТАРЫЕ) ------------------------
 
 @threats_router.callback_query(F.data.startswith("pardon"))
 async def cb_pardon(cq: types.CallbackQuery, deps: Deps) -> None:
     """
-    Старый формат кнопки «Помиловать», который был в проекте раньше.
+    Старый формат кнопки «Помиловать».
     """
     with contextlib.suppress(Exception):
         await cq.answer()
@@ -146,11 +183,11 @@ async def cb_pardon(cq: types.CallbackQuery, deps: Deps) -> None:
     response_text = "Пользователь помилован (или не был забанен)."
 
     try:
-        # Если есть и чат и пользователь — пытаемся разбанить API Telegram.
         if chat_id is not None and user_id is not None:
+            # Попытка разбанить (будет исключение, если это не супер-группа/канал)
             await cq.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
     except TelegramBadRequest as e:
-        # Пример из логов: "method is available for supergroup and channel chats only"
+        # Например: "method is available for supergroup and channel chats only"
         logger.info("pardon_user bad request: %s", e)
     except TelegramForbiddenError as e:
         logger.warning("pardon_user forbidden: %s", e)
@@ -159,7 +196,7 @@ async def cb_pardon(cq: types.CallbackQuery, deps: Deps) -> None:
     except Exception as e:
         logger.error("pardon_user unexpected error: %s", e, exc_info=True)
 
-    await _safe_edit_append_html(cq, f"✅ <b>Действие выполнено:</b> {response_text}")
+    await _safe_edit_append_html(cq, _fmt_done(response_text))
 
 
 @threats_router.callback_query(F.data.startswith("ban"))
@@ -188,16 +225,15 @@ async def cb_ban(cq: types.CallbackQuery, deps: Deps) -> None:
         logger.error("Ban from threat card failed: %s", e, exc_info=True)
         response_text = "Ошибка бана: нет прав или уже заблокирован."
 
-    await _safe_edit_append_html(cq, f"✅ <b>Действие выполнено:</b> {response_text}")
+    await _safe_edit_append_html(cq, _fmt_done(response_text))
 
 
-# --------- Совместимость с новым форматом threat_action:* ---------
+# -------------------- МОСТ ДЛЯ НОВЫХ ПРЕФИКСОВ threat_action:/threat: --------------------
 
 @threats_router.callback_query(F.data.startswith("threat_action:"))
 async def cb_threat_action_bridge(cq: types.CallbackQuery, deps: Deps) -> None:
     """
-    На случай, если часть карточек продолжает слать threat_action:* сюда.
-    Просто пробрасываем в соответствующие обработчики.
+    Совместимость: пробрасываем threat_action:* в соответствующие обработчики.
     """
     action = (cq.data or "").split(":")[1] if (cq.data and ":" in cq.data) else ""
     if action == "pardon":
@@ -209,9 +245,24 @@ async def cb_threat_action_bridge(cq: types.CallbackQuery, deps: Deps) -> None:
             await cq.answer("Неизвестное действие.", show_alert=True)
 
 
-# --------- (Опционально) команды для ручной модерации в этом модуле ---------
-# Оставлены пустыми — команды уже реализованы в admin/moderation_handler.py.
-# Здесь добавим только совместимость, если кто-то импортирует эти команды из threats.*
+@threats_router.callback_query(F.data.startswith("threat:"))
+async def cb_threat_prefix_bridge(cq: types.CallbackQuery, deps: Deps) -> None:
+    """
+    Совместимость: пробрасываем threat:* в соответствующие обработчики.
+    """
+    # threat:action:user_id:chat_id
+    parts = (cq.data or "").split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    if action == "pardon":
+        await cb_pardon(cq, deps)
+    elif action == "ban":
+        await cb_ban(cq, deps)
+    else:
+        with contextlib.suppress(Exception):
+            await cq.answer("Неизвестное действие.", show_alert=True)
+
+
+# ----------------- (ОПЦИОНАЛЬНО) КОМАНДЫ-ЗАГЛУШКИ ДЛЯ РУЧНОЙ МОДЕРАЦИИ -----------------
 
 @threats_router.message(Command("pardon"))
 async def cmd_pardon_stub(message: Message) -> None:
