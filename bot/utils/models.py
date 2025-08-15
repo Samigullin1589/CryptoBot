@@ -1,22 +1,24 @@
 \==============================
 Файл: bot/utils/models.py
 ВЕРСИЯ: "Distinguished Engineer" — Август 2025 (Азия/Тбилиси)
-Кратко: Перенёс шапку в комментарии, чтобы не было SyntaxError. Добавил поля score и reasons в AIVerdict для совместимости с ThreatFilter. Остальные интерфейсы без изменений.
+Кратко: Удалён артефакт "====" в начале файла. Шапка переведена в комментарии, чтобы при вставке не было SyntaxError. В AIVerdict добавлены поля score и reasons для ThreatFilter. Остальные интерфейсы без изменений.
 
-# =================================================================================
+# ==============================
 
-# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
+# Файл: bot/utils/models.py  — "Distinguished Engineer", Август 2025 (Азия/Тбилиси)
 
-# Описание: Полный набор Pydantic-моделей для всего проекта.
+# Кратко: Полный набор моделей. Безопасная шапка (как комментарии).
 
-# ИСПРАВЛЕНИЕ: Добавлено поле `vendor` в модель AsicMiner; в AIVerdict — `score` и `reasons`.
+# Исправления: добавлен vendor в AsicMiner; добавлены score и reasons в AIVerdict.
 
-# =================================================================================
+# ==============================
 
 from **future** import annotations
-from typing import Optional, List, Any, Dict, Iterable
-from pydantic import BaseModel, Field, ConfigDict
+
 from enum import IntEnum
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # --- ИЕРАРХИЯ РОЛЕЙ ---
 
@@ -168,6 +170,6 @@ intent: str = "other"
 toxicity\_score: float = 0.0
 is\_potential\_scam: bool = False
 is\_potential\_phishing: bool = False
-\# нужно ThreatFilter
+\# Для ThreatFilter и логирования:
 score: float = 0.0
 reasons: List\[str] = Field(default\_factory=list)
