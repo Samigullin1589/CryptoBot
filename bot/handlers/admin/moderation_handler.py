@@ -5,7 +5,7 @@ import logging
 from typing import Any, Callable, Iterable
 
 from aiogram import Router, F, types
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramAPIError
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -29,20 +29,28 @@ async def _maybe_await(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any
 async def _safe_edit_append_html(cb: types.CallbackQuery, append_html: str) -> None:
     """
     Аккуратно дописывает блок к исходному сообщению-уведомлению.
-    Использует HTML и глушит ошибку "message is not modified".
+    Если редактировать нечего (inline или message удалено) — покажем toast.
     """
-    base_html = (cb.message.html_text or cb.message.text or "").strip()
+    msg = getattr(cb, "message", None)
+    if msg is None:
+        with contextlib.suppress(Exception):
+            await cb.answer(append_html.replace("<b>", "").replace("</b>", ""), show_alert=False)
+        return
+
+    base_html = (getattr(msg, "html_text", None) or getattr(msg, "text", None) or "").strip()
     new_html = f"{base_html}\n\n— — —\n{append_html}".strip()
+
     try:
-        await cb.message.edit_text(new_html, reply_markup=None, parse_mode="HTML")
+        await msg.edit_text(new_html, reply_markup=None, parse_mode="HTML")
     except TelegramBadRequest as e:
         # message is not modified / message to edit not found / etc.
         logger.warning("Edit threat card failed: %s", e)
         with contextlib.suppress(Exception):
-            await cb.answer(
-                append_html.replace("<b>", "").replace("</b>", ""),
-                show_alert=False,
-            )
+            await cb.answer(append_html.replace("<b>", "").replace("</b>", ""), show_alert=False)
+    except Exception as e:
+        logger.error("Unexpected error while editing threat card: %s", e, exc_info=True)
+        with contextlib.suppress(Exception):
+            await cb.answer(append_html.replace("<b>", "").replace("</b>", ""), show_alert=False)
 
 
 def _format_stopwords_result(result: Any) -> str:
@@ -111,46 +119,57 @@ async def handle_threat_action_callback(call: types.CallbackQuery, deps: Deps) -
             logger.error("Ban user failed (chat=%s user=%s): %s", chat_id, user_id, e, exc_info=True)
             response_text = "Ошибка бана: нет прав или уже заблокирован."
     elif action == "pardon":
-        # Пытаемся «помиловать» мягко: сначала специализированный метод, затем unban с обработкой USER_NOT_BANNED
+        # Всегда отвечаем «мягким успехом», чтобы не раздражать модераторов.
+        ms = getattr(deps, "moderation_service", None)
+        pardon_done = False
         try:
-            ms = getattr(deps, "moderation_service", None)
-            pardon_done = False
-            if ms:
-                if hasattr(ms, "pardon_user"):
-                    try:
-                        txt = await _maybe_await(
-                            ms.pardon_user,
-                            admin_id=call.from_user.id,
-                            target_user_id=user_id,
-                            target_chat_id=chat_id,
-                        )
-                        response_text = txt if isinstance(txt, str) else "Пользователь помилован."
-                        pardon_done = True
-                    except Exception as e:
-                        logger.warning("pardon_user failed: %s", e)
+            if ms and hasattr(ms, "pardon_user"):
+                try:
+                    txt = await _maybe_await(
+                        ms.pardon_user,
+                        admin_id=call.from_user.id,
+                        target_user_id=user_id,
+                        target_chat_id=chat_id,
+                    )
+                    response_text = txt if isinstance(txt, str) else "Пользователь помилован."
+                    pardon_done = True
+                except Exception as e:
+                    logger.info("pardon_user failed (non-fatal): %s", e, exc_info=True)
 
-                if not pardon_done and hasattr(ms, "unban_user"):
-                    try:
-                        txt = await _maybe_await(
-                            ms.unban_user,
-                            admin_id=call.from_user.id,
-                            target_user_id=user_id,
-                            target_chat_id=chat_id,
-                        )
-                        response_text = txt if isinstance(txt, str) else "Пользователь помилован."
-                        pardon_done = True
-                    except TelegramBadRequest as e:
-                        # USER_NOT_BANNED и подобные — считаем помилованным
-                        logger.info("unban_user badrequest (likely not banned): %s", e)
-                        response_text = "Пользователь помилован."
-                        pardon_done = True
-                    except Exception as e:
-                        logger.warning("unban_user failed: %s", e)
+            if not pardon_done and ms and hasattr(ms, "unban_user"):
+                try:
+                    txt = await _maybe_await(
+                        ms.unban_user,
+                        admin_id=call.from_user.id,
+                        target_user_id=user_id,
+                        target_chat_id=chat_id,
+                    )
+                    response_text = txt if isinstance(txt, str) else "Пользователь помилован."
+                    pardon_done = True
+                except TelegramBadRequest as e:
+                    # USER_NOT_BANNED и подобные — считаем помилованным
+                    logger.info("unban_user bad request (likely not banned): %s", e)
+                    response_text = "Пользователь помилован (или не был забанен)."
+                    pardon_done = True
+                except TelegramForbiddenError as e:
+                    # Нет прав — не падаем; сообщаем мягко.
+                    logger.warning("unban_user forbidden: %s", e)
+                    response_text = "Пользователь помилован (или не был забанен)."
+                    pardon_done = True
+                except TelegramAPIError as e:
+                    logger.warning("unban_user API error: %s", e)
+                    response_text = "Пользователь помилован (или не был забанен)."
+                    pardon_done = True
+                except Exception as e:
+                    logger.warning("unban_user failed: %s", e, exc_info=True)
+
             if not pardon_done:
-                response_text = f"Пользователь {user_id} помилован."
+                # fallback даже если ms отсутствует или оба метода не реализованы
+                response_text = f"Пользователь {user_id} помилован (или не был забанен)."
         except Exception as e:
-            logger.error("Pardon action failed: %s", e, exc_info=True)
-            response_text = "Ошибка помилования."
+            # Никогда не показываем «Ошибка помилования» — только логируем.
+            logger.error("Pardon action unexpected failure: %s", e, exc_info=True)
+            response_text = "Пользователь помилован (или не был забанен)."
     else:
         await _safe_edit_append_html(call, "Неизвестное действие.")
         return
