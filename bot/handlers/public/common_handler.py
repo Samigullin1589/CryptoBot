@@ -8,6 +8,7 @@ from typing import Optional, Tuple
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import Command
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -57,6 +58,83 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
         await message.answer("Произошла ошибка при обращении к AI.")
     finally:
         await state.clear()
+
+
+# ------------------------- Команда /check -------------------------
+
+@router.message(Command("check"))
+async def cmd_check(message: Message, command: CommandObject, deps: Deps):
+    """
+    Проверка пользователя: /check @username
+    Также можно ответить /check на сообщение нужного пользователя.
+    """
+    args = (command.args or "").strip()
+    target = args
+
+    # Если аргумента нет — пробуем взять из ответа
+    if not target and message.reply_to_message and message.reply_to_message.from_user:
+        u = message.reply_to_message.from_user
+        target = f"@{u.username}" if u.username else str(u.id)
+
+    if not target:
+        await message.answer("Укажите пользователя: /check @username\nМожно также ответить на его сообщение и набрать /check.")
+        return
+
+    # Нормализуем: обрежем ссылку t.me и оставим username/id
+    target = target.replace("https://t.me/", "").replace("http://t.me/", "").strip()
+    if target.startswith("@"):
+        target_username = target[1:]
+    else:
+        target_username = target
+
+    await message.answer(f"Проверяю @{target_username}…")
+
+    # Если подключены сервисы безопасности/верификации — пытаемся вызвать
+    svc = getattr(deps, "security_service", None) or getattr(deps, "verification_service", None)
+    result_text = None
+    if svc:
+        for name in ("check_user", "verify_user", "check", "verify"):
+            if hasattr(svc, name):
+                try:
+                    # Пытаемся передать username универсально
+                    res = getattr(svc, name)
+                    res = res(username=target_username)
+                    res = await res if asyncio.iscoroutine(res) else res
+
+                    if isinstance(res, str):
+                        result_text = res
+                    elif isinstance(res, dict):
+                        ok = res.get("ok") or res.get("safe") or res.get("verified")
+                        reason = res.get("reason") or res.get("details")
+                        score = res.get("score")
+                        parts = []
+                        parts.append("✅ Безопасен" if ok else "⚠️ Возможен риск / нет данных")
+                        if score is not None:
+                            parts.append(f"рейтинг: {score}")
+                        if reason:
+                            parts.append(f"детали: {reason}")
+                        result_text = "; ".join(parts)
+                    else:
+                        result_text = "Готово."
+                    break
+                except TypeError:
+                    # Возможно метод принимает другой набор аргументов — пробуем id
+                    try:
+                        user_id = int(target_username)
+                        res = getattr(svc, name)
+                        res = res(user_id=user_id)
+                        res = await res if asyncio.iscoroutine(res) else res
+                        result_text = "Готово." if not isinstance(res, str) else res
+                        break
+                    except Exception as e:
+                        logger.debug("verification call (id) failed: %s", e)
+                except Exception as e:
+                    logger.debug("verification call failed: %s", e)
+
+    if not result_text:
+        result_text = "Проверка выполнена (заглушка). Подключите реализацию в security/verification сервисе к команде /check."
+
+    await message.answer(result_text)
 
 
 # ------------------------- Вспомогательные утилиты -------------------------
@@ -237,5 +315,4 @@ async def handle_text_common(message: Message, deps: Deps) -> None:
     if "?" in user_text:
         await message.answer("Хотите спросить ИИ? Введите /ask и отправьте вопрос одним сообщением.")
     else:
-        # Можете заменить на показ меню, если у вас есть хендлер/кнопка
         await message.answer("Откройте меню. Для вопроса ИИ используйте /ask. Для курса — раздел «Курс».")
