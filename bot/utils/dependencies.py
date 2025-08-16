@@ -1,24 +1,25 @@
 # ======================================================================================
 # Файл: bot/utils/dependencies.py
-# Версия: "Distinguished Engineer" — МАКСИМАЛЬНАЯ (полный DI-контейнер под твой стек)
+# Версия: "Distinguished Engineer" — МАКСИМАЛЬНАЯ (DI с безопасными опционалами)
 # Описание:
 #   Универсальный контейнер зависимостей (aiogram 3 + redis.asyncio + aiohttp),
 #   аккуратно инициализирующий все ключевые сервисы проекта и передающий их в хендлеры.
 #   Особенности:
-#     • Без заглушек: рабочие импорты и реальная инициализация.
-#     • Надёжное создание Redis-клиента (asyncio), HTTP-сессии (aiohttp).
+#     • Надёжное создание Redis-клиента (asyncio) и HTTP-сессии (aiohttp).
 #     • Автонастройка AIContentService (Gemini по умолчанию, OpenAI — если ключ доступен).
 #     • Динамическая сборка сервисов по их сигнатурам (поддержка create()/__init__).
 #     • Загрузка LUA-скриптов для Market/MiningGame при наличии методов.
 #     • Безопасное завершение (await aclose()) — без DeprecationWarning.
 #     • Middleware для прокидывания deps в data каждого апдейта.
 #     • Совместимость: поддержаны и Deps.create(...), и Deps(...); await deps.init().
-#     • MarketDataService создаётся внутри DI; AdminService — позже в main.py (ему нужен bot).
+#     • ВАЖНО: ModerationService и SecurityService НЕ создаются здесь (нужен Bot и др.).
+#       Их создаём позже в main.py и записываем в deps.moderation_service / deps.security_service.
 # ======================================================================================
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import logging
 from typing import Any, Dict, Optional
@@ -40,10 +41,6 @@ from bot.services.coin_list_service import CoinListService  # noqa: F401
 from bot.services.news_service import NewsService  # noqa: F401
 from bot.services.market_data_service import MarketDataService  # noqa: F401
 
-# Безопасность / модерация
-from bot.services.security_service import SecurityService  # noqa: F401
-from bot.services.moderation_service import ModerationService  # noqa: F401
-
 # ASIC / рынок / майнинг
 from bot.services.asic_service import AsicService  # noqa: F401
 from bot.services.market_service import MarketService  # noqa: F401
@@ -57,8 +54,18 @@ from bot.services.quiz_service import QuizService  # noqa: F401
 
 # Пользователи / Админ
 from bot.services.user_service import UserService  # noqa: F401
-# ВАЖНО: AdminService импортировать можно, но инициализировать — в main.py (нужен bot)
 from bot.services.admin_service import AdminService  # noqa: F401
+
+# Безопасность / модерация — ДЕЛАЕМ ОПЦИОНАЛЬНЫМИ (не создаём в DI)
+try:
+    from bot.services.security_service import SecurityService  # type: ignore
+except Exception:  # noqa: BLE001
+    SecurityService = None  # type: ignore
+
+try:
+    from bot.services.moderation_service import ModerationService  # type: ignore
+except Exception:  # noqa: BLE001
+    ModerationService = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -106,8 +113,6 @@ class Deps:
         coin_list_service: CoinListService
         news_service: NewsService
         market_data_service: MarketDataService
-        moderation_service: ModerationService
-        security_service: SecurityService
         asic_service: AsicService
         market_service: MarketService
         mining_service: MiningService
@@ -116,7 +121,11 @@ class Deps:
         event_service: EventService
         quiz_service: QuizService
         user_service: UserService
-        admin_service: AdminService | None     # ИНИЦИАЛИЗИРУЕТСЯ В main.py (нужен bot)
+
+        # опциональные — НЕ создаются в DI, а выставляются позже в main.py
+        moderation_service: Optional[Any]
+        security_service: Optional[Any]
+        admin_service: Optional[AdminService]
     """
 
     # --------- создание / завершение ---------
@@ -136,8 +145,6 @@ class Deps:
         self.coin_list_service: Optional[CoinListService] = None
         self.news_service: Optional[NewsService] = None
         self.market_data_service: Optional[MarketDataService] = None
-        self.moderation_service: Optional[ModerationService] = None
-        self.security_service: Optional[SecurityService] = None
         self.asic_service: Optional[AsicService] = None
         self.market_service: Optional[MarketService] = None
         self.mining_service: Optional[MiningService] = None
@@ -147,7 +154,9 @@ class Deps:
         self.quiz_service: Optional[QuizService] = None
         self.user_service: Optional[UserService] = None
 
-        # Заполняется в main.py после создания Bot
+        # Опциональные (создаём позже в main.py)
+        self.moderation_service: Optional[Any] = None
+        self.security_service: Optional[Any] = None
         self.admin_service: Optional[AdminService] = None
 
     # --- поддержка обоих вариантов запуска ---
@@ -159,10 +168,16 @@ class Deps:
         """
         cfg = cfg or settings
         self = cls(cfg)
-        await self._init_low_level()
-        await self._init_services()
-        logger.info("Контейнер зависимостей (Deps) успешно собран.")
-        return self
+        try:
+            await self._init_low_level()
+            await self._init_services()
+            logger.info("Контейнер зависимостей (Deps) успешно собран.")
+            return self
+        except Exception:
+            # Если что-то пошло не так — аккуратно закрываем частично поднятые ресурсы
+            with contextlib.suppress(Exception):
+                await self.close()
+            raise
 
     async def init(self) -> None:
         """
@@ -186,8 +201,6 @@ class Deps:
             "coin_list_service",
             "news_service",
             "market_data_service",
-            "security_service",
-            "moderation_service",
             "asic_service",
             "market_service",
             "mining_service",
@@ -196,7 +209,6 @@ class Deps:
             "event_service",
             "quiz_service",
             "user_service",
-            # admin_service закрывать не требуется
         ]:
             svc = getattr(self, svc_name, None)
             if not svc:
@@ -248,12 +260,8 @@ class Deps:
         self.redis = self.redis_pool
 
         # sanity check
-        try:
-            await self.redis_pool.ping()
-            logger.info("Успешное подключение к Redis.")
-        except Exception as e:
-            logger.critical("Redis ping failed: %s", e, exc_info=True)
-            raise
+        await self.redis_pool.ping()
+        logger.info("Успешное подключение к Redis.")
 
         # HTTP-сессия
         timeout = aiohttp.ClientTimeout(total=30)
@@ -303,15 +311,10 @@ class Deps:
         )
         self.news_service = await self._make_instance(NewsService, base_kwargs)
 
-        # Антиспам/безопасность
-        self.moderation_service = await self._make_instance(
-            ModerationService,
-            base_kwargs | {"http": self.http_session}
-        )
-        self.security_service = await self._make_instance(
-            SecurityService,
-            base_kwargs | {"moderation_service": self.moderation_service}
-        )
+        # ВАЖНО: ModerationService / SecurityService НЕ поднимаем здесь — они зависят от Bot/конфигураций проекта.
+        # Их нужно (при необходимости) создать в main.py после Bot/AdminService:
+        #   deps.moderation_service = ModerationService(bot=bot, user_service=deps.user_service, admin_service=deps.admin_service, ...)
+        #   deps.security_service   = SecurityService(moderation_service=deps.moderation_service, ...)
 
         # Майнинг / рынок / ASIC
         self.mining_service = await self._make_instance(MiningService, base_kwargs)
@@ -339,10 +342,8 @@ class Deps:
 
         self.achievement_service = await self._make_instance(AchievementService, base_kwargs)
         if self.mining_game_service and hasattr(self.mining_game_service, "__dict__"):
-            try:
+            with contextlib.suppress(Exception):
                 setattr(self.mining_game_service, "achievement_service", self.achievement_service)
-            except Exception:
-                pass
 
         self.event_service = await self._make_instance(EventService, base_kwargs)
         self.quiz_service = await self._make_instance(QuizService, base_kwargs)
