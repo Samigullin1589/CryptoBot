@@ -5,16 +5,16 @@
 #   • Полная инициализация бота (настройки, DI, middlewares, routers, команды)
 #   • Поддержка плановых задач (jobs/scheduled_tasks)
 #   • Корректное завершение (await deps.close()) и обработка сигналов
+#   • AdminService создаётся ПОСЛЕ Bot (ему нужен bot)
 # ======================================================================================
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 from importlib import import_module
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -24,17 +24,14 @@ from aiogram.types import BotCommand
 from bot.config.settings import settings
 from bot.utils.dependencies import Deps, dependencies_middleware
 
-# ===== Middlewares (строго из твоего проекта) =====
-# Обязательные:
+# ===== Middlewares =====
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.middlewares.activity_middleware import ActivityMiddleware
 
-# Опциональные (подключим, если присутствуют в репо):
 try:
     from bot.middlewares.security_middleware import SecurityMiddleware  # антиспам/фильтры
 except Exception:  # noqa: BLE001
     SecurityMiddleware = None  # type: ignore
-
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +56,10 @@ async def setup_commands(bot: Bot) -> None:
         BotCommand(command="help", description="Справка"),
         BotCommand(command="menu", description="Главное меню"),
         BotCommand(command="price", description="Котировки"),
-        BotCommand(command="market", description="Рынок ASIC"),
-        BotCommand(command="mining", description="Виртуальный майнинг"),
         BotCommand(command="news", description="Крипто-новости"),
-        BotCommand(command="quiz", description="Квиз"),
+        BotCommand(command="convert", description="Калькулятор: конвертация"),
+        BotCommand(command="pnl", description="Калькулятор: PnL"),
+        BotCommand(command="roi", description="Калькулятор: ROI"),
     ]
     await bot.set_my_commands(commands)
 
@@ -90,33 +87,34 @@ def register_routers(dp: Dispatcher) -> None:
     """
     Импортирует и регистрирует все известные роутеры проекта.
     Если какой-то модуль отсутствует — просто пропускаем (без заглушек).
+    Под твою структуру каталогов: handlers/{public,tools,admin,game,threats}
     """
     module_paths: List[str] = [
-        # базовые
-        "bot.handlers.start_handler",
-        "bot.handlers.help_handler",
-        "bot.handlers.menu_handler",
-        "bot.handlers.text_handler",
+        # --- public ---
+        "bot.handlers.public.start_handler",
+        "bot.handlers.public.help_handler",
+        "bot.handlers.public.menu_handler",
+        "bot.handlers.public.text_handler",
+        "bot.handlers.public.price_handler",
+        "bot.handlers.public.news_handler",
+        "bot.handlers.public.onboarding_handler",
 
-        # цены/рынок/новости
-        "bot.handlers.price_handler",
-        "bot.handlers.market_handler",
-        "bot.handlers.news_handler",
-        "bot.handlers.crypto_center_handler",
+        # --- tools ---
+        "bot.handlers.tools.calculator_handler",
 
-        # игра, калькулятор, квиз
+        # --- game (если есть у тебя эти файлы) ---
         "bot.handlers.game.mining_game_handler",
-        "bot.handlers.calculator_handler",
-        "bot.handlers.quiz_handler",
 
-        # угрозы/модерация/админка
-        "bot.handlers.threats",
+        # --- threats ---
+        "bot.handlers.threats",  # оставить как у тебя устроено внутри пакета
+
+        # --- admin ---
         "bot.handlers.admin.admin_handler",
         "bot.handlers.admin.moderation_handler",
         "bot.handlers.admin.stats_handler",
-
-        # онбординг
-        "bot.handlers.onboarding_handler",
+        "bot.handlers.admin.health_handler",
+        "bot.handlers.admin.cache_handler",
+        "bot.handlers.admin.version_handler",
     ]
 
     total = 0
@@ -183,6 +181,14 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
+    # --- AdminService зависит от bot, поэтому создаём его здесь и кладём в deps ---
+    try:
+        from bot.services.admin_service import AdminService
+        deps.admin_service = AdminService(redis=deps.redis, settings=settings, bot=bot)  # type: ignore[arg-type]
+        logger.info("AdminService инициализирован.")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("AdminService init failed: %s", e, exc_info=True)
+
     # Middlewares (порядок важен: deps → активность → антиспам → троттлинг)
     dp.update.outer_middleware(dependencies_middleware(deps))
     dp.update.outer_middleware(ActivityMiddleware())
@@ -194,7 +200,7 @@ async def main() -> None:
             logger.warning("Не удалось подключить SecurityMiddleware: %s", e)
     dp.update.outer_middleware(
         ThrottlingMiddleware(
-            deps,
+            deps=deps,
             user_rate=settings.throttling.user_rate_limit,
             chat_rate=settings.throttling.chat_rate_limit,
             key_prefix=settings.throttling.key_prefix,
@@ -243,4 +249,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-    pass
+        pass

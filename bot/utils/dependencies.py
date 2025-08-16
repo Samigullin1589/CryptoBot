@@ -13,6 +13,7 @@
 #     • Безопасное завершение (await aclose()) — без DeprecationWarning.
 #     • Middleware для прокидывания deps в data каждого апдейта.
 #     • Совместимость: поддержаны и Deps.create(...), и Deps(...); await deps.init().
+#     • MarketDataService создаётся внутри DI; AdminService — позже в main.py (ему нужен bot).
 # ======================================================================================
 
 from __future__ import annotations
@@ -28,9 +29,7 @@ from aiogram import BaseMiddleware
 
 from bot.config.settings import settings, Settings
 
-# ===== Импорты доменных сервисов (исходим из реальной структуры проекта) =====
-# Если какие-то модули отсутствуют в твоём репозитории — сборка упадёт на import,
-# что верно для "боевого" режима без заглушек.
+# ===== Импорты доменных сервисов (боевой режим — без заглушек) =====
 
 # AI / LLM
 from bot.services.ai_content_service import AIContentService  # noqa: F401
@@ -39,6 +38,7 @@ from bot.services.ai_content_service import AIContentService  # noqa: F401
 from bot.services.price_service import PriceService  # noqa: F401
 from bot.services.coin_list_service import CoinListService  # noqa: F401
 from bot.services.news_service import NewsService  # noqa: F401
+from bot.services.market_data_service import MarketDataService  # noqa: F401
 
 # Безопасность / модерация
 from bot.services.security_service import SecurityService  # noqa: F401
@@ -55,8 +55,10 @@ from bot.services.achievement_service import AchievementService  # noqa: F401
 from bot.services.event_service import EventService  # noqa: F401
 from bot.services.quiz_service import QuizService  # noqa: F401
 
-# Пользователи
+# Пользователи / Админ
 from bot.services.user_service import UserService  # noqa: F401
+# ВАЖНО: AdminService импортировать можно, но инициализировать — в main.py (нужен bot)
+from bot.services.admin_service import AdminService  # noqa: F401
 
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,7 @@ class Deps:
         price_service: PriceService
         coin_list_service: CoinListService
         news_service: NewsService
+        market_data_service: MarketDataService
         moderation_service: ModerationService
         security_service: SecurityService
         asic_service: AsicService
@@ -113,6 +116,7 @@ class Deps:
         event_service: EventService
         quiz_service: QuizService
         user_service: UserService
+        admin_service: AdminService | None     # ИНИЦИАЛИЗИРУЕТСЯ В main.py (нужен bot)
     """
 
     # --------- создание / завершение ---------
@@ -131,6 +135,7 @@ class Deps:
         self.price_service: Optional[PriceService] = None
         self.coin_list_service: Optional[CoinListService] = None
         self.news_service: Optional[NewsService] = None
+        self.market_data_service: Optional[MarketDataService] = None
         self.moderation_service: Optional[ModerationService] = None
         self.security_service: Optional[SecurityService] = None
         self.asic_service: Optional[AsicService] = None
@@ -141,6 +146,9 @@ class Deps:
         self.event_service: Optional[EventService] = None
         self.quiz_service: Optional[QuizService] = None
         self.user_service: Optional[UserService] = None
+
+        # Заполняется в main.py после создания Bot
+        self.admin_service: Optional[AdminService] = None
 
     # --- поддержка обоих вариантов запуска ---
 
@@ -177,6 +185,7 @@ class Deps:
             "price_service",
             "coin_list_service",
             "news_service",
+            "market_data_service",
             "security_service",
             "moderation_service",
             "asic_service",
@@ -187,6 +196,7 @@ class Deps:
             "event_service",
             "quiz_service",
             "user_service",
+            # admin_service закрывать не требуется
         ]:
             svc = getattr(self, svc_name, None)
             if not svc:
@@ -287,11 +297,17 @@ class Deps:
         self.ai_service = self.ai_content_service
 
         self.coin_list_service = await self._make_instance(CoinListService, base_kwargs)
-        self.price_service = await self._make_instance(PriceService, base_kwargs | {"coin_list_service": self.coin_list_service})
+        self.price_service = await self._make_instance(
+            PriceService,
+            base_kwargs | {"coin_list_service": self.coin_list_service}
+        )
         self.news_service = await self._make_instance(NewsService, base_kwargs)
 
         # Антиспам/безопасность
-        self.moderation_service = await self._make_instance(ModerationService, base_kwargs | {"http": self.http_session})
+        self.moderation_service = await self._make_instance(
+            ModerationService,
+            base_kwargs | {"http": self.http_session}
+        )
         self.security_service = await self._make_instance(
             SecurityService,
             base_kwargs | {"moderation_service": self.moderation_service}
@@ -300,7 +316,16 @@ class Deps:
         # Майнинг / рынок / ASIC
         self.mining_service = await self._make_instance(MiningService, base_kwargs)
         self.asic_service = await self._make_instance(AsicService, base_kwargs)
-        self.market_service = await self._make_instance(MarketService, base_kwargs | {"asic_service": self.asic_service})
+        self.market_service = await self._make_instance(
+            MarketService,
+            base_kwargs | {"asic_service": self.asic_service}
+        )
+
+        # Рыночные данные (FX, топ-коины и пр.) — нужен coin_list_service
+        self.market_data_service = await self._make_instance(
+            MarketDataService,
+            base_kwargs | {"coin_list_service": self.coin_list_service}
+        )
 
         # Игровые сервисы (ссылки на другие)
         game_extra = base_kwargs | {
