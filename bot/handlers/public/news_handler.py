@@ -1,52 +1,91 @@
-# =================================================================================
-# Файл: bot/handlers/public/news_handler.py (ИНТЕГРИРОВАННЫЙ - РЕФАКТОРИНГ)
-# Описание: Обработчик для раздела новостей.
-# ИСПРАВЛЕНИЕ: Добавлен фильтр MenuCallback для прямого отклика на кнопку меню.
-# =================================================================================
-import logging
+# ======================================================================================
+# File: bot/handlers/news_handler.py
+# Version: "Distinguished Engineer" — Aug 16, 2025
+# Description:
+#   /news with cached items (NewsService). Paged inline navigation.
+# ======================================================================================
+
+from __future__ import annotations
+
+from typing import List, Dict, Any
+
 from aiogram import Router, F
-from aiogram.types import CallbackQuery
-from aiogram.utils.markdown import hlink
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from bot.keyboards.news_keyboards import get_news_sources_keyboard
-from bot.keyboards.callback_factories import NewsCallback, MenuCallback
-from bot.utils.dependencies import Deps
+router = Router(name="news_public")
 
-router = Router(name="news_handler_router")
-logger = logging.getLogger(__name__)
+PAGE_SIZE = 8
 
-@router.callback_query(MenuCallback.filter(F.action == "news"))
-async def handle_news_menu_start(call: CallbackQuery, deps: Deps):
-    """Точка входа в раздел новостей из главного меню."""
-    sources = deps.news_service.get_all_sources()
-    text = "Выберите источник, чтобы прочитать последние новости:"
-    await call.message.edit_text(text, reply_markup=get_news_sources_keyboard(sources))
-    await call.answer()
 
-@router.callback_query(NewsCallback.filter(F.action == "get_feed"))
-async def get_news_feed(call: CallbackQuery, callback_data: NewsCallback, deps: Deps):
-    """Получает и отображает новости из источника, выбранного пользователем."""
-    source_key = callback_data.source_key
-    all_sources = deps.news_service.get_all_sources()
-    source_name = all_sources.get(source_key, "Неизвестный источник")
-    
-    await call.answer(f"Загружаю новости из {source_name}...")
-    articles = await deps.news_service.get_latest_news(source_key)
-    
-    if not articles:
+def _page_kb(page: int) -> InlineKeyboardMarkup:
+    prev_btn = InlineKeyboardButton(text="⬅️ Назад", callback_data=f"news:page:{max(0, page-1)}")
+    next_btn = InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"news:page:{page+1}")
+    refresh_btn = InlineKeyboardButton(text="🔄 Обновить", callback_data="news:refresh")
+    return InlineKeyboardMarkup(inline_keyboard=[[prev_btn, next_btn], [refresh_btn]])
+
+
+def _render(items: List[Dict[str, Any]], page: int) -> str:
+    start = page * PAGE_SIZE
+    chunk = items[start : start + PAGE_SIZE]
+    if not chunk:
+        return "Пока новостей нет."
+    lines = [f"<b>📰 Крипто-новости — страница {page+1}</b>", ""]
+    for it in chunk:
+        title = (it.get("title") or "").strip()
+        url = (it.get("url") or "").strip()
+        src = it.get("src") or ""
+        lines.append(f"• <a href=\"{url}\">{title}</a> <i>({src})</i>")
+    lines.append("")
+    lines.append(f"<i>Показано {len(chunk)} из {len(items)}.</i>")
+    return "\n".join(lines)
+
+
+async def _get_items(deps) -> List[Dict[str, Any]]:
+    svc = deps.news_service  # type: ignore[attr-defined]
+    items = await svc.get_cached()
+    if not items:
+        items = await svc.get_all_latest_news()
+    return items or []
+
+
+@router.message(Command("news"))
+async def cmd_news(message: Message, deps) -> None:
+    items = await _get_items(deps)
+    await message.answer(
+        _render(items, page=0),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=_page_kb(0),
+    )
+
+
+@router.callback_query(F.data.startswith("news:"))
+async def cb_news(call: CallbackQuery, deps) -> None:
+    data = (call.data or "").split(":")
+    items = await _get_items(deps)
+    if len(data) >= 3 and data[1] == "page":
+        try:
+            page = max(0, int(data[2]))
+        except ValueError:
+            page = 0
         await call.message.edit_text(
-            f"❌ Не удалось загрузить новости из «{source_name}».",
-            reply_markup=get_news_sources_keyboard(all_sources)
-        )
+            _render(items, page=page),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=_page_kb(page),
+        )  # type: ignore[union-attr]
+        await call.answer()
         return
 
-    response_lines = [f"<b>Свежие новости из {source_name}:</b>\n"]
-    for i, article in enumerate(articles, 1):
-        response_lines.append(f"{i}. {hlink(article.title, article.url)}")
-    response_text = "\n".join(response_lines)
-    
-    await call.message.edit_text(
-        response_text,
-        reply_markup=get_news_sources_keyboard(all_sources),
-        disable_web_page_preview=True
-    )
+    if data[1] == "refresh":
+        await call.message.edit_text(
+            _render(items, page=0),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=_page_kb(0),
+        )  # type: ignore[union-attr]
+        await call.answer("Обновлено.")
+        return
+
+    await call.answer("Неизвестное действие.")

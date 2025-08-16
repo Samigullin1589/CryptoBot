@@ -1,81 +1,82 @@
 # ======================================================================================
 # File: bot/middlewares/activity_middleware.py
-# Version: "Distinguished Engineer" — MAX Build (Aug 16, 2025)
+# Version: "Distinguished Engineer" — Aug 16, 2025
 # Description:
 #   Lightweight activity tracker:
 #     • Stores last_seen for users and per-chat
 #     • Counts messages per user/chat with TTL
-#     • Exposes simple Redis schema for analytics & anti-raid heuristics
+#     • Works even if Redis is not configured
 # ======================================================================================
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Union
+import time
+from typing import Any, Dict, Optional
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineQuery
 
-from bot.utils.dependencies import Deps
+try:
+    from redis.asyncio import Redis  # type: ignore
+except Exception:  # noqa: BLE001
+    Redis = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
 class ActivityMiddleware(BaseMiddleware):
-    def __init__(
-        self,
-        deps: Deps,
-        *,
-        ttl_seconds: int = 14 * 24 * 3600,  # keep stats 14 days
-        per_chat_ttl_seconds: int = 7 * 24 * 3600,
-        key_prefix: str = "activity",
-    ) -> None:
-        super().__init__()
-        self.deps = deps
-        self.ttl = ttl_seconds
-        self.chat_ttl = per_chat_ttl_seconds
-        self.px = key_prefix.strip(":")
+    """
+    Сохраняет last_seen и счётчики активности в Redis при наличии.
+    Конфигурация не требуется. Если deps.redis отсутствует — просто пропускает.
+    """
 
-    async def __call__(self, handler, event: Union[Message, CallbackQuery], data: Dict[str, Any]):
-        r = self.deps.redis
+    def __init__(self, *, ttl_seconds: int = 2 * 24 * 3600) -> None:
+        super().__init__()
+        self.ttl = int(ttl_seconds)
+
+    async def __call__(self, handler, event: Any, data: Dict[str, Any]) -> Any:  # type: ignore[override]
+        deps = data.get("deps")
+        r: Optional[Redis] = getattr(deps, "redis", None) if deps else None
 
         try:
-            # Extract actor & chat
+            now = int(time.time())
+
             if isinstance(event, Message):
                 uid = event.from_user.id if event.from_user else None
                 chat_id = event.chat.id if event.chat else None
-                ts = int(event.date.timestamp()) if event.date else None
-            else:
+                if r:
+                    pipe = r.pipeline()
+                    if uid:
+                        pipe.setex(f"act:user:last_seen:{uid}", self.ttl, now)
+                        pipe.incr(f"act:user:msg_count:{uid}")
+                        pipe.expire(f"act:user:msg_count:{uid}", self.ttl)
+                    if chat_id:
+                        pipe.setex(f"act:chat:last_seen:{chat_id}", self.ttl, now)
+                        pipe.incr(f"act:chat:msg_count:{chat_id}")
+                        pipe.expire(f"act:chat:msg_count:{chat_id}", self.ttl)
+                    await pipe.execute()
+            elif isinstance(event, CallbackQuery):
                 uid = event.from_user.id if event.from_user else None
-                chat_id = event.message.chat.id if (event.message and event.message.chat) else None
-                ts = int(event.message.date.timestamp()) if (event.message and event.message.date) else None
+                chat_id = event.message.chat.id if event.message and event.message.chat else None
+                if r:
+                    pipe = r.pipeline()
+                    if uid:
+                        pipe.setex(f"act:user:last_seen:{uid}", self.ttl, now)
+                        pipe.incr(f"act:user:cb_count:{uid}")
+                        pipe.expire(f"act:user:cb_count:{uid}", self.ttl)
+                    if chat_id:
+                        pipe.setex(f"act:chat:last_seen:{chat_id}", self.ttl, now)
+                        pipe.incr(f"act:chat:cb_count:{chat_id}")
+                        pipe.expire(f"act:chat:cb_count:{chat_id}", self.ttl)
+                    await pipe.execute()
+            elif isinstance(event, InlineQuery):
+                uid = event.from_user.id if event.from_user else None
+                if r and uid:
+                    await r.setex(f"act:user:last_seen:{uid}", self.ttl, now)
 
-            if uid:
-                # last seen (global)
-                k_user = f"{self.px}:user:{uid}:last_seen"
-                await r.set(k_user, ts or 0, ex=self.ttl)
+        except Exception as e:  # noqa: BLE001
+            # Не блокируем пайплайн из-за аналитики
+            logger.debug("ActivityMiddleware error: %s", e)
 
-                # per-user counters
-                k_cnt = f"{self.px}:user:{uid}:cnt"
-                await r.incr(k_cnt)
-                await r.expire(k_cnt, self.ttl)
-
-            if uid and chat_id:
-                # per-chat last seen & counters
-                k_uc = f"{self.px}:chat:{chat_id}:user:{uid}:last_seen"
-                await r.set(k_uc, ts or 0, ex=self.chat_ttl)
-
-                k_uc_cnt = f"{self.px}:chat:{chat_id}:user:{uid}:cnt"
-                await r.incr(k_uc_cnt)
-                await r.expire(k_uc_cnt, self.chat_ttl)
-
-                # chat-wide counters
-                k_chat_cnt = f"{self.px}:chat:{chat_id}:cnt"
-                await r.incr(k_chat_cnt)
-                await r.expire(k_chat_cnt, self.chat_ttl)
-
-        except Exception as e:
-            logger.debug("ActivityMiddleware store error: %s", e)
-
-        # Pass to next
         return await handler(event, data)

@@ -194,10 +194,12 @@ async def main() -> None:
             logger.warning("Не удалось подключить SecurityMiddleware: %s", e)
     dp.update.outer_middleware(
         ThrottlingMiddleware(
+            deps,
             user_rate=settings.throttling.user_rate_limit,
             chat_rate=settings.throttling.chat_rate_limit,
-            prefix=settings.throttling.key_prefix,
-            redis=deps.redis,
+            key_prefix=settings.throttling.key_prefix,
+            exempt_admins=True,
+            feedback=True,
         )
     )
 
@@ -241,4 +243,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        pass
+    pass

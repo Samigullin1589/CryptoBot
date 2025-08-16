@@ -1,128 +1,205 @@
-# =================================================================================
-# Файл: bot/services/coin_list_service.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025)
-# Описание: Сервис для управления списком криптовалют с улучшенной логикой поиска.
-# ИСПРАВЛЕНИЕ: Добавлена обработка исключений в _fetch_from_api для
-#              предотвращения сбоев при API rate limit.
-# =================================================================================
+# ======================================================================================
+# File: bot/services/coin_list_service.py
+# Version: "Distinguished Engineer" — Aug 16, 2025
+# Description:
+#   Unified coin list service with resilient fetching from Binance and CoinGecko.
+#   Provides methods required by jobs scheduler:
+#     - update_and_index(), refresh_and_index(), refresh_cache()
+#     - fetch(), cache(), reindex(), warmup(), get_all()
+#   Persists cache & secondary indexes in Redis for fast lookups.
+# ======================================================================================
 
 from __future__ import annotations
+
+import asyncio
 import json
 import logging
-from typing import List, Dict, Any, Optional
+import time
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
-from redis.asyncio import Redis
-from rapidfuzz import process, fuzz
-from pydantic import ValidationError
 
-from bot.config.settings import settings, Settings
-from bot.utils.models import Coin
-from bot.utils.http_client import make_request
+try:
+    from redis.asyncio import Redis  # type: ignore
+except Exception:  # noqa: BLE001
+    Redis = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class _Endpoints:
+    binance_base: str = "https://api.binance.com"
+    coingecko_base: str = "https://api.coingecko.com/api/v3"
+
+
 class CoinListService:
-    _COIN_MAP_CACHE_KEY = "cache:coin_list:v3:map"
-    _SEARCH_SYMBOL_KEY = "search:coin:v3:symbol_map"
-    _SEARCH_NAME_CHOICES_KEY = "cache:coin_list:v3:name_choices"
+    """
+    Coin list aggregator.
+
+    Redis keys:
+      - coin:list -> JSON [{"id": "...", "symbol": "BTC", "name": "Bitcoin"}...]
+      - coin:index:symbol:{SYMBOL} -> coin_id
+      - coin:index:id:{COIN_ID} -> SYMBOL
+    """
 
     def __init__(
         self,
-        redis: Redis,
+        *,
+        settings: Any,
         http_session: aiohttp.ClientSession,
-        settings: Settings,
-    ):
-        self.redis = redis
-        self.http_session = http_session
+        redis: Optional[Redis] = None,
+        endpoints: Optional[Any] = None,
+    ) -> None:
         self.settings = settings
-        self.config = settings.coin_list_service
-        self.endpoints = settings.endpoints
+        self.http = http_session
+        self.redis = redis
+        self.ttl_seconds = getattr(getattr(settings, "coin_list_service", object()), "ttl_seconds", 24 * 3600)
+        self.max_items = getattr(getattr(settings, "coin_list_service", object()), "max_items", 5000)
+        self.endpoints = _Endpoints(
+            binance_base=getattr(getattr(settings, "endpoints", object()), "binance_base", _Endpoints.binance_base),
+            coingecko_base=getattr(getattr(settings, "endpoints", object()), "coingecko_base", _Endpoints.coingecko_base),
+        )
 
-    async def _fetch_from_api(self) -> Optional[List[Dict[str, Any]]]:
-        url = f"{self.endpoints.coingecko_api_base}{self.endpoints.coins_list_endpoint}"
-        logger.info(f"Загрузка свежего списка монет с публичного API: {url}")
+    # ----------------------------- public API ---------------------------------
+
+    async def update_and_index(self) -> List[Dict[str, Any]]:
+        coins = await self.fetch()
+        coins = self._normalize_and_dedup(coins)
+        await self.cache(coins)
+        await self.reindex(coins)
+        return coins
+
+    async def refresh_and_index(self) -> List[Dict[str, Any]]:
+        return await self.update_and_index()
+
+    async def refresh_cache(self) -> None:
+        coins = await self.fetch()
+        coins = self._normalize_and_dedup(coins)
+        await self.cache(coins)
+
+    async def warmup(self) -> None:
+        await self.refresh_cache()
+
+    async def fetch(self) -> List[Dict[str, Any]]:
+        """
+        Try Binance first (fast), then fall back to CoinGecko.
+        """
+        coins: List[Dict[str, Any]] = []
         try:
-            data = await make_request(self.http_session, url)
-            if data:
-                logger.info(f"Успешно загружено {len(data)} монет с API.")
-            return data
-        except aiohttp.ClientResponseError as e:
-            # ИСПРАВЛЕНО: Логируем ошибку, но не даем ей остановить приложение.
-            logger.error(f"Не удалось получить список монет от API: {e.status}, {e.message}")
-            return None
-        except Exception as e:
-            logger.error(f"Непредвиденная ошибка при запросе к API списка монет: {e}", exc_info=True)
-            return None
+            b = await self._fetch_from_binance()
+            if b:
+                coins = b
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Binance coin fetch failed: %s", e)
 
-    async def _load_fallback_data(self) -> List[Dict[str, Any]]:
-        logger.warning(f"Попытка загрузить список монет из резервного файла: {self.config.fallback_file_path}")
+        if not coins:
+            try:
+                g = await self._fetch_from_coingecko()
+                if g:
+                    coins = g
+            except Exception as e:  # noqa: BLE001
+                logger.warning("CoinGecko coin fetch failed: %s", e)
+
+        return coins[: self.max_items]
+
+    async def cache(self, coins: List[Dict[str, Any]]) -> None:
+        if not self.redis:
+            return
         try:
-            with open(self.config.fallback_file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            logger.info(f"Успешно загружено {len(data)} монет из резервного файла.")
-            return data
-        except Exception as e:
-            logger.error(f"Не удалось загрузить резервный файл списка монет: {e}")
-            return []
-            
-    async def update_coin_list(self) -> None:
-        logger.info("Запуск полного обновления списка монет и поисковых индексов.")
-        coin_data = await self._fetch_from_api() or await self._load_fallback_data()
+            pipe = self.redis.pipeline()
+            pipe.setex("coin:list", self.ttl_seconds, json.dumps(coins, ensure_ascii=False))
+            await pipe.execute()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to cache coin list: %s", e)
 
-        if not coin_data:
-            logger.critical("КРИТИЧЕСКАЯ ОШИБКА: Не удалось обновить список монет ни из API, ни из резервного файла.")
+    async def reindex(self, coins: Optional[List[Dict[str, Any]]] = None) -> None:
+        if not self.redis:
+            return
+        if coins is None:
+            coins = await self.get_all()
+
+        if coins is None:
             return
 
         try:
-            coins = [Coin.model_validate(c) for c in coin_data]
             pipe = self.redis.pipeline()
-            
-            coin_map_to_cache = {c.id: c.model_dump_json() for c in coins}
-            symbol_map_to_cache = {c.symbol.lower(): c.id for c in coins}
-            name_choices_to_cache = {c.name: c.id for c in coins}
-
-            pipe.delete(self._COIN_MAP_CACHE_KEY, self._SEARCH_SYMBOL_KEY, self._SEARCH_NAME_CHOICES_KEY)
-            pipe.hset(self._COIN_MAP_CACHE_KEY, mapping=coin_map_to_cache)
-            pipe.hset(self._SEARCH_SYMBOL_KEY, mapping=symbol_map_to_cache)
-            pipe.set(self._SEARCH_NAME_CHOICES_KEY, json.dumps(name_choices_to_cache))
-            
+            # очистим старые индексы по маске — в проде можно хранить в отдельном hset
+            # здесь перезапишем актуальные
+            for c in coins:
+                sym = str(c.get("symbol", "")).upper()
+                cid = str(c.get("id", "")).lower()
+                if not sym:
+                    continue
+                pipe.setex(f"coin:index:symbol:{sym}", self.ttl_seconds, cid or sym.lower())
+                if cid:
+                    pipe.setex(f"coin:index:id:{cid}", self.ttl_seconds, sym)
             await pipe.execute()
-            logger.info(f"Успешно обновлено и проиндексировано {len(coins)} монет.")
-        except ValidationError as e:
-            logger.error(f"Ошибка валидации данных монет: {e}")
-        except Exception as e:
-            logger.error(f"Непредвиденная ошибка при кэшировании данных: {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to build coin indexes: %s", e)
 
-    async def find_coin_by_query(self, query: str) -> Optional[Coin]:
-        query_lower = query.lower().strip()
-        if not query_lower: return None
+    async def get_all(self) -> Optional[List[Dict[str, Any]]]:
+        if not self.redis:
+            return None
+        try:
+            raw = await self.redis.get("coin:list")
+            if not raw:
+                return None
+            return json.loads(raw)
+        except Exception:
+            return None
 
-        coin_json_by_id = await self.redis.hget(self._COIN_MAP_CACHE_KEY, query_lower)
-        if coin_json_by_id:
-            return Coin.model_validate_json(coin_json_by_id)
+    # ---------------------------- data sources --------------------------------
 
-        found_id_by_symbol = await self.redis.hget(self._SEARCH_SYMBOL_KEY, query_lower)
-        if found_id_by_symbol:
-            coin_json_by_symbol = await self.redis.hget(self._COIN_MAP_CACHE_KEY, found_id_by_symbol)
-            if coin_json_by_symbol:
-                return Coin.model_validate_json(coin_json_by_symbol)
+    async def _fetch_from_binance(self) -> List[Dict[str, Any]]:
+        url = f"{self.endpoints.binance_base}/api/v3/exchangeInfo"
+        async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Binance exchangeInfo status={resp.status}")
+            data = await resp.json()
+        symbols = data.get("symbols", [])
+        # Вытащим уникальные baseAsset как кандидаты на symbol
+        uniq = {}
+        for s in symbols:
+            base = s.get("baseAsset")
+            if not base:
+                continue
+            base_u = str(base).upper()
+            if base_u not in uniq:
+                uniq[base_u] = {"id": base_u.lower(), "symbol": base_u, "name": base_u}
+        return list(uniq.values())
 
-        name_choices_json = await self.redis.get(self._SEARCH_NAME_CHOICES_KEY)
-        if not name_choices_json:
-            await self.update_coin_list()
-            name_choices_json = await self.redis.get(self._SEARCH_NAME_CHOICES_KEY)
-            if not name_choices_json: return None
-            
-        name_choices = json.loads(name_choices_json)
-        best_match = process.extractOne(query_lower, name_choices.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.search_score_cutoff)
-        
-        if best_match:
-            found_name, score, _ = best_match
-            found_id_by_name = name_choices[found_name]
-            coin_json_by_name = await self.redis.hget(self._COIN_MAP_CACHE_KEY, found_id_by_name)
-            if coin_json_by_name:
-                logger.info(f"Найдена монета через нечеткий поиск: '{query}' -> '{found_name}' (счет: {score:.2f})")
-                return Coin.model_validate_json(coin_json_by_name)
+    async def _fetch_from_coingecko(self) -> List[Dict[str, Any]]:
+        url = f"{self.endpoints.coingecko_base}/coins/list?include_platform=false"
+        async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"CoinGecko coins/list status={resp.status}")
+            data = await resp.json()
+        out = []
+        for c in data:
+            cid = str(c.get("id", "")).lower()
+            sym = str(c.get("symbol", "")).upper()
+            name = str(c.get("name", "")).strip() or sym
+            if sym:
+                out.append({"id": cid or sym.lower(), "symbol": sym, "name": name})
+        return out
 
-        logger.warning(f"Монета по запросу '{query}' не найдена ни одним из методов.")
-        return None
+    # ------------------------------ helpers -----------------------------------
+
+    def _normalize_and_dedup(self, coins: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen = set()
+        out: List[Dict[str, Any]] = []
+        for c in coins:
+            sym = str(c.get("symbol", "")).upper()
+            cid = str(c.get("id", "")).lower() or sym.lower()
+            name = str(c.get("name", "")).strip() or sym
+            if not sym:
+                continue
+            key = sym
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({"id": cid, "symbol": sym, "name": name})
+        out.sort(key=lambda x: x["symbol"])
+        return out

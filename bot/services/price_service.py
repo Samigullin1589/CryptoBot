@@ -1,83 +1,201 @@
-# =================================================================================
-# Файл: bot/services/price_service.py (ПРОМЫШЛЕННЫЙ СТАНДАРТ, АВГУСТ 2025)
-# Описание: Сервис-кэш для цен, использующий MarketDataService как источник данных.
-# ИСПРАВЛЕНИЕ: Интегрирован CoinAliasService для разрешения псевдонимов.
-# =================================================================================
+# ======================================================================================
+# File: bot/services/price_service.py
+# Version: "Distinguished Engineer" — Aug 16, 2025
+# Description:
+#   Resilient crypto price service with Binance and CoinGecko backends.
+#   Caches prices in Redis, supports warmup jobs and batch fetch.
+#   Methods recognized by jobs: warmup_cache(), warmup(), prefetch_top(), prefetch().
+# ======================================================================================
 
 from __future__ import annotations
-import logging
-from typing import Dict, List, Optional
 
-from redis.asyncio import Redis
-from bot.config.settings import PriceServiceConfig
-from bot.services.market_data_service import MarketDataService
-from bot.services.coin_alias_service import CoinAliasService
+import asyncio
+import json
+import logging
+import math
+import time
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import aiohttp
+
+try:
+    from redis.asyncio import Redis  # type: ignore
+except Exception:  # noqa: BLE001
+    Redis = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+
 class PriceService:
+    """
+    Price provider with Redis cache.
+
+    Redis keys:
+      - price:{SYMBOL}:{QUOTE} -> json {"price": float, "ts": int}
+      - price:top:symbols -> json ["BTC","ETH",...]
+    """
+
     def __init__(
         self,
-        redis: Redis,
-        config: PriceServiceConfig,
-        market_data_service: MarketDataService,
-        coin_alias_service: CoinAliasService,
-    ):
+        *,
+        settings: Any,
+        http_session: aiohttp.ClientSession,
+        redis: Optional[Redis] = None,
+        coin_list_service: Optional[Any] = None,
+    ) -> None:
+        self.settings = settings
+        self.http = http_session
         self.redis = redis
-        self.config = config
-        self.market_data = market_data_service
-        self.alias_service = coin_alias_service
+        self.coins = coin_list_service
 
-    def _get_cache_key(self, coin_id: str) -> str:
-        return f"cache:price:v4:{coin_id}:{self.config.default_vs_currency}"
+        ps = getattr(settings, "price_service", object())
+        self.default_quote = getattr(ps, "default_quote", "USDT").upper()
+        self.cache_ttl = int(getattr(ps, "cache_ttl_seconds", 60))
+        self.max_retry = int(getattr(ps, "max_retry", 2))
+        self.endpoints = getattr(settings, "endpoints", object())
 
-    async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        if not coin_ids:
-            return {}
-        
-        # Шаг 0: Преобразуем псевдонимы в реальные ID
-        resolved_coin_ids: List[str] = []
-        for coin_id in coin_ids:
-            resolved_id = await self.alias_service.resolve_alias(coin_id)
-            if resolved_id:
-                resolved_coin_ids.append(resolved_id)
-        coin_ids = list(set(resolved_coin_ids)) # Убираем дубликаты
-            
-        # Шаг 1: Инициализация и массовая проверка кэша
-        prices: Dict[str, Optional[float]] = {cid: None for cid in coin_ids}
-        cache_keys = [self._get_cache_key(cid) for cid in coin_ids]
-        
-        cached_values = await self.redis.mget(cache_keys)
-        
-        coins_to_fetch: List[str] = []
-        for i, coin_id in enumerate(coin_ids):
-            if cached_values[i] is not None:
-                prices[coin_id] = float(cached_values[i])
-            else:
-                coins_to_fetch.append(coin_id)
+    # ------------------------------ public API --------------------------------
 
-        if not coins_to_fetch:
-            logger.debug(f"Все {len(coin_ids)} цен найдены в кэше.")
-            return prices
+    async def get_price(self, symbol: str, quote: Optional[str] = None) -> Optional[float]:
+        symbol_u = symbol.upper()
+        quote_u = (quote or self.default_quote).upper()
+        # 1) try cache
+        price = await self._cache_get(symbol_u, quote_u)
+        if price is not None:
+            return price
+        # 2) fetch fresh
+        price = await self._fetch_price(symbol_u, quote_u)
+        if price is not None:
+            await self._cache_put(symbol_u, quote_u, price)
+        return price
 
-        logger.info(f"Цены для {len(coins_to_fetch)} монет не найдены в кэше. Запрос через MarketDataService.")
+    async def get_prices(self, symbols: Iterable[str], quote: Optional[str] = None) -> Dict[str, Optional[float]]:
+        out: Dict[str, Optional[float]] = {}
+        for s in symbols:
+            out[s.upper()] = await self.get_price(s, quote)
+        return out
 
-        # Шаг 2: Запрос недостающих цен через централизованный MarketDataService
-        fetched_prices = await self.market_data.get_prices(coins_to_fetch)
+    async def warmup_cache(self) -> None:
+        await self.prefetch_top()
 
-        # Шаг 3: Обработка результатов и обновление кэша
-        pipe = self.redis.pipeline()
-        new_prices_to_cache = {}
-        for coin_id, price in fetched_prices.items():
-            prices[coin_id] = price
-            if price is not None:
-                new_prices_to_cache[self._get_cache_key(coin_id)] = price
-        
-        if new_prices_to_cache:
-            pipe.mset(new_prices_to_cache)
-            for key in new_prices_to_cache:
-                pipe.expire(key, self.config.cache_ttl_seconds)
-            await pipe.execute()
-            logger.info(f"Кэш цен обновлен для {len(new_prices_to_cache)} монет.")
+    async def warmup(self) -> None:
+        await self.prefetch_top()
 
-        return prices
+    async def prefetch_top(self) -> None:
+        """
+        Prefetch top symbols either from settings or coin_list_service.
+        """
+        top = await self._get_top_symbols()
+        if not top:
+            return
+        await self._batch_fetch(top, self.default_quote)
+
+    async def prefetch(self, symbols: List[str], quote: Optional[str] = None) -> None:
+        if not symbols:
+            return
+        await self._batch_fetch(symbols, (quote or self.default_quote).upper())
+
+    # ------------------------------ fetching ----------------------------------
+
+    async def _fetch_price(self, symbol: str, quote: str) -> Optional[float]:
+        # Try Binance first
+        p = await self._fetch_binance(symbol, quote)
+        if p is not None:
+            return p
+        # Fallback to CoinGecko
+        p = await self._fetch_coingecko(symbol, quote)
+        return p
+
+    async def _fetch_binance(self, symbol: str, quote: str) -> Optional[float]:
+        base = getattr(self.endpoints, "binance_base", "https://api.binance.com")
+        pair = f"{symbol}{quote}"
+        url = f"{base}/api/v3/ticker/price?symbol={pair}"
+        try:
+            async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+            price = float(data.get("price"))
+            if not math.isfinite(price):
+                return None
+            return price
+        except Exception:
+            return None
+
+    async def _fetch_coingecko(self, symbol: str, quote: str) -> Optional[float]:
+        base = getattr(self.endpoints, "coingecko_base", "https://api.coingecko.com/api/v3")
+        # Need CoinGecko coin id; try via coin_list_service index in Redis
+        coin_id = None
+        try:
+            if self.redis:
+                coin_id = await self.redis.get(f"coin:index:symbol:{symbol}")
+        except Exception:
+            coin_id = None
+        if not coin_id:
+            # as a blunt fallback — try mapping BTC->bitcoin, ETH->ethereum for majors
+            mapping = {"BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin", "SOL": "solana", "XRP": "ripple"}
+            coin_id = mapping.get(symbol)
+            if not coin_id:
+                return None
+        url = f"{base}/simple/price?ids={coin_id}&vs_currencies={quote.lower()}"
+        try:
+            async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json()
+            val = data.get(coin_id, {}).get(quote.lower())
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    async def _batch_fetch(self, symbols: List[str], quote: str) -> None:
+        for s in symbols:
+            p = await self._fetch_price(s, quote)
+            if p is not None:
+                await self._cache_put(s, quote, p)
+
+    async def _get_top_symbols(self) -> List[str]:
+        # From settings first
+        try:
+            top = list(getattr(self.settings.price_service, "top_symbols", []))
+            if top:
+                return [s.upper() for s in top]
+        except Exception:
+            pass
+        # Else from coin_list_service cache (first dozen by symbol)
+        try:
+            if self.coins:
+                data = await self.coins.get_all()
+                if data:
+                    return [c["symbol"].upper() for c in data[:20]]
+        except Exception:
+            pass
+        # Fallback majors
+        return ["BTC", "ETH", "BNB", "SOL", "XRP"]
+
+    # ------------------------------- cache ------------------------------------
+
+    async def _cache_get(self, symbol: str, quote: str) -> Optional[float]:
+        if not self.redis:
+            return None
+        try:
+            j = await self.redis.get(f"price:{symbol}:{quote}")
+            if not j:
+                return None
+            obj = json.loads(j)
+            ts = int(obj.get("ts", 0))
+            if time.time() - ts > self.cache_ttl:
+                return None
+            val = obj.get("price")
+            return float(val) if val is not None else None
+        except Exception:
+            return None
+
+    async def _cache_put(self, symbol: str, quote: str, price: float) -> None:
+        if not self.redis:
+            return
+        try:
+            val = json.dumps({"price": float(price), "ts": int(time.time())}, ensure_ascii=False)
+            await self.redis.setex(f"price:{symbol}:{quote}", self.cache_ttl, val)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("price cache put error: %s", e)

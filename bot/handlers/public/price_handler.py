@@ -1,84 +1,98 @@
-# =================================================================================
-# Файл: bot/handlers/public/price_handler.py (ПРОДАКШН-ВЕРСЯ 2025 - РЕФАКТОРИНГ)
-# Описание: Обработчик для сценария получения цены.
-# ИСПРАВЛЕНИЕ: Архитектура полностью переработана для устойчивости к отсутствию
-#              монеты в CoinListService, но наличию цены у провайдера.
-# =================================================================================
-import logging
-from aiogram import F, Router
-from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery
+# ======================================================================================
+# File: bot/handlers/price_handler.py
+# Version: "Distinguished Engineer" — Aug 16, 2025
+# Description:
+#   Public price commands backed by PriceService:
+#     • /price [SYMBOL] [QUOTE]  e.g., /price BTC USDT
+#     • Quick buttons for top symbols
+# ======================================================================================
 
-from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
-from bot.keyboards.info_keyboards import get_price_keyboard
-from bot.keyboards.callback_factories import PriceCallback, MenuCallback
-from bot.states.info_states import PriceInquiryState
-from bot.utils.dependencies import Deps
-from bot.utils.formatters import format_price_info
-from bot.utils.models import Coin
+from __future__ import annotations
 
-router = Router(name="price_handler_router")
-logger = logging.getLogger(__name__)
+from typing import List, Optional
 
-@router.callback_query(MenuCallback.filter(F.action == "price"))
-async def handle_price_menu_start(call: CallbackQuery, state: FSMContext, **kwargs):
-    """Точка входа в раздел курсов, вызывается из главного меню."""
-    text = "Курс какой монеты вас интересует? Выберите из популярных или отправьте тикер/название."
-    await call.message.edit_text(text, reply_markup=get_price_keyboard())
-    await state.set_state(PriceInquiryState.waiting_for_ticker)
+from aiogram import Router, F
+from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+
+router = Router(name="price_public")
+
+
+def _fmt_price(p: Optional[float]) -> str:
+    if p is None:
+        return "—"
+    if p >= 1000:
+        return f"{p:,.2f}".replace(",", " ")
+    if p >= 1:
+        return f"{p:.2f}"
+    if p >= 0.01:
+        return f"{p:.4f}"
+    return f"{p:.8f}".rstrip("0").rstrip(".")
+
+
+def _kb_top(symbols: List[str], quote: str) -> InlineKeyboardMarkup:
+    rows = []
+    row = []
+    for i, s in enumerate(symbols[:12], start=1):
+        row.append(InlineKeyboardButton(text=s, callback_data=f"price:{s}:{quote}"))
+        if i % 4 == 0:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text=f"🔄 Обновить {quote}", callback_data=f"price:refresh:{quote}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("price"))
+async def cmd_price(message: Message, deps) -> None:
+    """
+    /price [SYMBOL] [QUOTE]
+    """
+    parts = (message.text or "").split()
+    symbol = parts[1].upper() if len(parts) >= 2 else "BTC"
+    quote = parts[2].upper() if len(parts) >= 3 else getattr(getattr(deps.settings, "price_service", object()), "default_quote", "USDT").upper()
+
+    p = await deps.price_service.get_price(symbol, quote)  # type: ignore[attr-defined]
+    if p is None:
+        await message.answer(f"❌ Не удалось получить цену {symbol}/{quote}. Попробуйте позже.")
+        return
+
+    text = f"<b>{symbol}/{quote}</b>: <code>{_fmt_price(p)}</code>"
+    # Подтянем топ-символы для быстрого запроса
+    try:
+        top = await deps.price_service._get_top_symbols()  # type: ignore[attr-defined]
+    except Exception:
+        top = ["BTC", "ETH", "BNB", "SOL", "XRP"]
+
+    await message.answer(text, parse_mode="HTML", reply_markup=_kb_top(top, quote))
+
+
+@router.callback_query(F.data.startswith("price:"))
+async def cb_price(call: CallbackQuery, deps) -> None:
+    parts = (call.data or "").split(":")
+    if len(parts) < 3:
+        await call.answer("Некорректный запрос.")
+        return
+
+    action, a, b = parts[1], parts[2], (parts[3] if len(parts) > 3 else "")
+    if action == "refresh":
+        quote = a
+        try:
+            top = await deps.price_service._get_top_symbols()  # type: ignore[attr-defined]
+        except Exception:
+            top = ["BTC", "ETH", "BNB", "SOL", "XRP"]
+        await call.message.edit_reply_markup(reply_markup=_kb_top(top, quote))  # type: ignore[union-attr]
+        await call.answer("Обновлено.")
+        return
+
+    # action == <SYMBOL>, b == quote
+    symbol = action.upper()
+    quote = a.upper()
+    p = await deps.price_service.get_price(symbol, quote)  # type: ignore[attr-defined]
+    if p is None:
+        await call.answer("Нет данных.")
+        return
+    text = f"<b>{symbol}/{quote}</b>: <code>{_fmt_price(p)}</code>"
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=call.message.reply_markup)  # type: ignore[union-attr]
     await call.answer()
-
-async def show_price_for_coin(target: Message | CallbackQuery, query: str, deps: Deps):
-    """
-    Универсальная функция для получения и отображения цены.
-    Новая логика: сначала запрашивает цену, затем детали.
-    """
-    if isinstance(target, CallbackQuery):
-        message = target.message
-        await target.answer(f"⏳ Получаю курс для {query.upper()}...")
-    else:
-        message = await target.answer("⏳ Ищу монету и получаю курс...")
-
-    # Шаг 1: Сначала пытаемся получить цену. PriceService использует CoinAliasService внутри.
-    prices = await deps.price_service.get_prices([query])
-    # CoinAliasService преобразует query в coin_id, который и будет ключом
-    resolved_id = await deps.coin_alias_service.resolve_alias(query)
-    price_value = prices.get(resolved_id)
-
-    # Шаг 2: Если цена найдена, формируем ответ.
-    if price_value is not None:
-        # Пытаемся получить полные данные для красивого ответа.
-        coin_details = await deps.coin_list_service.find_coin_by_query(resolved_id)
-        
-        if not coin_details:
-            # Если полных данных нет (как в случае с Aleo), создаем заглушку.
-            logger.warning(f"Цена для '{resolved_id}' найдена, но детали в CoinListService отсутствуют. Формирую ответ на основе запроса.")
-            coin_details = Coin(id=resolved_id, symbol=query.upper(), name=query.capitalize())
-        
-        response_text = format_price_info(coin_details, {"price": price_value})
-        await message.edit_text(response_text, reply_markup=get_back_to_main_menu_keyboard())
-
-    # Шаг 3: Если цена не найдена, используем AI для поиска информации.
-    else:
-        logger.warning(f"Цена для '{query}' (resolved to '{resolved_id}') не найдена. Запрашиваю AI для объяснения.")
-        ai_explanation = await deps.ai_content_service.explain_unlisted_coin(query)
-        
-        response_text = f"❌ Не удалось найти информацию по '{query}'.\n\n"
-        if "недоступен" not in ai_explanation:
-            response_text += f"<b>Справка от AI-Консультанта:</b>\n{ai_explanation}"
-            
-        await message.edit_text(response_text, reply_markup=get_back_to_main_menu_keyboard(), disable_web_page_preview=True)
-
-
-@router.callback_query(PriceCallback.filter(F.action == "show"))
-async def handle_price_button_callback(call: CallbackQuery, callback_data: PriceCallback, state: FSMContext, deps: Deps):
-    """Обрабатывает нажатие на кнопку с конкретной монетой."""
-    await state.clear()
-    await show_price_for_coin(call, callback_data.coin_id, deps)
-
-@router.message(PriceInquiryState.waiting_for_ticker)
-async def process_ticker_input_from_user(message: Message, state: FSMContext, deps: Deps):
-    """Обрабатывает текстовый ввод тикера или названия от пользователя."""
-    await state.clear()
-    query = message.text.strip()
-    await show_price_for_coin(message, query, deps)
