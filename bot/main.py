@@ -1,144 +1,182 @@
-# =================================================================================
-# Файл: bot/main.py (ВЕРСИЯ "Distinguished Engineer" - ОТКАЗОУСТОЙЧИВАЯ)
-# Описание: Точка входа с обработкой сигналов для Graceful Shutdown на Render.
-# =================================================================================
+# =============================================================================
+# File: bot/main.py
+# Purpose: Entry point — aiogram v3 launcher with middlewares & graceful shutdown
+# =============================================================================
+
+from __future__ import annotations
 
 import asyncio
+import importlib
+import inspect
 import logging
-import signal
-from typing import Coroutine
+import pkgutil
+from typing import Callable, Optional
 
-from aiohttp import ClientSession
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand, BotCommandScopeDefault
+from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 
 from bot.config.settings import settings
 from bot.utils.dependencies import Deps
-from bot.utils.logging_setup import setup_logging
+
+# Middlewares (под твой проект — уже есть в репо)
 from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
-from bot.jobs.scheduled_tasks import setup_jobs
+from bot.middlewares.security_middleware import SecurityMiddleware
 
-from bot.handlers import admin, tools, game, public, threats
 
-logger = logging.getLogger(__name__)
+# ----------------------------- utils -----------------------------------------
 
-def register_all_routers(dp: Dispatcher):
-    """Централизованно и явно регистрирует все роутеры приложения в правильном порядке."""
-    # Регистрируем роутеры из каждого пакета
-    dp.include_router(admin.admin_router)
-    dp.include_router(admin.verification_admin_router)
-    dp.include_router(admin.stats_router)
-    dp.include_router(admin.moderation_router)
-    dp.include_router(admin.game_admin_router)
-    
-    dp.include_router(tools.calculator_router)
-    
-    dp.include_router(game.mining_game_router)
-    
-    dp.include_router(public.price_router)
-    dp.include_router(public.asic_router)
-    dp.include_router(public.news_router)
-    dp.include_router(public.quiz_router)
-    dp.include_router(public.market_info_router)
-    dp.include_router(public.crypto_center_router)
-    dp.include_router(public.verification_public_router)
-    dp.include_router(public.achievements_router)
-    dp.include_router(public.market_router)
-    dp.include_router(public.game_router)
-    dp.include_router(public.common_router)
-    dp.include_router(public.menu_router) 
-    
-    dp.include_router(threats.threat_router)
-    logger.info("Все роутеры успешно зарегистрированы.")
+def _setup_logging() -> None:
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
+    logging.basicConfig(level=level)
+    logging.getLogger("aiogram").setLevel(level)
+    logging.info("Логирование инициализировано. Уровень: %s", settings.log_level.upper())
 
-async def set_bot_commands(bot: Bot):
-    commands = [
-        BotCommand(command="start", description="🚀 Перезапустить бота"),
-        BotCommand(command="help", description="ℹ️ Помощь по боту"),
-        BotCommand(command="check", description="✅ Проверить статус пользователя"),
-        BotCommand(command="admin", description="🔒 Панель администратора"),
-    ]
-    await bot.set_my_commands(commands, BotCommandScopeDefault())
-    logger.info("Команды бота успешно установлены.")
 
-async def on_startup(bot: Bot, deps: Deps):
-    logger.info("Запуск процедур on_startup...")
-    await set_bot_commands(bot)
-    setup_jobs(deps.scheduler, deps)
-    deps.scheduler.start()
-    if deps.admin_service:
-        await deps.admin_service.notify_admins("✅ Бот успешно запущен и готов к работе!")
-    logger.info("Процедуры on_startup завершены.")
+def _register_middlewares(dp: Dispatcher, deps: Deps) -> None:
+    """
+    Единая точка регистрации middleware:
+      - ActivityMiddleware: трекаем активность пользователя/чата
+      - ThrottlingMiddleware: защита от флуд-спама
+      - SecurityMiddleware: антиспам/модерация контента
+    """
+    activity = ActivityMiddleware(deps)
+    throttle = ThrottlingMiddleware(deps)
+    security = SecurityMiddleware(deps)
 
-async def on_shutdown(deps: Deps):
-    logger.info("Запуск процедур on_shutdown...")
-    if deps.admin_service:
-        await deps.admin_service.notify_admins("❗️ Бот останавливается!")
-    if deps.scheduler and deps.scheduler.running:
-        deps.scheduler.shutdown(wait=True)
-    if deps.redis_pool:
-        await deps.redis_pool.close()
-    if deps.http_session:
-        await deps.http_session.close()
-    logger.info("Процедуры on_shutdown завершены.")
+    # Сообщения
+    dp.message.middleware(activity)
+    dp.message.middleware(throttle)
+    dp.message.middleware(security)
 
-async def main_bot():
-    """Основная функция для запуска бота."""
-    async with ClientSession() as http_session:
-        bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode="HTML"))
-        
+    # Колбэки
+    dp.callback_query.middleware(activity)
+    dp.callback_query.middleware(throttle)
+    dp.callback_query.middleware(security)
+
+    logging.info("Middleware зарегистрированы: activity, throttling, security.")
+
+
+def _discover_and_include_routers(dp: Dispatcher) -> int:
+    """
+    Рекурсивно импортирует все модули из bot.handlers.*
+    и включает любые найденные объекты aiogram.Router.
+    """
+    base_pkg = "bot.handlers"
+    try:
+        pkg = importlib.import_module(base_pkg)
+    except Exception as e:
+        logging.error("Не удалось импортировать пакет %s: %s", base_pkg, e, exc_info=True)
+        return 0
+
+    found = 0
+    for mod_info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
         try:
-            deps = await Deps.build(settings=settings, http_session=http_session, bot=bot)
+            mod = importlib.import_module(mod_info.name)
         except Exception as e:
-            logger.critical(f"Не удалось собрать зависимости: {e}", exc_info=True)
-            return
+            logging.error("Ошибка импорта модуля %s: %s", mod_info.name, e, exc_info=True)
+            continue
 
-        storage = RedisStorage(redis=deps.redis_pool)
-        dp = Dispatcher(storage=storage, deps=deps)
+        for attr_name, attr_val in vars(mod).items():
+            if isinstance(attr_val, Router):
+                dp.include_router(attr_val)
+                found += 1
 
-        dp.update.middleware(ThrottlingMiddleware(storage=storage))
-        dp.update.middleware(ActivityMiddleware(user_service=deps.user_service))
-        
-        register_all_routers(dp)
-        
-        dp.startup.register(on_startup)
-        dp.shutdown.register(on_shutdown)
-        
-        await bot.delete_webhook(drop_pending_updates=True)
-
-        # Graceful shutdown setup
-        loop = asyncio.get_running_loop()
-        stop_signals = (signal.SIGINT, signal.SIGTERM)
-        for sig in stop_signals:
-            loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(graceful_shutdown(s, dp)))
-        
-        logger.info("Запуск бота...")
-        await dp.start_polling(bot)
-
-async def main():
-    """Главная точка входа, управляющая запуском процессов."""
-    setup_logging(level=settings.log_level, format="json")
-    
-    # Проверяем, запущен ли процесс как web-сервис для health check
-    if settings.IS_WEB_PROCESS:
-        from bot.health_check_server import main as health_check_main
-        health_check_main()
-        return
-
-    await main_bot()
+    logging.info("Все роутеры успешно зарегистрированы. Всего: %s", found)
+    return found
 
 
-async def graceful_shutdown(s: signal.Signals, dp: Dispatcher):
-    logger.warning(f"Получен сигнал {s.name}, начинаю graceful shutdown...")
-    await dp.stop_polling()
-    logger.warning("Graceful shutdown завершен.")
+async def _set_bot_commands(bot: Bot) -> None:
+    commands = [
+        BotCommand(command="start", description="Запустить бота"),
+        BotCommand(command="help", description="Справка и команды"),
+        BotCommand(command="menu", description="Главное меню"),
+    ]
+    await bot.set_my_commands(commands)
+    logging.info("Команды бота успешно установлены.")
+
+
+# ----------------------------- lifecycle -------------------------------------
+
+def make_on_startup(bot: Bot, deps: Deps) -> Callable[[], asyncio.Future]:
+    async def _on_startup() -> None:
+        logging.info("Запуск процедур on_startup...")
+        await _set_bot_commands(bot)
+
+        # Планировщик / периодические задачи — опционально, если есть модуль
+        try:
+            from bot.jobs.scheduled_tasks import register_scheduled_tasks  # type: ignore
+            if inspect.iscoroutinefunction(register_scheduled_tasks):
+                await register_scheduled_tasks(deps)
+            else:
+                register_scheduled_tasks(deps)
+            logging.info("Все периодические задачи успешно настроены.")
+        except Exception as e:
+            logging.warning("Планировщик задач не настроен: %s", e)
+
+        logging.info("Процедуры on_startup завершены.")
+    return _on_startup
+
+
+def make_on_shutdown(deps: Deps) -> Callable[[], asyncio.Future]:
+    async def _on_shutdown() -> None:
+        logging.info("Запуск процедур on_shutdown...")
+        try:
+            await deps.close()  # корректное закрытие: Redis, HTTP, пулы и т.д.
+        except Exception as e:
+            logging.warning("Во время deps.close() возникло исключение: %s", e, exc_info=True)
+        logging.info("Процедуры on_shutdown завершены.")
+    return _on_shutdown
+
+
+# ----------------------------- main ------------------------------------------
+
+async def main() -> None:
+    _setup_logging()
+
+    # Бот и диспетчер
+    bot = Bot(
+        token=settings.BOT_TOKEN.get_secret_value(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    dp = Dispatcher()
+
+    # DI контейнер
+    deps: Deps
+    if hasattr(Deps, "create") and inspect.iscoroutinefunction(getattr(Deps, "create")):
+        deps = await Deps.create(bot=bot, settings=settings)  # наш recommended путь
+    elif hasattr(Deps, "build") and inspect.iscoroutinefunction(getattr(Deps, "build")):
+        deps = await Deps.build(bot=bot, settings=settings)
+    else:
+        # синхронный конструктор
+        deps = Deps(bot=bot, settings=settings)
+
+    # Middleware + Routers
+    _register_middlewares(dp, deps)
+    _discover_and_include_routers(dp)
+
+    # Lifecycle hooks
+    dp.startup.register(make_on_startup(bot, deps))
+    dp.shutdown.register(make_on_shutdown(deps))
+
+    logging.info("Запуск бота...")
+    try:
+        await dp.start_polling(
+            bot,
+            deps=deps,  # прокидываем deps в хендлеры (aiogram 3 — kwargs)
+            allowed_updates=dp.resolve_used_update_types(),
+        )
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Остановка по сигналу.")
+    finally:
+        # страхуемся: если shutdown-хук не отработал — всё равно закрываем
+        try:
+            await deps.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен вручную.")
+    asyncio.run(main())
