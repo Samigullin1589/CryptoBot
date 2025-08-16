@@ -6,6 +6,7 @@
 #   • Поддержка плановых задач (jobs/scheduled_tasks)
 #   • Корректное завершение (await deps.close()) и обработка сигналов
 #   • AdminService создаётся ПОСЛЕ Bot (ему нужен bot)
+#   • Здесь же создаём ModerationService и SecurityService и складываем в deps.*
 # ======================================================================================
 
 from __future__ import annotations
@@ -106,7 +107,7 @@ def register_routers(dp: Dispatcher) -> None:
         "bot.handlers.game.mining_game_handler",
 
         # --- threats ---
-        "bot.handlers.threats",  # оставить как у тебя устроено внутри пакета
+        "bot.handlers.threats",
 
         # --- admin ---
         "bot.handlers.admin.admin_handler",
@@ -165,6 +166,72 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
             pass
 
 
+# -------------------- Создание модерации/безопасности -------------------------
+
+def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
+    """
+    Создаёт ModerationService и SecurityService и сохраняет в deps.
+    Все импорты и зависимости — опционально, чтобы не валить процесс.
+    """
+    # Опциональные импорты сервисов
+    try:
+        from bot.services.moderation_service import ModerationService  # type: ignore
+    except Exception as e:
+        logger.info("ModerationService недоступен: %s — пропускаю создание.", e)
+        return
+
+    try:
+        from bot.services.security_service import SecurityService  # type: ignore
+    except Exception as e:
+        SecurityService = None  # type: ignore
+        logger.info("SecurityService недоступен: %s — подключу только модерацию.", e)
+
+    # Необязательный StopWordService
+    stop_word_service = None
+    try:
+        from bot.services.stop_word_service import StopWordService  # type: ignore
+        # конструктор подбираем максимально безопасно
+        try:
+            stop_word_service = StopWordService(
+                settings=settings,
+                redis=deps.redis,
+                http_session=deps.http_session,
+            )
+        except TypeError:
+            # fallback на минимальный конструктор
+            stop_word_service = StopWordService(settings=settings)
+        logger.info("StopWordService инициализирован.")
+    except Exception:
+        logger.info("StopWordService не найден — продолжаю без него.")
+
+    # ModerationService: по логам требуются: bot, user_service, admin_service, stop_word_service, config
+    try:
+        deps.moderation_service = ModerationService(
+            bot=bot,
+            user_service=deps.user_service,
+            admin_service=deps.admin_service,
+            stop_word_service=stop_word_service,
+            config=settings,  # именно 'config', т.к. так требует сигнатура
+        )
+        logger.info("ModerationService инициализирован.")
+    except Exception as e:
+        deps.moderation_service = None
+        logger.warning("ModerationService init failed: %s", e, exc_info=True)
+
+    # SecurityService обычно зависит от moderation_service
+    if 'SecurityService' in locals() and SecurityService is not None:
+        try:
+            deps.security_service = SecurityService(
+                moderation_service=deps.moderation_service,
+                settings=settings,
+                redis=deps.redis,
+            )
+            logger.info("SecurityService инициализирован.")
+        except Exception as e:
+            deps.security_service = None
+            logger.warning("SecurityService init failed: %s", e, exc_info=True)
+
+
 # --------------------------------- main() -------------------------------------
 
 async def main() -> None:
@@ -188,6 +255,9 @@ async def main() -> None:
         logger.info("AdminService инициализирован.")
     except Exception as e:  # noqa: BLE001
         logger.warning("AdminService init failed: %s", e, exc_info=True)
+
+    # --- ModerationService / SecurityService создаём здесь и сохраняем в deps ---
+    _init_moderation_and_security(deps, bot)
 
     # Middlewares (порядок важен: deps → активность → антиспам → троттлинг)
     dp.update.outer_middleware(dependencies_middleware(deps))

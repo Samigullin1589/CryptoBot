@@ -67,6 +67,12 @@ try:
 except Exception:  # noqa: BLE001
     ModerationService = None  # type: ignore
 
+# Опциональный парсер (требуется AsicService по логам)
+try:
+    from bot.services.parser_service import ParserService  # type: ignore
+except Exception:  # noqa: BLE001
+    ParserService = None  # type: ignore
+
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +127,7 @@ class Deps:
         event_service: EventService
         quiz_service: QuizService
         user_service: UserService
+        parser_service: Optional[Any]         # если модуль parser_service доступен
 
         # опциональные — НЕ создаются в DI, а выставляются позже в main.py
         moderation_service: Optional[Any]
@@ -153,6 +160,7 @@ class Deps:
         self.event_service: Optional[EventService] = None
         self.quiz_service: Optional[QuizService] = None
         self.user_service: Optional[UserService] = None
+        self.parser_service: Optional[Any] = None  # тип зависит от наличия ParserService
 
         # Опциональные (создаём позже в main.py)
         self.moderation_service: Optional[Any] = None
@@ -209,6 +217,7 @@ class Deps:
             "event_service",
             "quiz_service",
             "user_service",
+            "parser_service",
         ]:
             svc = getattr(self, svc_name, None)
             if not svc:
@@ -289,6 +298,7 @@ class Deps:
         base_kwargs: Dict[str, Any] = {
             "settings": self.settings,
             "cfg": self.settings,               # на случай, если сервис просит cfg
+            "config": self.settings,            # <— некоторые сервисы ожидают параметр "config"
             "redis": self.redis,
             "redis_pool": self.redis_pool,
             "http_session": self.http_session,
@@ -323,14 +333,24 @@ class Deps:
         #   deps.moderation_service = ModerationService(bot=bot, user_service=deps.user_service, admin_service=deps.admin_service, ...)
         #   deps.security_service   = SecurityService(moderation_service=deps.moderation_service, ...)
 
+        # Опциональный парсер (если модуль присутствует в проекте)
+        if ParserService is not None:
+            self.parser_service = await self._make_instance(ParserService, base_kwargs)
+        else:
+            self.parser_service = None
+
         # Майнинг / рынок / ASIC
-        self.asic_service = await self._make_instance(AsicService, base_kwargs)
+        # AsicService по логам ожидает parser_service и config — передаём их явно.
+        self.asic_service = await self._make_instance(
+            AsicService,
+            base_kwargs | {"parser_service": self.parser_service, "config": self.settings}
+        )
         self.market_service = await self._make_instance(
             MarketService,
             base_kwargs | {"asic_service": self.asic_service}
         )
 
-        # ТЕПЕРЬ можно создать MiningService — передаём market_data_service
+        # ТЕПЕРЬ можно создать MiningService — передаём market_data_service (было в логах)
         self.mining_service = await self._make_instance(
             MiningService,
             base_kwargs | {"market_data_service": self.market_data_service}
