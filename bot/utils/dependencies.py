@@ -304,7 +304,14 @@ class Deps:
         # алиас для совместимости с кодом, который ожидает ai_service
         self.ai_service = self.ai_content_service
 
+        # Сначала список монет и рыночные данные (они — база для цен/майнинга)
         self.coin_list_service = await self._make_instance(CoinListService, base_kwargs)
+        self.market_data_service = await self._make_instance(
+            MarketDataService,
+            base_kwargs | {"coin_list_service": self.coin_list_service}
+        )
+
+        # Цены и новости
         self.price_service = await self._make_instance(
             PriceService,
             base_kwargs | {"coin_list_service": self.coin_list_service}
@@ -317,17 +324,16 @@ class Deps:
         #   deps.security_service   = SecurityService(moderation_service=deps.moderation_service, ...)
 
         # Майнинг / рынок / ASIC
-        self.mining_service = await self._make_instance(MiningService, base_kwargs)
         self.asic_service = await self._make_instance(AsicService, base_kwargs)
         self.market_service = await self._make_instance(
             MarketService,
             base_kwargs | {"asic_service": self.asic_service}
         )
 
-        # Рыночные данные (FX, топ-коины и пр.) — нужен coin_list_service
-        self.market_data_service = await self._make_instance(
-            MarketDataService,
-            base_kwargs | {"coin_list_service": self.coin_list_service}
+        # ТЕПЕРЬ можно создать MiningService — передаём market_data_service
+        self.mining_service = await self._make_instance(
+            MiningService,
+            base_kwargs | {"market_data_service": self.market_data_service}
         )
 
         # Игровые сервисы (ссылки на другие)
