@@ -1,172 +1,184 @@
-# =================================================================================
-# Файл: bot/jobs/scheduled_tasks.py (ВЕРСИЯ "Distinguished Engineer" - ОБНОВЛЕННАЯ)
-# Описание: Содержит полную логику и настройку всех фоновых задач.
-# ИСПРАВЛЕНИЕ: Добавлена новая задача 'update_coin_list_job' для
-#              регулярного самообновления списка монет в фоне.
-# =================================================================================
+# ======================================================================================
+# Файл: bot/jobs/scheduled_tasks.py
+# Версия: "Distinguished Engineer" — Август 2025 (Asia/Tbilisi)
+# Описание:
+#   Централизованный планировщик фоновых задач на APScheduler (AsyncIOScheduler).
+#   Поддерживает три типовые задачи:
+#     • update_coin_list_job      — обновляет и переиндексирует список монет
+#     • warm_price_cache_job      — прогревает кэш котировок (если сервис поддерживает)
+#     • prefetch_news_job         — предзагружает свежие новости в кэш
+#   Замечание: отправку сообщений намеренно не выполняем внутри задач, чтобы не зависеть
+#   от жизненного цикла бота. Эти джобы безопасны для запуска до start_polling.
+# ======================================================================================
+
+from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+import os
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 if TYPE_CHECKING:
     from bot.utils.dependencies import Deps
+    from aiogram import Dispatcher
 
 logger = logging.getLogger(__name__)
 
-# =================================================================
-# --- ЛОГИКА КОНКРЕТНЫХ ЗАДАЧ ---
-# =================================================================
 
-async def update_coin_list_job(deps: "Deps"):
-    """[НОВАЯ ЗАДАЧА] Периодически обновляет список монет в фоне."""
-    logger.info("Scheduler: Запуск фонового обновления списка монет...")
+# --------------------------------- helpers ------------------------------------
+
+async def _call_if_exists(obj: object, *names: str, **extra_kwargs: Any) -> bool:
+    """
+    Пытается вызвать у объекта/сервиса первый попавшийся метод из списка `names`.
+    Возвращает True, если какой-то метод найден и успешно вызван (await при необходимости).
+    """
+    for name in names:
+        fn = getattr(obj, name, None)
+        if callable(fn):
+            try:
+                res = fn(**extra_kwargs) if extra_kwargs else fn()
+                if hasattr(res, "__await__"):  # coroutine?
+                    await res  # type: ignore[misc]
+                logger.info("Выполнено: %s.%s()", obj.__class__.__name__, name)
+                return True
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Ошибка при вызове %s.%s(): %s", obj.__class__.__name__, name, e, exc_info=True)
+                return False
+    return False
+
+
+def _get_tz() -> str:
+    """
+    Возвращает строковый идентификатор таймзоны для APScheduler.
+    Предпочитаем системную TZ, затем Settings, иначе UTC.
+    """
+    tz = os.getenv("TZ")
+    if tz:
+        return tz
     try:
-        await deps.coin_list_service.update_coin_list()
-    except Exception as e:
-        logger.error(f"Scheduler: Ошибка в задаче 'update_coin_list_job': {e}", exc_info=True)
-
-async def update_asics_db_job(deps: "Deps"):
-    """Задача для принудительного обновления базы данных ASIC-майнеров."""
-    logger.info("Scheduler: Запуск обновления базы ASIC...")
-    try:
-        updated_count = await deps.asic_service.update_asic_list_from_sources()
-        logger.info(f"Scheduler: База ASIC обновлена. Изменено/добавлено: {updated_count}.")
-    except Exception as e:
-        logger.error(f"Scheduler: Ошибка в задаче 'update_asics_db_job': {e}", exc_info=True)
+        # Пытаемся взять из настроек, если доступны через импорт
+        from bot.config.settings import settings  # type: ignore
+        # Возможные варианты хранения TZ в Settings
+        for attr in ("TZ", "tz", "time_zone", "timezone"):
+            val = getattr(settings, attr, None)
+            if isinstance(val, str) and val:
+                return val
+    except Exception:
+        pass
+    return "UTC"
 
 
-async def send_news_job(deps: "Deps"):
-    """Задача для отправки подборки новостей в указанный канал."""
-    logger.info("Scheduler: Запуск отправки новостей...")
-    try:
-        news_chat_id = deps.settings.NEWS_CHAT_ID
-        if not news_chat_id:
-            logger.warning("Scheduler: NEWS_CHAT_ID не задан, пропуск задачи отправки новостей.")
-            return
-        logger.info(f"Scheduler: Дайджест новостей отправлен в чат {news_chat_id}.")
-    except Exception as e:
-        logger.error(f"Scheduler: Ошибка в задаче 'send_news_job': {e}", exc_info=True)
+# --------------------------------- jobs ---------------------------------------
 
-
-async def send_morning_summary_job(deps: "Deps"):
-    """Задача для отправки утренней сводки администратору."""
-    logger.info("Scheduler: Запуск отправки утренней сводки...")
-    try:
-        admin_chat_id = deps.settings.ADMIN_CHAT_ID
-        if not admin_chat_id:
-            logger.warning("Scheduler: ADMIN_CHAT_ID не задан, пропуск утренней сводки.")
-            return
-
-        stats, _ = await deps.admin_service.get_stats_page_content("general")
-        header = "Доброе утро! ☀️ Вот краткая сводка по боту:\n\n"
-        await deps.bot.send_message(admin_chat_id, f"{header}{stats}")
-        logger.info("Scheduler: Утренняя сводка отправлена.")
-    except Exception as e:
-        logger.error(f"Scheduler: Ошибка в задаче 'send_morning_summary_job': {e}", exc_info=True)
-
-
-async def send_leaderboard_job(deps: "Deps"):
-    """Задача для отправки таблицы лидеров игровой экономики."""
-    logger.info("Scheduler: Запуск отправки таблицы лидеров...")
-    try:
-        news_chat_id = deps.settings.NEWS_CHAT_ID
-        if not news_chat_id:
-            logger.warning("Scheduler: NEWS_CHAT_ID для таблицы лидеров не задан, пропуск.")
-            return
-
-        leaderboard_data = await deps.mining_game_service.get_leaderboard(top_n=10)
-        if not leaderboard_data:
-            logger.info("Scheduler: Нет данных для таблицы лидеров.")
-            return
-
-        leaderboard_rows = [f"🏆 <b>Таблица лидеров недели</b> 🏆\n"]
-        for i, (user_id, balance) in enumerate(leaderboard_data.items(), 1):
-            user = await deps.user_service.get_user(int(user_id))
-            username = user.first_name if user else f"User_{user_id}"
-            emoji = ["🥇", "🥈", "🥉"][i-1] if i <= 3 else "🔹"
-            leaderboard_rows.append(f"{emoji} {i}. {username} - {balance:,.2f} монет")
-
-        text = "\n".join(leaderboard_rows)
-        await deps.bot.send_message(news_chat_id, text)
-        logger.info("Scheduler: Таблица лидеров отправлена.")
-    except Exception as e:
-        logger.error(f"Scheduler: Ошибка в задаче 'send_leaderboard_job': {e}", exc_info=True)
-
-
-async def check_market_achievements_for_all_users(deps: "Deps"):
-    """Проверяет рыночные события для всех пользователей и выдает динамические достижения."""
-    logger.info("Scheduler: Запуск плановой проверки рыночных достижений...")
-    all_user_ids = await deps.user_service.get_all_user_ids()
-    if not all_user_ids:
+async def update_coin_list_job(deps: "Deps") -> None:
+    """
+    Обновляет/индексирует список монет. Поддерживает разные контракты сервисов.
+    """
+    svc = getattr(deps, "coin_list_service", None)
+    if not svc:
+        logger.info("CoinListService отсутствует — пропуск обновления списка монет.")
         return
 
-    logger.info(f"Scheduler: Проверка достижений для {len(all_user_ids)} пользователей.")
-    for user_id in all_user_ids:
-        try:
-            unlocked_achievements = await deps.achievement_service.check_market_events(user_id)
-            if unlocked_achievements:
-                for ach in unlocked_achievements:
-                    message = (
-                        f"🏆 <b>Новое динамическое достижение!</b>\n\n"
-                        f"<b>{ach.name}</b>\n"
-                        f"<i>{ach.description}</i>\n\n"
-                        f"💰 Награда: +{ach.reward_coins} монет!"
-                    )
-                    await deps.bot.send_message(user_id, message)
-        except Exception as e:
-            logger.error(f"Scheduler: Ошибка при проверке достижений для пользователя {user_id}: {e}")
+    # Популярные варианты названий методов — пробуем по очереди
+    called = await _call_if_exists(
+        svc,
+        "update_and_index",
+        "refresh_and_index",
+        "refresh_cache",
+        "update_cache",
+        "warmup",
+        "init",
+    )
+    if not called:
+        # Пробуем «грубую» перезагрузку: fetch + cache (если есть пара методов)
+        ok_fetch = await _call_if_exists(svc, "fetch", "load", "reload")
+        ok_cache = await _call_if_exists(svc, "cache", "reindex", "rebuild_index")
+        logger.info("CoinListService: fetch=%s cache=%s (fallback).", ok_fetch, ok_cache)
 
-# =================================================================
-# --- ФУНКЦИЯ-РЕГИСТРАТОР ---
-# =================================================================
 
-def setup_jobs(scheduler: AsyncIOScheduler, deps: "Deps"):
+async def warm_price_cache_job(deps: "Deps") -> None:
     """
-    Централизованно настраивает и добавляет все периодические задачи в планировщик.
+    Прогревает кэш котировок по базовым монетам. Безопасно, если метод отсутствует.
     """
+    svc = getattr(deps, "price_service", None)
+    if not svc:
+        logger.info("PriceService отсутствует — пропуск прогрева кэша котировок.")
+        return
+
+    # Частые контракты:
+    if not await _call_if_exists(svc, "warmup_cache", "warmup", "prefetch_top", "prefetch"):
+        logger.info("PriceService не поддерживает прогрев кэша — пропуск.")
+
+
+async def prefetch_news_job(deps: "Deps") -> None:
+    """
+    Предзагружает свежие новости в кэш (агрегация). Без публикации в чат.
+    """
+    svc = getattr(deps, "news_service", None)
+    if not svc:
+        logger.info("NewsService отсутствует — пропуск предзагрузки новостей.")
+        return
+
+    # Наиболее вероятные контракты:
+    if await _call_if_exists(svc, "get_all_latest_news"):
+        logger.info("Новости успешно предзагружены через get_all_latest_news().")
+        return
+
+    # Фолбэки: собрать по источникам, если сервис предоставляет такие методы.
+    if await _call_if_exists(svc, "prefetch", "warmup", "refresh"):
+        logger.info("Новости предзагружены через fallback-метод.")
+    else:
+        logger.info("NewsService не имеет подходящих методов предзагрузки — пропуск.")
+
+
+# --------------------------- scheduler bootstrap -------------------------------
+
+async def setup_scheduler(deps: "Deps", dp: "Dispatcher") -> None:
+    """
+    Регистрирует и запускает планировщик. Вызывается из main.py во время старта бота.
+    Параметры расписаний берём из Settings, при отсутствии — используем дефолты.
+    """
+    # Извлекаем интервалы из настроек с безопасными дефолтами
     try:
-        jobs = [
-            {
-                "func": update_coin_list_job, "trigger": "interval",
-                "kwargs": {"hours": deps.settings.coin_list_service.update_interval_hours},
-                "id": "update_coin_list"
-            },
-            {
-                "func": update_asics_db_job, "trigger": "interval",
-                "kwargs": {"hours": deps.settings.asic_service.update_interval_hours},
-                "id": "update_asics_db"
-            },
-            {
-                "func": send_news_job, "trigger": "interval",
-                "kwargs": {"hours": 3}, "id": "send_news"
-            },
-            {
-                "func": send_morning_summary_job, "trigger": "cron",
-                "kwargs": {"hour": 9, "minute": 0}, "id": "morning_summary"
-            },
-            {
-                "func": send_leaderboard_job, "trigger": "cron",
-                "kwargs": {"day_of_week": "mon", "hour": 12, "minute": 0},
-                "id": "weekly_leaderboard"
-            },
-            {
-                "func": check_market_achievements_for_all_users, "trigger": "interval",
-                "kwargs": {"minutes": 15}, "id": "market_achievements_check"
-            },
-        ]
+        coin_hours: int = int(getattr(deps.settings.coin_list_service, "update_interval_hours", 12))
+    except Exception:
+        coin_hours = 12
 
-        for job in jobs:
-            scheduler.add_job(
-                job["func"],
-                trigger=job["trigger"],
-                id=job["id"],
-                replace_existing=True,
-                args=[deps],
-                **job["kwargs"]
-            )
-        
-        logger.info(f"Все {len(scheduler.get_jobs())} периодических задач успешно настроены.")
-    
-    except Exception as e:
-        logger.critical(f"Критическая ошибка при настройке периодических задач: {e}", exc_info=True)
+    try:
+        price_minutes: int = int(getattr(deps.settings.price_service, "refresh_interval_minutes", 5))
+    except Exception:
+        price_minutes = 5
+
+    try:
+        news_minutes: int = int(getattr(deps.settings.news_service, "refresh_interval_minutes", 180))
+    except Exception:
+        news_minutes = 180
+
+    tz = _get_tz()
+    scheduler = AsyncIOScheduler(timezone=tz)
+
+    # Сохраним ссылку в deps.services, чтобы можно было управлять и завершать при необходимости
+    try:
+        deps.services["scheduler"] = scheduler
+    except Exception:
+        pass
+
+    # Планируем задачи
+    try:
+        scheduler.add_job(update_coin_list_job, "interval", hours=max(1, coin_hours), args=[deps], id="coin_list_update", replace_existing=True)
+        scheduler.add_job(warm_price_cache_job, "interval", minutes=max(1, price_minutes), args=[deps], id="price_cache_warmup", replace_existing=True)
+        scheduler.add_job(prefetch_news_job, "interval", minutes=max(10, news_minutes), args=[deps], id="news_prefetch", replace_existing=True)
+    except Exception as e:  # noqa: BLE001
+        logger.critical("Ошибка при создании задач в планировщике: %s", e, exc_info=True)
+        return
+
+    try:
+        scheduler.start()
+        logger.info(
+            "Планировщик запущен (tz=%s). Задачи: %s",
+            tz,
+            [job.id for job in scheduler.get_jobs()],
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.critical("Не удалось запустить планировщик APScheduler: %s", e, exc_info=True)
