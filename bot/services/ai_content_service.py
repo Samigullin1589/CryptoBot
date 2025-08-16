@@ -1,10 +1,13 @@
 import asyncio
+import base64
+import io
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import backoff
+from PIL import Image
 
 # --- OpenAI (основной провайдер) ---
 try:
@@ -70,10 +73,17 @@ class AIContentService:
                 self.gemini_pro = genai.GenerativeModel(self.gemini_model_name)
                 self.gemini_flash = genai.GenerativeModel(self.gemini_flash_name)
                 self._gemini_enabled = True
-                logger.info("AIContentService: Gemini клиенты инициализированы (pro=%s, flash=%s).",
-                            self.gemini_model_name, self.gemini_flash_name)
+                logger.info(
+                    "AIContentService: Gemini клиенты инициализированы (pro=%s, flash=%s).",
+                    self.gemini_model_name,
+                    self.gemini_flash_name,
+                )
             except Exception as e:
-                logger.critical("AIContentService: не удалось инициализировать Gemini: %s — резерв отключён.", e, exc_info=True)
+                logger.critical(
+                    "AIContentService: не удалось инициализировать Gemini: %s — резерв отключён.",
+                    e,
+                    exc_info=True,
+                )
                 self._gemini_enabled = False
         else:
             logger.info("AIContentService: GOOGLE_API_KEY не задан — резервный Gemini недоступен.")
@@ -108,10 +118,40 @@ class AIContentService:
         # ограничим контекст
         return msgs[-20:]
 
+    @staticmethod
+    def _strip_json_from_text(s: str) -> Optional[Dict[str, Any]]:
+        """
+        Забираем JSON-объект из ответа модели (вырезаем по первому/последнему фигурным скобкам).
+        """
+        try:
+            s = (s or "").strip()
+            i, j = s.find("{"), s.rfind("}")
+            if i != -1 and j != -1 and j >= i:
+                return json.loads(s[i : j + 1])
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    def _pil_to_data_url(img: Image.Image) -> str:
+        """
+        Конвертирует PIL.Image -> data URL для OpenAI image_url.
+        """
+        buf = io.BytesIO()
+        # Безопасный формат PNG (меньше артефактов)
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
+
     # -------------------------- OpenAI helpers --------------------------
 
-    async def _oai_chat(self, *, system_prompt: Optional[str], messages: List[Dict[str, str]],
-                        temperature: Optional[float] = None) -> str:
+    async def _oai_chat(
+        self,
+        *,
+        system_prompt: Optional[str],
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+    ) -> str:
         if not self.oai_client:
             raise RuntimeError("OpenAI client is not initialized")
         oai_messages: List[Dict[str, str]] = []
@@ -165,6 +205,42 @@ class AIContentService:
                 pass
             return None
 
+    async def _oai_vision_json(self, *, image: Image.Image, system_prompt: str) -> Optional[Dict[str, Any]]:
+        """
+        Вызов OpenAI Vision (через chat.completions) с возвратом JSON.
+        Используем image_url (data URL) + response_format=json_object.
+        """
+        if not self.oai_client:
+            raise RuntimeError("OpenAI client is not initialized")
+
+        data_url = self._pil_to_data_url(image)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Проанализируй изображение и верни JSON."},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            },
+        ]
+
+        def _call():
+            return self.oai_client.chat.completions.create(
+                model=self.oai_model,
+                messages=messages,
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+
+        resp = await asyncio.to_thread(_call)
+        raw = ""
+        try:
+            raw = resp.choices[0].message.content or ""
+            return json.loads(raw)
+        except Exception:
+            return self._strip_json_from_text(raw)
+
     # -------------------------- Gemini helpers --------------------------
 
     @backoff.on_exception(
@@ -198,7 +274,7 @@ class AIContentService:
             return await model.generate_content_async(contents=contents, tools=tools, generation_config=generation_config)
         return await asyncio.to_thread(model.generate_content, contents=contents, tools=tools, generation_config=generation_config)
 
-    # -------------------------- Публичные методы --------------------------
+    # -------------------------- Публичные ТЕКСТОВЫЕ методы --------------------------
 
     async def generate_summary(self, text_to_summarize: str) -> str:
         """
@@ -272,11 +348,8 @@ class AIContentService:
                 text = self._extract_text(resp)
                 if not text:
                     return None
-                s = text.strip()
-                i, j = s.find("{"), s.rfind("}")
-                if i != -1 and j != -1 and j >= i:
-                    s = s[i : j + 1]
-                return json.loads(s)
+                data = self._strip_json_from_text(text)
+                return data if isinstance(data, dict) else None
             except Exception as e:  # noqa: BLE001
                 logger.error("Gemini structured failed: %s", e, exc_info=True)
         return None
@@ -348,3 +421,56 @@ class AIContentService:
                 logger.error("Gemini consultant failed: %s", e, exc_info=True)
 
         return ""
+
+    # -------------------------- Публичные ВИЖН-методы --------------------------
+
+    async def analyze_image_for_spam(self, image: Image.Image) -> Tuple[bool, str, str]:
+        """
+        Анализ изображения на рекламу/спам-баннеры/скам.
+        Возвращает кортеж: (is_spam: bool, explanation: str, extracted_text: str)
+
+        Приоритет: OpenAI-Vision → (FALLBACK) Gemini-Vision.
+        Если ни один провайдер недоступен или оба упали — вернёт (False, "", "").
+        """
+        system = (
+            "You are a strict content-moderation assistant.\n"
+            "Classify if the image is likely to be an advertising spam banner for social/chat groups, "
+            "casinos, betting, crypto giveaways, referral links, pump signals, or any deceptive promotion. "
+            "Extract any visible text (OCR-like). "
+            "Answer ONLY JSON with fields: "
+            '{"is_spam": true|false, "explanation": "short reason in Russian", "extracted_text": "string"}'
+        )
+
+        # --- 1) OpenAI Vision (primary) ---
+        if self.oai_client:
+            try:
+                data = await self._oai_vision_json(image=image, system_prompt=system)
+                if isinstance(data, dict):
+                    is_spam = bool(data.get("is_spam", False))
+                    explanation = str(data.get("explanation", "")).strip()
+                    extracted_text = str(data.get("extracted_text", "")).strip()
+                    return is_spam, explanation, extracted_text
+            except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
+                logger.warning("OpenAI vision failed (%s). FALLBACK → Gemini.", e, exc_info=True)
+
+        # --- 2) Gemini Vision (fallback) ---
+        if self._gemini_enabled:
+            try:
+                model = self.gemini_pro or self.gemini_flash  # vision лучше на pro
+                resp = await self._gemini_request(model, contents=[system, image], generation_config=GenerationConfig(temperature=0))
+                text = self._extract_text(resp)
+                data = self._strip_json_from_text(text) if text else None
+                if isinstance(data, dict):
+                    is_spam = bool(data.get("is_spam", False))
+                    explanation = str(data.get("explanation", "")).strip()
+                    extracted_text = str(data.get("extracted_text", "")).strip()
+                    return is_spam, explanation, extracted_text
+                # эвристика, если JSON не распарсился
+                lowered = (text or "").lower()
+                is_spam = any(k in lowered for k in ("spam", "advert", "promotion", "casino", "bet", "referral", "scam", "реклама", "казино", "бет", "реферал"))
+                return is_spam, (text or "")[:2000], ""
+            except Exception as e:  # noqa: BLE001
+                logger.error("Gemini vision failed: %s", e, exc_info=True)
+
+        # --- 3) Нет провайдера / обе ветки сломались ---
+        return False, "", ""
