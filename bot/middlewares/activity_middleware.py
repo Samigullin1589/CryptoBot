@@ -1,61 +1,81 @@
-# =================================================================================
-# Файл: bot/middlewares/activity_middleware.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Middleware для эффективного отслеживания активности
-# пользователей.
-# ИСПРАВЛЕНИЕ: Изменен путь импорта 'settings' для соответствия новой архитектуре.
-# =================================================================================
-import time
+# ======================================================================================
+# File: bot/middlewares/activity_middleware.py
+# Version: "Distinguished Engineer" — MAX Build (Aug 16, 2025)
+# Description:
+#   Lightweight activity tracker:
+#     • Stores last_seen for users and per-chat
+#     • Counts messages per user/chat with TTL
+#     • Exposes simple Redis schema for analytics & anti-raid heuristics
+# ======================================================================================
+
+from __future__ import annotations
+
 import logging
-from typing import Callable, Dict, Any, Awaitable
+from typing import Any, Dict, Union
 
 from aiogram import BaseMiddleware
-from aiogram.types import Update
+from aiogram.types import Message, CallbackQuery
 
-from bot.services.user_service import UserService
-# ИСПРАВЛЕНО: Импортируем 'settings' из нового единого источника
-from bot.config.settings import settings
+from bot.utils.dependencies import Deps
 
 logger = logging.getLogger(__name__)
 
+
 class ActivityMiddleware(BaseMiddleware):
-    """
-    Middleware для отслеживания и поощрения активности пользователей.
-    """
-    def __init__(self, user_service: UserService):
-        self.user_service = user_service
-        # Простой кеш для отслеживания времени последнего обновления {user_id: timestamp}
-        self.last_update_times: Dict[int, float] = {}
-
-    async def __call__(
+    def __init__(
         self,
-        handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
-        event: Update,
-        data: Dict[str, Any]
-    ) -> Any:
-        # Отслеживаем только реальные действия пользователя
-        if not (event.message or event.callback_query):
-            return await handler(event, data)
+        deps: Deps,
+        *,
+        ttl_seconds: int = 14 * 24 * 3600,  # keep stats 14 days
+        per_chat_ttl_seconds: int = 7 * 24 * 3600,
+        key_prefix: str = "activity",
+    ) -> None:
+        super().__init__()
+        self.deps = deps
+        self.ttl = ttl_seconds
+        self.chat_ttl = per_chat_ttl_seconds
+        self.px = key_prefix.strip(":")
 
-        user = data.get('event_from_user')
-        if not user:
-            return await handler(event, data)
+    async def __call__(self, handler, event: Union[Message, CallbackQuery], data: Dict[str, Any]):
+        r = self.deps.redis
 
-        user_id = user.id
-        current_time = time.time()
-
-        # --- Логика троттлинга ---
-        # Обновлять активность не чаще раза в 60 секунд
-        throttle_seconds = 60 
-        last_update = self.last_update_times.get(user_id, 0)
-        if current_time - last_update < throttle_seconds:
-            return await handler(event, data)
-
-        # --- Обновление активности ---
         try:
-            await self.user_service.update_user_activity(user_id)
-            self.last_update_times[user_id] = current_time
-            logger.debug(f"Updated activity for user {user_id}")
-        except Exception as e:
-            logger.error(f"Failed to update activity for user {user_id}: {e}")
+            # Extract actor & chat
+            if isinstance(event, Message):
+                uid = event.from_user.id if event.from_user else None
+                chat_id = event.chat.id if event.chat else None
+                ts = int(event.date.timestamp()) if event.date else None
+            else:
+                uid = event.from_user.id if event.from_user else None
+                chat_id = event.message.chat.id if (event.message and event.message.chat) else None
+                ts = int(event.message.date.timestamp()) if (event.message and event.message.date) else None
 
+            if uid:
+                # last seen (global)
+                k_user = f"{self.px}:user:{uid}:last_seen"
+                await r.set(k_user, ts or 0, ex=self.ttl)
+
+                # per-user counters
+                k_cnt = f"{self.px}:user:{uid}:cnt"
+                await r.incr(k_cnt)
+                await r.expire(k_cnt, self.ttl)
+
+            if uid and chat_id:
+                # per-chat last seen & counters
+                k_uc = f"{self.px}:chat:{chat_id}:user:{uid}:last_seen"
+                await r.set(k_uc, ts or 0, ex=self.chat_ttl)
+
+                k_uc_cnt = f"{self.px}:chat:{chat_id}:user:{uid}:cnt"
+                await r.incr(k_uc_cnt)
+                await r.expire(k_uc_cnt, self.chat_ttl)
+
+                # chat-wide counters
+                k_chat_cnt = f"{self.px}:chat:{chat_id}:cnt"
+                await r.incr(k_chat_cnt)
+                await r.expire(k_chat_cnt, self.chat_ttl)
+
+        except Exception as e:
+            logger.debug("ActivityMiddleware store error: %s", e)
+
+        # Pass to next
         return await handler(event, data)

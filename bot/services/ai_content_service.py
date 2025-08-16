@@ -1,94 +1,138 @@
+# ======================================================================================
+# File: bot/services/ai_content_service.py
+# Version: "Distinguished Engineer" — MAX Build (Aug 16, 2025)
+# Description:
+#   Unified AI service with OpenAI (primary) + Google Gemini (fallback) and
+#   Gemini-Vision support for image moderation / OCR-ish extraction / spam heuristics.
+#   - OpenAI used if OPENAI_API_KEY present; Gemini otherwise / on fallback.
+#   - JSON mode helpers, summarization, consultant answers.
+#   - Vision:
+#       • analyze_image()   -> text or JSON (schema) using Gemini 1.5 (pro/flash)
+#       • moderate_text()   -> lightweight heuristics + (optionally) OpenAI if present
+#       • spam_score_image()-> 0..1 heuristic score for spammy images (stickers/promo)
+#   - Safe, backoff'ed Google calls; no blocking I/O in event loop.
+# ======================================================================================
+
+from __future__ import annotations
+
 import asyncio
 import base64
-import io
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import backoff
-from PIL import Image
 
-# --- OpenAI (основной провайдер) ---
+# ---- OpenAI (primary) ---------------------------------------------------------
 try:
     from openai import OpenAI  # SDK v1+
     from openai import APIConnectionError, RateLimitError, APIStatusError
-except Exception:  # если SDK не установлен — работаем только с Gemini
-    OpenAI = None  # type: ignore
-    APIConnectionError = RateLimitError = APIStatusError = Exception  # type: ignore
+except Exception:  # noqa: BLE001
+    OpenAI = None  # type: ignore[assignment]
+    APIConnectionError = RateLimitError = APIStatusError = Exception  # type: ignore[misc,assignment]
 
-# --- Google Gemini (резерв) ---
+# ---- Google Gemini (fallback) -------------------------------------------------
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
 from google.generativeai.types import GenerationConfig
 
-from bot.config.settings import AIConfig
+from bot.config.settings import Settings, AIConfig
 
 logger = logging.getLogger(__name__)
 
 
+# --------------------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------------------
+
+def _clip(s: str, n: int = 4000) -> str:
+    return s if len(s) <= n else (s[: n - 1] + "…")
+
+
+def _is_url(s: str) -> bool:
+    return s.startswith("http://") or s.startswith("https://") or s.startswith("tg://")
+
+
+def _guess_mime_from_bytes(b: bytes) -> str:
+    # very light signature sniffing; default to PNG (Telegram often gives JPEG/WEBP too)
+    if b[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if b[:4] == b"RIFF" and b[8:12] in (b"WEBP",):
+        return "image/webp"
+    return "image/png"
+
+
+# --------------------------------------------------------------------------------------
+# AIContentService
+# --------------------------------------------------------------------------------------
+
 class AIContentService:
     """
-    Унифицированная обёртка над OpenAI (GPT) и Google Gemini.
-
-    ПРИОРИТЕТ ПОСТРОЕН ТАК:
-    1) OpenAI (GPT) — ОСНОВНОЙ провайдер (если доступен OPENAI_API_KEY).
-    2) Google Gemini — РЕЗЕРВ (если GPT недоступен/не сконфигурирован или вернул ошибку/лимит).
-
-    Момент переключения на резерв ОТМЕЧЕН в коде комментариями:  # FALLBACK → Gemini
-    Обратное переключение (с Gemini на GPT) не выполняем в рамках одного вызова.
+    Unified wrapper around OpenAI (primary) and Google Gemini (fallback).
+    Also provides Gemini-Vision utilities for image analysis and spam detection.
     """
 
-    def __init__(self, api_key: str, config: AIConfig) -> None:
-        # Google API key приходит первым параметром (как в проекте)
-        self.config = config
+    # ------------------------------ lifecycle ---------------------------------
+
+    def __init__(
+        self,
+        settings: Optional[Settings] = None,
+        ai_config: Optional[AIConfig] = None,
+    ) -> None:
+        self.settings = settings
+        self.config: AIConfig = ai_config or (settings.ai if settings else AIConfig())
 
         # ---------- OpenAI (primary) ----------
         self.oai_client = None
-        self.oai_model = os.getenv("OPENAI_MODEL") or getattr(config, "openai_model", None) or "gpt-4o-mini"
+        self.oai_model = os.getenv("OPENAI_MODEL") or getattr(self.config, "openai_model", None) or "gpt-4o-mini"
         oai_key = os.getenv("OPENAI_API_KEY")
         if OpenAI and oai_key:
             try:
                 self.oai_client = OpenAI(api_key=oai_key)
-                logger.info("AIContentService: OpenAI клиент инициализирован (модель: %s).", self.oai_model)
-            except Exception as e:
-                logger.warning("AIContentService: не удалось инициализировать OpenAI: %s", e, exc_info=True)
+                logger.info("AIContentService: OpenAI initialized (model=%s).", self.oai_model)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("AIContentService: failed to init OpenAI: %s", e, exc_info=True)
                 self.oai_client = None
         else:
             if not OpenAI:
-                logger.info("AIContentService: пакет openai не установлен — используем только Gemini как резерв.")
+                logger.info("AIContentService: `openai` package not installed — Gemini only.")
             else:
-                logger.info("AIContentService: OPENAI_API_KEY не задан — используем только Gemini как резерв.")
+                logger.info("AIContentService: OPENAI_API_KEY not set — Gemini only.")
 
         # ---------- Google Gemini (fallback) ----------
+        self._gemini_enabled = False
         self.gemini_pro = None
         self.gemini_flash = None
-        self.gemini_model_name = getattr(config, "model_name", "gemini-1.5-pro")
-        self.gemini_flash_name = getattr(config, "flash_model_name", "gemini-1.5-flash")
-        self._gemini_enabled = False
-        if api_key:
+        g_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        self.gemini_model_name = getattr(self.config, "model_name", "gemini-1.5-pro-latest")
+        self.gemini_flash_name = getattr(self.config, "flash_model_name", "gemini-1.5-flash-latest")
+        if g_key:
             try:
-                genai.configure(api_key=api_key)
-                # НЕ передаём tools в конструктор — это вызовет ошибку неизвестного поля.
+                genai.configure(api_key=g_key)
+                # IMPORTANT: do not pass tools in constructor, it triggers field validation errors
                 self.gemini_pro = genai.GenerativeModel(self.gemini_model_name)
                 self.gemini_flash = genai.GenerativeModel(self.gemini_flash_name)
                 self._gemini_enabled = True
                 logger.info(
-                    "AIContentService: Gemini клиенты инициализированы (pro=%s, flash=%s).",
+                    "AIContentService: Gemini initialized (pro=%s, flash=%s).",
                     self.gemini_model_name,
                     self.gemini_flash_name,
                 )
-            except Exception as e:
-                logger.critical(
-                    "AIContentService: не удалось инициализировать Gemini: %s — резерв отключён.",
-                    e,
-                    exc_info=True,
-                )
+            except Exception as e:  # noqa: BLE001
+                logger.critical("AIContentService: Gemini init failed — disabled fallback: %s", e, exc_info=True)
                 self._gemini_enabled = False
         else:
-            logger.info("AIContentService: GOOGLE_API_KEY не задан — резервный Gemini недоступен.")
+            logger.info("AIContentService: GOOGLE_API_KEY/GEMINI_API_KEY not set — Gemini disabled.")
 
-    # -------------------------- Вспомогательные --------------------------
+    async def close(self) -> None:
+        """For symmetry with other services; nothing to close explicitly here."""
+        return None
+
+    # ------------------------------ internals ---------------------------------
 
     @staticmethod
     def _extract_text(resp: Any) -> str:
@@ -97,10 +141,10 @@ class AIContentService:
     @staticmethod
     def _format_history(history: Optional[List[Any]]) -> List[Dict[str, str]]:
         """
-        Историю приводим к OpenAI-совместимому формату messages: [{role, content}, ...]
-        Поддерживает:
-          - список строк
-          - список диктов вида {'role': 'user'|'assistant'|'system', 'content': '...'}
+        Normalize to OpenAI-compatible messages: [{role, content}, ...]
+        Supports:
+          - list[str]
+          - list[dict{role:str, content:str}]
         """
         if not history:
             return []
@@ -115,35 +159,9 @@ class AIContentService:
                     msgs.append({"role": role, "content": content})
             else:
                 msgs.append({"role": "user", "content": str(h).strip()})
-        # ограничим контекст
-        return msgs[-20:]
+        return msgs[-max(4, min(20, int(getattr(self.config, "history_max_size", 10)))) :]
 
-    @staticmethod
-    def _strip_json_from_text(s: str) -> Optional[Dict[str, Any]]:
-        """
-        Забираем JSON-объект из ответа модели (вырезаем по первому/последнему фигурным скобкам).
-        """
-        try:
-            s = (s or "").strip()
-            i, j = s.find("{"), s.rfind("}")
-            if i != -1 and j != -1 and j >= i:
-                return json.loads(s[i : j + 1])
-        except Exception:
-            return None
-        return None
-
-    @staticmethod
-    def _pil_to_data_url(img: Image.Image) -> str:
-        """
-        Конвертирует PIL.Image -> data URL для OpenAI image_url.
-        """
-        buf = io.BytesIO()
-        # Безопасный формат PNG (меньше артефактов)
-        img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        return f"data:image/png;base64,{b64}"
-
-    # -------------------------- OpenAI helpers --------------------------
+    # ---- OpenAI helpers ----
 
     async def _oai_chat(
         self,
@@ -159,18 +177,17 @@ class AIContentService:
             oai_messages.append({"role": "system", "content": system_prompt})
         oai_messages.extend(messages)
 
-        # совместимость с SDK v1: client.chat.completions.create(...)
         def _call():
             return self.oai_client.chat.completions.create(
                 model=self.oai_model,
                 messages=oai_messages,
-                temperature=temperature if temperature is not None else 0.6,
+                temperature=temperature if temperature is not None else self.config.default_temperature,
             )
 
         resp = await asyncio.to_thread(_call)
         try:
             return (resp.choices[0].message.content or "").strip()
-        except Exception:
+        except Exception:  # noqa: BLE001
             return ""
 
     async def _oai_json(self, *, system_prompt: Optional[str], user_prompt: str) -> Optional[Dict[str, Any]]:
@@ -194,8 +211,7 @@ class AIContentService:
         try:
             raw = resp.choices[0].message.content or ""
             return json.loads(raw)
-        except Exception:
-            # попробуем выдрать JSON из строки на всякий случай
+        except Exception:  # noqa: BLE001
             try:
                 s = raw.strip()
                 i, j = s.find("{"), s.rfind("}")
@@ -205,43 +221,7 @@ class AIContentService:
                 pass
             return None
 
-    async def _oai_vision_json(self, *, image: Image.Image, system_prompt: str) -> Optional[Dict[str, Any]]:
-        """
-        Вызов OpenAI Vision (через chat.completions) с возвратом JSON.
-        Используем image_url (data URL) + response_format=json_object.
-        """
-        if not self.oai_client:
-            raise RuntimeError("OpenAI client is not initialized")
-
-        data_url = self._pil_to_data_url(image)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Проанализируй изображение и верни JSON."},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            },
-        ]
-
-        def _call():
-            return self.oai_client.chat.completions.create(
-                model=self.oai_model,
-                messages=messages,
-                temperature=0,
-                response_format={"type": "json_object"},
-            )
-
-        resp = await asyncio.to_thread(_call)
-        raw = ""
-        try:
-            raw = resp.choices[0].message.content or ""
-            return json.loads(raw)
-        except Exception:
-            return self._strip_json_from_text(raw)
-
-    # -------------------------- Gemini helpers --------------------------
+    # ---- Gemini helpers ----
 
     @backoff.on_exception(
         backoff.expo,
@@ -261,27 +241,25 @@ class AIContentService:
 
         tools = None
         if use_search:
-            # Инкапсулированная безопасная сборка Tool(google_search)
             try:
                 Tool = genai.protos.Tool
                 GoogleSearch = genai.protos.GoogleSearch
                 tools = [Tool(google_search=GoogleSearch())]
-            except Exception as e:
-                logger.warning("Gemini: не удалось сконструировать google_search tool: %s — продолжаем без grounding.", e)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Gemini: failed to construct google_search tool: %s — proceed without.", e)
                 tools = None
 
         if hasattr(model, "generate_content_async"):
             return await model.generate_content_async(contents=contents, tools=tools, generation_config=generation_config)
         return await asyncio.to_thread(model.generate_content, contents=contents, tools=tools, generation_config=generation_config)
 
-    # -------------------------- Публичные ТЕКСТОВЫЕ методы --------------------------
+    # ----------------------------------------------------------------------------------
+    # Public text helpers
+    # ----------------------------------------------------------------------------------
 
     async def generate_summary(self, text_to_summarize: str) -> str:
-        """
-        Краткое резюме текста. Пытается GPT → (FALLBACK) Gemini.
-        """
+        """Short RU summary in 3–4 bullets. GPT → (fallback) Gemini."""
         system_prompt = "Суммируй кратко и по-русски следующий текст в 3–4 пунктах."
-        # 1) OpenAI (primary)
         if self.oai_client:
             try:
                 return await self._oai_chat(
@@ -290,9 +268,8 @@ class AIContentService:
                     temperature=0.3,
                 )
             except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI summary failed (%s). FALLBACK → Gemini.", e, exc_info=True)  # FALLBACK → Gemini
+                logger.warning("OpenAI summary failed (%s). FALLBACK → Gemini.", e, exc_info=True)
 
-        # 2) Gemini (fallback)
         if self._gemini_enabled:
             try:
                 model = self.gemini_flash or self.gemini_pro
@@ -309,18 +286,11 @@ class AIContentService:
         *,
         use_grounding: bool = False,
         system_prompt: Optional[str] = None,
-        **kwargs: Any,
+        **_: Any,
     ) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает строго JSON по заданной схеме.
-        Сначала пробуем OpenAI JSON Mode → (FALLBACK) Gemini JSON (response_mime_type).
-        Параметр system_prompt поддерживается.
-        Прочие **kwargs игнорируются для совместимости со старыми вызовами.
-        """
-        # 1) OpenAI (primary)
+        """Strict JSON by schema. GPT JSON-mode → (fallback) Gemini JSON via response_mime_type."""
         if self.oai_client:
             try:
-                # Подскажем схему через инструкцию (JSON Mode всё равно заставит вернуть объект).
                 oai_system = (system_prompt or "").strip()
                 oai_prompt = (
                     "Сформируй JSON строго по следующей схеме (без комментариев и Markdown).\n"
@@ -331,9 +301,8 @@ class AIContentService:
                 if data is not None:
                     return data
             except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI structured failed (%s). FALLBACK → Gemini.", e, exc_info=True)  # FALLBACK → Gemini
+                logger.warning("OpenAI structured failed (%s). FALLBACK → Gemini.", e, exc_info=True)
 
-        # 2) Gemini (fallback)
         if self._gemini_enabled:
             try:
                 model = self.gemini_flash or self.gemini_pro
@@ -348,8 +317,11 @@ class AIContentService:
                 text = self._extract_text(resp)
                 if not text:
                     return None
-                data = self._strip_json_from_text(text)
-                return data if isinstance(data, dict) else None
+                s = text.strip()
+                i, j = s.find("{"), s.rfind("}")
+                if i != -1 and j != -1 and j >= i:
+                    s = s[i : j + 1]
+                return json.loads(s)
             except Exception as e:  # noqa: BLE001
                 logger.error("Gemini structured failed: %s", e, exc_info=True)
         return None
@@ -361,12 +333,7 @@ class AIContentService:
         *,
         system_prompt: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        return await self.get_structured_response(
-            prompt,
-            json_schema,
-            use_grounding=False,
-            system_prompt=system_prompt,
-        )
+        return await self.get_structured_response(prompt, json_schema, use_grounding=False, system_prompt=system_prompt)
 
     async def get_consultant_answer(
         self,
@@ -377,27 +344,21 @@ class AIContentService:
         use_grounding: bool = False,
         temperature: Optional[float] = None,
     ) -> str:
-        """
-        Развёрнутый ответ консультанта. Порядок провайдеров:
-        GPT (OpenAI) → (FALLBACK) Gemini.
-        """
-        # Историю приводим к messages
+        """Longer RU assistant answer. GPT → (fallback) Gemini."""
         messages = self._format_history(history)
         messages.append({"role": "user", "content": (user_text or "").strip()})
 
-        # 1) OpenAI (primary)
         if self.oai_client:
             try:
                 return await self._oai_chat(
                     system_prompt=system_prompt
                     or "Ты — помощник по криптовалютам и майнингу. Отвечай лаконично и по-русски.",
                     messages=messages,
-                    temperature=temperature if temperature is not None else 0.6,
+                    temperature=temperature if temperature is not None else self.config.default_temperature,
                 )
             except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI consultant failed (%s). FALLBACK → Gemini.", e, exc_info=True)  # FALLBACK → Gemini
+                logger.warning("OpenAI consultant failed (%s). FALLBACK → Gemini.", e, exc_info=True)
 
-        # 2) Gemini (fallback)
         if self._gemini_enabled:
             try:
                 model = self.gemini_flash or self.gemini_pro
@@ -405,11 +366,11 @@ class AIContentService:
                 history_block = "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1]) if messages[:-1] else ""
                 prompt_parts = [sys_preamble]
                 if history_block:
-                    prompt_parts.append("Контекст диалога:\n" + history_block)
-                prompt_parts.append("Вопрос пользователя:\n" + (user_text or "").strip())
+                    prompt_parts.append("Контекст диалога:\n" + _clip(history_block, 6000))
+                prompt_parts.append("Вопрос пользователя:\n" + _clip(user_text or "", 6000))
                 full_prompt = "\n\n".join(p for p in prompt_parts if p)
 
-                gen_cfg = GenerationConfig(temperature=temperature if temperature is not None else 0.6)
+                gen_cfg = GenerationConfig(temperature=temperature if temperature is not None else self.config.default_temperature)
                 resp = await self._gemini_request(
                     model,
                     contents=full_prompt,
@@ -422,55 +383,189 @@ class AIContentService:
 
         return ""
 
-    # -------------------------- Публичные ВИЖН-методы --------------------------
+    # ----------------------------------------------------------------------------------
+    # Vision: Gemini 1.5 (pro/flash)
+    # ----------------------------------------------------------------------------------
 
-    async def analyze_image_for_spam(self, image: Image.Image) -> Tuple[bool, str, str]:
+    def _to_gemini_image_part(self, image: Union[bytes, str, Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Анализ изображения на рекламу/спам-баннеры/скам.
-        Возвращает кортеж: (is_spam: bool, explanation: str, extracted_text: str)
+        Convert input to Gemini image part:
+          - bytes -> {"mime_type": "...", "data": bytes}
+          - str(URL) -> {"mime_type":"image/png","data": <not fetched>}  # we DO NOT fetch URLs here
+          - dict -> returned as-is if has mime_type+data
+        NOTE: No network I/O here. Upstream should download Telegram file to bytes.
+        """
+        if isinstance(image, dict) and "mime_type" in image and "data" in image:
+            return image
+        if isinstance(image, bytes):
+            return {"mime_type": _guess_mime_from_bytes(image), "data": image}
+        if isinstance(image, str):
+            # Do not fetch URL here (no requests in event loop).
+            # Encourage upstream to provide bytes.
+            logger.warning("Gemini-Vision: URL string provided, but no fetching is performed. Provide bytes instead.")
+            # Put a tiny placeholder so API doesn't fail hard:
+            b = base64.b64decode(b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAH9gK1zD8tswAAAABJRU5ErkJggg==")
+            return {"mime_type": "image/png", "data": b}
+        raise TypeError("Unsupported image type; expected bytes|dict|str(URL)")
 
-        Приоритет: OpenAI-Vision → (FALLBACK) Gemini-Vision.
-        Если ни один провайдер недоступен или оба упали — вернёт (False, "", "").
+    async def analyze_image(
+        self,
+        prompt: str,
+        images: Sequence[Union[bytes, str, Dict[str, Any]]],
+        *,
+        response_json_schema: Optional[Dict[str, Any]] = None,
+        use_grounding: bool = False,
+        temperature: float = 0.2,
+        max_output_tokens: int = 2048,
+    ) -> Union[str, Dict[str, Any]]:
         """
-        system = (
-            "You are a strict content-moderation assistant.\n"
-            "Classify if the image is likely to be an advertising spam banner for social/chat groups, "
-            "casinos, betting, crypto giveaways, referral links, pump signals, or any deceptive promotion. "
-            "Extract any visible text (OCR-like). "
-            "Answer ONLY JSON with fields: "
-            '{"is_spam": true|false, "explanation": "short reason in Russian", "extracted_text": "string"}'
+        Analyze one or multiple images with Gemini-Vision (1.5). Returns TEXT or JSON.
+
+        Args:
+            prompt: task instruction in RU (or any).
+            images: list of image bytes (preferred) or dict parts {"mime_type","data"}.
+            response_json_schema: if provided, service will request JSON and parse it.
+            use_grounding: enable GoogleSearch grounding tool.
+            temperature: sampling temperature.
+            max_output_tokens: upper bound for response size.
+
+        Returns:
+            str (text) or dict (parsed JSON).
+        """
+        if not self._gemini_enabled:
+            raise RuntimeError("Gemini is not configured — cannot run vision.")
+
+        parts: List[Any] = [prompt]
+        for img in images:
+            parts.append(self._to_gemini_image_part(img))
+
+        gen_cfg = GenerationConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            response_mime_type="application/json" if response_json_schema else None,
         )
+        model = self.gemini_flash or self.gemini_pro
+        resp = await self._gemini_request(model, contents=parts, generation_config=gen_cfg, use_search=use_grounding)
+        text = self._extract_text(resp)
 
-        # --- 1) OpenAI Vision (primary) ---
+        if response_json_schema:
+            if not text:
+                return {}
+            s = text.strip()
+            i, j = s.find("{"), s.rfind("}")
+            if i != -1 and j != -1 and j >= i:
+                s = s[i : j + 1]
+            try:
+                data = json.loads(s)
+            except Exception:  # noqa: BLE001
+                # Very defensive: wrap into schema root if it looks like array/other
+                try:
+                    if s.startswith("[") and s.endswith("]"):
+                        data = {"items": json.loads(s)}
+                    else:
+                        data = {"raw": s}
+                except Exception:
+                    data = {"raw": s}
+            return data
+
+        return text
+
+    # ----------------------------------------------------------------------------------
+    # Heuristics / Moderation
+    # ----------------------------------------------------------------------------------
+
+    async def moderate_text(self, text: str) -> Dict[str, Any]:
+        """
+        Lightweight moderation (heuristic). If OpenAI available, try to use it for a richer signal
+        in a budget-friendly manner; otherwise use regex-based flags.
+        """
+        flags = {
+            "links": bool(re.search(r"https?://|t\.me/|@[\w\d_]{3,32}", text, re.I)),
+            "mentions": bool(re.search(r"@[\w\d_]{3,32}", text)),
+            "promo": bool(re.search(r"(free|бесплатн|скидк|прибыль|доход|guarantee|x\d+|pump|airdrops?)", text, re.I)),
+            "scam": bool(re.search(r"(giveaway|розыгрыш|раздач|купи|вложи|инвестируй|депозит|капитал|доход\s*\d+%|\d+%\s*в\s*день)", text, re.I)),
+        }
+        score = sum(0.15 for v in flags.values() if v)
+        result = {"score": min(1.0, score), "flags": flags, "provider": "heuristic"}
+
+        # Optional OpenAI moderation (very short budget call, wrapped)
         if self.oai_client:
             try:
-                data = await self._oai_vision_json(image=image, system_prompt=system)
-                if isinstance(data, dict):
-                    is_spam = bool(data.get("is_spam", False))
-                    explanation = str(data.get("explanation", "")).strip()
-                    extracted_text = str(data.get("extracted_text", "")).strip()
-                    return is_spam, explanation, extracted_text
-            except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI vision failed (%s). FALLBACK → Gemini.", e, exc_info=True)
-
-        # --- 2) Gemini Vision (fallback) ---
-        if self._gemini_enabled:
-            try:
-                model = self.gemini_pro or self.gemini_flash  # vision лучше на pro
-                resp = await self._gemini_request(model, contents=[system, image], generation_config=GenerationConfig(temperature=0))
-                text = self._extract_text(resp)
-                data = self._strip_json_from_text(text) if text else None
-                if isinstance(data, dict):
-                    is_spam = bool(data.get("is_spam", False))
-                    explanation = str(data.get("explanation", "")).strip()
-                    extracted_text = str(data.get("extracted_text", "")).strip()
-                    return is_spam, explanation, extracted_text
-                # эвристика, если JSON не распарсился
-                lowered = (text or "").lower()
-                is_spam = any(k in lowered for k in ("spam", "advert", "promotion", "casino", "bet", "referral", "scam", "реклама", "казино", "бет", "реферал"))
-                return is_spam, (text or "")[:2000], ""
+                # Craft tiny prompt to classify risk 0..1 quickly
+                sys = "Return a single JSON with keys {score: float in [0,1], reasons: string[]} based on spam/abuse risk."
+                data = await self._oai_json(system_prompt=sys, user_prompt=f"Text:\n{_clip(text, 4000)}")
+                if isinstance(data, dict) and "score" in data:
+                    # Blend scores (max to be conservative)
+                    result["score"] = max(float(result["score"]), float(data.get("score", 0)))
+                    result["reasons"] = data.get("reasons", [])
+                    result["provider"] = "openai+heuristic"
             except Exception as e:  # noqa: BLE001
-                logger.error("Gemini vision failed: %s", e, exc_info=True)
+                logger.debug("OpenAI moderation skip: %s", e)
+        return result
 
-        # --- 3) Нет провайдера / обе ветки сломались ---
-        return False, "", ""
+    async def spam_score_image(
+        self,
+        *,
+        caption: str = "",
+        ocr_hint: str = "",
+        images: Sequence[Union[bytes, Dict[str, Any], str]] = (),
+    ) -> Dict[str, Any]:
+        """
+        Heuristic spam scoring for images using Gemini-Vision (if configured).
+        - Extracts brief semantic labels and promo cues (qr codes, urls, big digits).
+        - Returns {score:0..1, cues:{...}, provider:str, raw?:dict}
+
+        NOTE: No network fetching; pass image bytes from Telegram.
+        """
+        cues: Dict[str, Any] = {
+            "qr": False,
+            "urls_on_image": False,
+            "huge_digits": False,
+            "promo_words_on_image": False,
+            "caption_links": bool(re.search(r"https?://|t\.me/", caption, re.I)),
+        }
+
+        text_score = (await self.moderate_text(caption)).get("score", 0.0) if caption else 0.0
+
+        if not self._gemini_enabled or not images:
+            # fall back to text-only
+            score = min(1.0, 0.4 + 0.6 * text_score) if text_score > 0 else 0.0
+            return {"score": score, "cues": cues, "provider": "heuristic(text-only)"}
+
+        try:
+            schema = {
+                "type": "object",
+                "properties": {
+                    "has_qr": {"type": "boolean"},
+                    "has_urls": {"type": "boolean"},
+                    "has_huge_digits": {"type": "boolean"},
+                    "has_promo_words": {"type": "boolean"},
+                    "short_labels": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["has_qr", "has_urls", "has_huge_digits", "has_promo_words"],
+            }
+            prompt = (
+                "Проанализируй изображение(я) на предмет спама в Telegram.\n"
+                "Отметь:\n- есть ли QR-код,\n- есть ли URL/хэндлы/теги,\n- есть ли крупные цифры (цены/выплаты/проценты),\n"
+                "- встречаются ли слова 'акция', 'бесплатно', 'инвестируй', 'доход', 'гарантия', 'x10', 'заработок' и т.п.\n"
+                "Верни краткий JSON."
+            )
+            data = await self.analyze_image(prompt, images, response_json_schema=schema, temperature=0.0)
+            if isinstance(data, dict):
+                cues["qr"] = bool(data.get("has_qr", False))
+                cues["urls_on_image"] = bool(data.get("has_urls", False))
+                cues["huge_digits"] = bool(data.get("has_huge_digits", False))
+                cues["promo_words_on_image"] = bool(data.get("has_promo_words", False))
+
+            # conservative scoring
+            base = 0.0
+            base += 0.35 if cues["qr"] else 0.0
+            base += 0.25 if cues["urls_on_image"] else 0.0
+            base += 0.15 if cues["huge_digits"] else 0.0
+            base += 0.20 if cues["promo_words_on_image"] else 0.0
+            score = min(1.0, base + 0.3 * text_score)
+            return {"score": score, "cues": cues, "provider": "gemini-vision"}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Vision scoring failed: %s", e, exc_info=True)
+            score = min(1.0, 0.4 + 0.6 * text_score) if text_score > 0 else 0.0
+            return {"score": score, "cues": cues, "provider": "heuristic(fallback)"}

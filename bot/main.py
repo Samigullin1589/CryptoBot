@@ -1,16 +1,20 @@
-# =============================================================================
-# File: bot/main.py
-# Purpose: Entry point — aiogram v3 launcher with middlewares & graceful shutdown
-# =============================================================================
+# ======================================================================================
+# Файл: bot/main.py
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (aiogram 3.x)
+# Описание:
+#   • Полная инициализация бота (настройки, DI, middlewares, routers, команды)
+#   • Поддержка плановых задач (jobs/scheduled_tasks)
+#   • Корректное завершение (await deps.close()) и обработка сигналов
+# ======================================================================================
 
 from __future__ import annotations
 
 import asyncio
-import importlib
-import inspect
 import logging
-import pkgutil
-from typing import Callable, Optional
+import os
+import signal
+from importlib import import_module
+from typing import Iterable, List, Optional
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -18,123 +22,159 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from bot.config.settings import settings
-from bot.utils.dependencies import Deps
+from bot.utils.dependencies import Deps, dependencies_middleware
 
-# Middlewares (под твой проект — уже есть в репо)
-from bot.middlewares.activity_middleware import ActivityMiddleware
+# ===== Middlewares (строго из твоего проекта) =====
+# Обязательные:
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
-from bot.middlewares.security_middleware import SecurityMiddleware
+from bot.middlewares.activity_middleware import ActivityMiddleware
+
+# Опциональные (подключим, если присутствуют в репо):
+try:
+    from bot.middlewares.security_middleware import SecurityMiddleware  # антиспам/фильтры
+except Exception:  # noqa: BLE001
+    SecurityMiddleware = None  # type: ignore
 
 
-# ----------------------------- utils -----------------------------------------
+logger = logging.getLogger(__name__)
 
-def _setup_logging() -> None:
+
+# -------------------------------- Логирование ---------------------------------
+
+def setup_logging() -> None:
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
-    logging.basicConfig(level=level)
-    logging.getLogger("aiogram").setLevel(level)
-    logging.info("Логирование инициализировано. Уровень: %s", settings.log_level.upper())
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+    logging.getLogger("aiogram.event").setLevel(logging.INFO)
+    logging.getLogger("aiogram.dispatcher").setLevel(logging.INFO)
 
 
-def _register_middlewares(dp: Dispatcher, deps: Deps) -> None:
-    """
-    Единая точка регистрации middleware:
-      - ActivityMiddleware: трекаем активность пользователя/чата
-      - ThrottlingMiddleware: защита от флуд-спама
-      - SecurityMiddleware: антиспам/модерация контента
-    """
-    activity = ActivityMiddleware(deps)
-    throttle = ThrottlingMiddleware(deps)
-    security = SecurityMiddleware(deps)
+# ----------------------------- Команды бота -----------------------------------
 
-    # Сообщения
-    dp.message.middleware(activity)
-    dp.message.middleware(throttle)
-    dp.message.middleware(security)
-
-    # Колбэки
-    dp.callback_query.middleware(activity)
-    dp.callback_query.middleware(throttle)
-    dp.callback_query.middleware(security)
-
-    logging.info("Middleware зарегистрированы: activity, throttling, security.")
-
-
-def _discover_and_include_routers(dp: Dispatcher) -> int:
-    """
-    Рекурсивно импортирует все модули из bot.handlers.*
-    и включает любые найденные объекты aiogram.Router.
-    """
-    base_pkg = "bot.handlers"
-    try:
-        pkg = importlib.import_module(base_pkg)
-    except Exception as e:
-        logging.error("Не удалось импортировать пакет %s: %s", base_pkg, e, exc_info=True)
-        return 0
-
-    found = 0
-    for mod_info in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
-        try:
-            mod = importlib.import_module(mod_info.name)
-        except Exception as e:
-            logging.error("Ошибка импорта модуля %s: %s", mod_info.name, e, exc_info=True)
-            continue
-
-        for attr_name, attr_val in vars(mod).items():
-            if isinstance(attr_val, Router):
-                dp.include_router(attr_val)
-                found += 1
-
-    logging.info("Все роутеры успешно зарегистрированы. Всего: %s", found)
-    return found
-
-
-async def _set_bot_commands(bot: Bot) -> None:
-    commands = [
-        BotCommand(command="start", description="Запустить бота"),
-        BotCommand(command="help", description="Справка и команды"),
+async def setup_commands(bot: Bot) -> None:
+    commands: List[BotCommand] = [
+        BotCommand(command="start", description="Запуск"),
+        BotCommand(command="help", description="Справка"),
         BotCommand(command="menu", description="Главное меню"),
+        BotCommand(command="price", description="Котировки"),
+        BotCommand(command="market", description="Рынок ASIC"),
+        BotCommand(command="mining", description="Виртуальный майнинг"),
+        BotCommand(command="news", description="Крипто-новости"),
+        BotCommand(command="quiz", description="Квиз"),
     ]
     await bot.set_my_commands(commands)
-    logging.info("Команды бота успешно установлены.")
 
 
-# ----------------------------- lifecycle -------------------------------------
+# ------------------------ Регистрация роутеров --------------------------------
 
-def make_on_startup(bot: Bot, deps: Deps) -> Callable[[], asyncio.Future]:
-    async def _on_startup() -> None:
-        logging.info("Запуск процедур on_startup...")
-        await _set_bot_commands(bot)
+def _collect_routers(module) -> List[Router]:
+    """Ищет все объекты Router в модуле (router, *_router и т.п.)."""
+    routers: List[Router] = []
+    for name, obj in vars(module).items():
+        if isinstance(obj, Router):
+            routers.append(obj)
+    return routers
 
-        # Планировщик / периодические задачи — опционально, если есть модуль
+
+def _import_optional(module_path: str) -> Optional[object]:
+    try:
+        return import_module(module_path)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Модуль %s не загружен: %s", module_path, e)
+        return None
+
+
+def register_routers(dp: Dispatcher) -> None:
+    """
+    Импортирует и регистрирует все известные роутеры проекта.
+    Если какой-то модуль отсутствует — просто пропускаем (без заглушек).
+    """
+    module_paths: List[str] = [
+        # базовые
+        "bot.handlers.start_handler",
+        "bot.handlers.help_handler",
+        "bot.handlers.menu_handler",
+        "bot.handlers.text_handler",
+
+        # цены/рынок/новости
+        "bot.handlers.price_handler",
+        "bot.handlers.market_handler",
+        "bot.handlers.news_handler",
+        "bot.handlers.crypto_center_handler",
+
+        # игра, калькулятор, квиз
+        "bot.handlers.game.mining_game_handler",
+        "bot.handlers.calculator_handler",
+        "bot.handlers.quiz_handler",
+
+        # угрозы/модерация/админка
+        "bot.handlers.threats",
+        "bot.handlers.admin.admin_handler",
+        "bot.handlers.admin.moderation_handler",
+        "bot.handlers.admin.stats_handler",
+
+        # онбординг
+        "bot.handlers.onboarding_handler",
+    ]
+
+    total = 0
+    for mp in module_paths:
+        mod = _import_optional(mp)
+        if not mod:
+            continue
+        routers = _collect_routers(mod)
+        for r in routers:
+            dp.include_router(r)
+            total += 1
+
+    logger.info("Все роутеры успешно зарегистрированы. Кол-во: %s", total)
+
+
+# ------------------------ Плановые задачи (jobs) -------------------------------
+
+async def setup_scheduler(deps: Deps, dp: Dispatcher) -> None:
+    """
+    Подключает плановые задачи, если модуль есть в проекте.
+    Ожидается, что внутри есть функция setup_scheduler(deps, dp).
+    """
+    mod = _import_optional("bot.jobs.scheduled_tasks")
+    if not mod:
+        logger.info("Модуль планировщика не найден: bot.jobs.scheduled_tasks — пропускаю.")
+        return
+    setup = getattr(mod, "setup_scheduler", None)
+    if callable(setup):
+        await setup(deps, dp)  # type: ignore[misc]
+        logger.info("Все периодические задачи успешно настроены.")
+    else:
+        logger.info("В модуле scheduled_tasks нет setup_scheduler — пропускаю.")
+
+
+# ------------------------ Сигналы и остановка ---------------------------------
+
+def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+    def _handler(*_: object) -> None:
+        if not stop.is_set():
+            logger.warning("Получен сигнал остановки — завершаем polling...")
+            stop.set()
+
+    for s in (signal.SIGINT, signal.SIGTERM):
         try:
-            from bot.jobs.scheduled_tasks import register_scheduled_tasks  # type: ignore
-            if inspect.iscoroutinefunction(register_scheduled_tasks):
-                await register_scheduled_tasks(deps)
-            else:
-                register_scheduled_tasks(deps)
-            logging.info("Все периодические задачи успешно настроены.")
-        except Exception as e:
-            logging.warning("Планировщик задач не настроен: %s", e)
-
-        logging.info("Процедуры on_startup завершены.")
-    return _on_startup
+            loop.add_signal_handler(s, _handler)
+        except NotImplementedError:
+            # Windows / ограниченные окружения
+            pass
 
 
-def make_on_shutdown(deps: Deps) -> Callable[[], asyncio.Future]:
-    async def _on_shutdown() -> None:
-        logging.info("Запуск процедур on_shutdown...")
-        try:
-            await deps.close()  # корректное закрытие: Redis, HTTP, пулы и т.д.
-        except Exception as e:
-            logging.warning("Во время deps.close() возникло исключение: %s", e, exc_info=True)
-        logging.info("Процедуры on_shutdown завершены.")
-    return _on_shutdown
-
-
-# ----------------------------- main ------------------------------------------
+# --------------------------------- main() -------------------------------------
 
 async def main() -> None:
-    _setup_logging()
+    setup_logging()
+    logger.info("Конфигурация успешно загружена и валидирована.")
+
+    # DI контейнер
+    deps = await Deps.create(settings)
 
     # Бот и диспетчер
     bot = Bot(
@@ -143,40 +183,62 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
-    # DI контейнер
-    deps: Deps
-    if hasattr(Deps, "create") and inspect.iscoroutinefunction(getattr(Deps, "create")):
-        deps = await Deps.create(bot=bot, settings=settings)  # наш recommended путь
-    elif hasattr(Deps, "build") and inspect.iscoroutinefunction(getattr(Deps, "build")):
-        deps = await Deps.build(bot=bot, settings=settings)
-    else:
-        # синхронный конструктор
-        deps = Deps(bot=bot, settings=settings)
+    # Middlewares (порядок важен: deps → активность → антиспам → троттлинг)
+    dp.update.outer_middleware(dependencies_middleware(deps))
+    dp.update.outer_middleware(ActivityMiddleware())
+    if SecurityMiddleware:
+        try:
+            dp.update.outer_middleware(SecurityMiddleware(deps=deps))
+            logger.info("SecurityMiddleware подключён.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Не удалось подключить SecurityMiddleware: %s", e)
+    dp.update.outer_middleware(
+        ThrottlingMiddleware(
+            user_rate=settings.throttling.user_rate_limit,
+            chat_rate=settings.throttling.chat_rate_limit,
+            prefix=settings.throttling.key_prefix,
+            redis=deps.redis,
+        )
+    )
 
-    # Middleware + Routers
-    _register_middlewares(dp, deps)
-    _discover_and_include_routers(dp)
+    # Роутеры
+    register_routers(dp)
 
-    # Lifecycle hooks
-    dp.startup.register(make_on_startup(bot, deps))
-    dp.shutdown.register(make_on_shutdown(deps))
+    # Команды
+    await setup_commands(bot)
 
-    logging.info("Запуск бота...")
+    # Плановые задачи
+    await setup_scheduler(deps, dp)
+
+    logger.info("Запуск бота...")
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+    _bind_signals(loop, stop_event)
+
+    # Aiogram 3: получим список типов апдейтов, чтобы Telegram не ругался
     try:
+        allowed = dp.resolve_used_update_types()
+    except Exception:
+        allowed = None
+
+    try:
+        logger.info("Start polling")
         await dp.start_polling(
             bot,
-            deps=deps,  # прокидываем deps в хендлеры (aiogram 3 — kwargs)
-            allowed_updates=dp.resolve_used_update_types(),
+            allowed_updates=allowed,
+            stop_event=stop_event,
         )
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Остановка по сигналу.")
     finally:
-        # страхуемся: если shutdown-хук не отработал — всё равно закрываем
-        try:
-            await deps.close()
-        except Exception:
-            pass
+        logger.info("Запуск процедур on_shutdown...")
+        # Закрываем DI/ресурсы
+        await deps.close()
+        logger.info("Процедуры on_shutdown завершены.")
 
+
+# --------------------------------- Entrypoint ---------------------------------
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        pass
