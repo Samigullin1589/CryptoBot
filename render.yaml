@@ -1,71 +1,62 @@
 # ===============================================================
 # Файл: render.yaml (ПРОДАКШН-ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Конфигурация для Render.com с разделением на web
-#           и worker, Health Check, Cron Job и переменными окружения.
+# Описание: Конфигурация Render Blueprints: worker + Key Value (Redis).
+# Документация: https://render.com/docs/blueprint-spec
 # ===============================================================
-services:
-  # Web-сервис: отвечает только на health checks, потребляет минимум ресурсов
-  - type: web
-    name: cryptobot-health
-    env: python
-    pythonVersion: "3.12.4"
-    plan: free # Бесплатного плана достаточно для этой задачи
-    buildCommand: "pip install --upgrade pip && pip install aiohttp==3.9.5"
-    startCommand: "python -m bot.main" # Запускаем main, который определит, что это web процесс
-    envVars:
-      - key: PYTHONPATH
-        value: .
-      - key: IS_WEB_PROCESS # Флаг для health check сервера
-        value: "true"
-    healthCheck:
-      path: /healthz
-      initialDelaySeconds: 15
 
-  # Worker: основной процесс бота, выполняет всю работу
+services:
+  # --- Фоновый worker: сам бот (aiogram 3) ---
   - type: worker
+    runtime: python
     name: cryptobot-worker
-    env: python
-    pythonVersion: "3.12.4"
-    plan: starter # Рекомендуется платный план для стабильной работы 24/7
-    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
-    startCommand: "python -m bot.main"
+    plan: starter
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: |
+      python -m bot.main
     envVars:
-      - key: PYTHONPATH
-        value: .
-      - key: IS_WEB_PROCESS
-        value: "false"
+      # Фикс версии Python согласно оф. документации Render:
+      # https://render.com/docs/python-version
+      - key: PYTHON_VERSION
+        value: 3.12.11
+
+      # Основные переменные (секреты вводятся вручную в дашборде)
       - key: BOT_TOKEN
-        fromSecretFile: .env
-      - key: ADMIN_USER_IDS
-        fromSecretFile: .env
-      - key: GEMINI_API_KEY
-        fromSecretFile: .env
-      - key: COINGECKO_API_KEY
-        fromSecretFile: .env
-      - key: CRYPTOCOMPARE_API_KEY
-        fromSecretFile: .env
-      - key: ADMIN_CHAT_ID
-        fromSecretFile: .env
-      - key: NEWS_CHAT_ID
-        fromSecretFile: .env
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: TZ
+        value: Asia/Tbilisi
+      - key: LOG_LEVEL
+        value: INFO
+
+      # Подключение к Key Value (Redis) из сервиса ниже:
       - key: REDIS_URL
         fromService:
-          type: redis
-          name: cryptobot-redis
+          name: cryptobot-kv
+          type: keyvalue
           property: connectionString
 
-  # База данных Redis
-  - type: redis
-    name: cryptobot-redis
-    ipAllowList: [] # Открыт для всех сервисов внутри Render
-    plan: free
-    maxmemoryPolicy: allkeys-lru
+      # ИИ-ключи (по необходимости)
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
 
-# Cron Jobs: для выполнения регулярных задач по расписанию
-jobs:
-  - type: cron
-    name: update-asics-database
-    schedule: "0 */6 * * *" # Каждые 6 часов
-    command: "echo 'This is a placeholder cron job. APScheduler is used inside the worker.'"
-    # Примечание: Мы используем APScheduler внутри worker'а, этот Cron Job - пример
-    # как можно было бы вынести задачу, если бы она была ресурсоемкой.
+      # Внешние API (по необходимости)
+      - key: CRYPTOCOMPARE_API_KEY
+        sync: false
+      - key: CMC_API_KEY
+        sync: false
+      - key: BLOCKCHAIR_API_KEY
+        sync: false
+      - key: GLASSNODE_API_KEY
+        sync: false
+
+  # --- Key Value (современная замена типа redis) ---
+  - type: keyvalue
+    name: cryptobot-kv
+    plan: free           # допустим для Key Value
+    ipAllowList: []      # доступ из приватной сети Render
+    maxmemoryPolicy: allkeys-lru
