@@ -22,7 +22,8 @@ import asyncio
 import contextlib
 import inspect
 import logging
-from typing import Any, Dict, Optional
+from importlib import import_module
+from typing import Any, Dict, Optional, Type
 
 import aiohttp
 import redis.asyncio as redis
@@ -66,12 +67,6 @@ try:
     from bot.services.moderation_service import ModerationService  # type: ignore
 except Exception:  # noqa: BLE001
     ModerationService = None  # type: ignore
-
-# Опциональный парсер (требуется AsicService по логам)
-try:
-    from bot.services.parser_service import ParserService  # type: ignore
-except Exception:  # noqa: BLE001
-    ParserService = None  # type: ignore
 
 
 logger = logging.getLogger(__name__)
@@ -127,7 +122,6 @@ class Deps:
         event_service: EventService
         quiz_service: QuizService
         user_service: UserService
-        parser_service: Optional[Any]         # если модуль parser_service доступен
 
         # опциональные — НЕ создаются в DI, а выставляются позже в main.py
         moderation_service: Optional[Any]
@@ -160,7 +154,6 @@ class Deps:
         self.event_service: Optional[EventService] = None
         self.quiz_service: Optional[QuizService] = None
         self.user_service: Optional[UserService] = None
-        self.parser_service: Optional[Any] = None  # тип зависит от наличия ParserService
 
         # Опциональные (создаём позже в main.py)
         self.moderation_service: Optional[Any] = None
@@ -217,7 +210,6 @@ class Deps:
             "event_service",
             "quiz_service",
             "user_service",
-            "parser_service",
         ]:
             svc = getattr(self, svc_name, None)
             if not svc:
@@ -298,7 +290,7 @@ class Deps:
         base_kwargs: Dict[str, Any] = {
             "settings": self.settings,
             "cfg": self.settings,               # на случай, если сервис просит cfg
-            "config": self.settings,            # <— некоторые сервисы ожидают параметр "config"
+            "config": self.settings,            # некоторые классы ждут имя параметра 'config'
             "redis": self.redis,
             "redis_pool": self.redis_pool,
             "http_session": self.http_session,
@@ -330,27 +322,36 @@ class Deps:
 
         # ВАЖНО: ModerationService / SecurityService НЕ поднимаем здесь — они зависят от Bot/конфигураций проекта.
         # Их нужно (при необходимости) создать в main.py после Bot/AdminService:
-        #   deps.moderation_service = ModerationService(bot=bot, user_service=deps.user_service, admin_service=deps.admin_service, ...)
-        #   deps.security_service   = SecurityService(moderation_service=deps.moderation_service, ...)
+        #   deps.moderation_service = ModerationService(...)
+        #   deps.security_service   = SecurityService(...)
 
-        # Опциональный парсер (если модуль присутствует в проекте)
-        if ParserService is not None:
-            self.parser_service = await self._make_instance(ParserService, base_kwargs)
-        else:
-            self.parser_service = None
+        # --- Опциональный ParserService для AsicService (если в проекте есть) ---
+        parser_service = None
+        for module_path, class_name in [
+            ("bot.services.parser_service", "ParserService"),
+            ("bot.services.asic_parser_service", "AsicParserService"),
+            ("bot.services.parsers.asic", "ParserService"),
+        ]:
+            try:
+                mod = import_module(module_path)
+                cls: Optional[Type[Any]] = getattr(mod, class_name, None)  # type: ignore[assignment]
+                if cls:
+                    parser_service = await self._make_instance(cls, base_kwargs)
+                    break
+            except Exception:
+                continue
 
         # Майнинг / рынок / ASIC
-        # AsicService по логам ожидает parser_service и config — передаём их явно.
         self.asic_service = await self._make_instance(
             AsicService,
-            base_kwargs | {"parser_service": self.parser_service, "config": self.settings}
+            base_kwargs | {"parser_service": parser_service}
         )
         self.market_service = await self._make_instance(
             MarketService,
             base_kwargs | {"asic_service": self.asic_service}
         )
 
-        # ТЕПЕРЬ можно создать MiningService — передаём market_data_service (было в логах)
+        # ТЕПЕРЬ можно создать MiningService — передаём market_data_service
         self.mining_service = await self._make_instance(
             MiningService,
             base_kwargs | {"market_data_service": self.market_data_service}
@@ -366,7 +367,11 @@ class Deps:
         }
         self.mining_game_service = await self._make_instance(MiningGameService, game_extra)
 
-        self.achievement_service = await self._make_instance(AchievementService, base_kwargs)
+        # AchievementService ТРЕБУЕТ market_data_service — передаём явно
+        self.achievement_service = await self._make_instance(
+            AchievementService,
+            base_kwargs | {"market_data_service": self.market_data_service}
+        )
         if self.mining_game_service and hasattr(self.mining_game_service, "__dict__"):
             with contextlib.suppress(Exception):
                 setattr(self.mining_game_service, "achievement_service", self.achievement_service)
