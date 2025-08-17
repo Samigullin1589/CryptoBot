@@ -21,8 +21,8 @@ HELP_TEXT = (
     "\n"
     "<b>Подсказки</b>\n"
     "• Можно писать просто: <code>btc</code>, <code>eth/usdt</code>, <code>btc usd</code> — бот поймёт.\n"
-    "• Админам доступны: <code>/health</code>, <code>/cache_info</code>, <code>/cache_clear</code>, <code>/version</code>, "
-    "<code>/ban</code>, <code>/unban</code>, <code>/mute</code>, <code>/warn</code>, <code>/pardon</code>.\n"
+    "• Админам доступны: <code>/health</code>, <code>/cache_info</code>, <code>/cache_clear</code>, "
+    "<code>/version</code>, <code>/ban</code>, <code>/unban</code>, <code>/mute</code>, <code>/warn</code>, <code>/pardon</code>.\n"
 )
 
 

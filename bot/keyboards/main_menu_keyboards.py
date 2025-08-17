@@ -19,7 +19,6 @@ from bot.keyboards.callback_factories import (
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """
     Большое главное меню на callback factories.
-    Никаких side-effects; чистая сборка клавиатуры.
     """
     kb = InlineKeyboardBuilder()
 
@@ -33,9 +32,8 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     kb.button(text="🧭 Центр", callback_data=CryptoCenterCallback(action="open").pack())
     kb.button(text="❓ Викторина", callback_data=QuizCallback(action="start").pack())
 
-    # Админ (видна всем; проверка доступа — в хендлерах)
+    # Админ (видна всем; право проверит хендлер)
     kb.button(text="⚙️ Админ", callback_data=AdminCallback(action="menu").pack())
 
-    # Компоновка (8 основных по 2 в ряд + 1 админ строкой)
     kb.adjust(2, 2, 2, 2, 1)
     return kb.as_markup()

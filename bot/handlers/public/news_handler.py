@@ -3,7 +3,9 @@
 # Version: "Distinguished Engineer" — Aug 17, 2025
 # Description:
 #   /news с кешем и постраничной навигацией.
-#   Исправления: безопасные фолбэки к методам NewsService, всегда есть callback.answer()
+#   • Исправлен синтаксис декоратора (была лишняя скобка)
+#   • Безопасные фолбэки к методам NewsService
+#   • Всегда call.answer() -> нет «вечной загрузки»
 # ======================================================================================
 
 from __future__ import annotations
@@ -63,13 +65,13 @@ async def _get_items(deps) -> List[Dict[str, Any]]:
     svc = getattr(deps, "news_service", None)
     if not svc:
         return []
-    # популярные варианты API
     calls = [
         ("get_cached", {}),
         ("get_all_latest_news", {}),
         ("get_latest", {"limit": 50}),
         ("fetch", {"limit": 50}),
         ("headlines", {"limit": 50}),
+        ("refresh_cache", {}),
     ]
     for name, kw in calls:
         data = await _try_call(svc, name, **kw)
@@ -98,7 +100,7 @@ async def cmd_news(message: Message, deps) -> None:
     )
 
 
-@router.callback_query(F.data.startswith("news:")))
+@router.callback_query(F.data.startswith("news:"))
 async def cb_news(call: CallbackQuery, deps) -> None:
     await call.answer()
     data = (call.data or "").split(":")

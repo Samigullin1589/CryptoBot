@@ -2,8 +2,8 @@
 # File: bot/handlers/price_handler.py
 # Version: "Distinguished Engineer" — Aug 17, 2025
 # Description:
-#   /price [SYMBOL] [QUOTE]
-#   Быстрые кнопки и безопасное извлечение цены с фолбэками.
+#   /price [SYMBOL] [QUOTE] + быстрые кнопки.
+#   Универсальный фолбэк к твоим сервисам, чтобы не было «Нет данных».
 # ======================================================================================
 
 from __future__ import annotations
@@ -44,13 +44,15 @@ async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
 
 
 async def _get_price_any(deps, symbol: str, quote: str) -> Optional[float]:
+    symbol_u, quote_u = symbol.upper(), quote.upper()
     svc_candidates = [getattr(deps, "price_service", None), getattr(deps, "market_data_service", None)]
     methods = [
-        (("get_price",), {"symbol": symbol, "vs": quote}),
-        (("get_price",), {"ticker": symbol, "vs": quote}),
-        (("get_spot", "spot", "price"), {"symbol": symbol, "vs": quote}),
-        (("get_ticker", "ticker"), {"symbol": symbol}),
-        (("fetch_price", "fetch_spot"), {"symbol": symbol, "vs": quote}),
+        (("get_price",), {"symbol": symbol_u, "vs": quote_u}),
+        (("get_price",), {"ticker": symbol_u, "vs": quote_u}),
+        (("get_spot", "spot", "price"), {"symbol": symbol_u, "vs": quote_u}),
+        (("get_ticker", "ticker"), {"symbol": symbol_u}),
+        (("fetch_price", "fetch_spot"), {"symbol": symbol_u, "vs": quote_u}),
+        (("get_pair",), {"pair": f"{symbol_u}{quote_u}"}),
     ]
     for svc in svc_candidates:
         for names, kw in methods:
@@ -63,20 +65,28 @@ async def _get_price_any(deps, symbol: str, quote: str) -> Optional[float]:
                         v = val.get(k)
                         if isinstance(v, (int, float)):
                             return float(v)
-                    cell = (val.get(symbol) or val.get(symbol.upper()) or val.get(symbol.lower()))
+                    cell = (val.get(symbol_u) or val.get(symbol_u.lower()))
                     if isinstance(cell, dict):
-                        v = cell.get(quote) or cell.get(quote.upper()) or cell.get(quote.lower())
+                        v = cell.get(quote_u) or cell.get(quote_u.lower())
                         if isinstance(v, (int, float)):
                             return float(v)
-    # тонкий вариант через coin_list_service -> market_data_service
+
+    # через coin_id
     cls = getattr(deps, "coin_list_service", None)
     mds = getattr(deps, "market_data_service", None)
     if cls and mds:
-        cid = await _try_call(cls, "find_coin_id", symbol) or await _try_call(cls, "get_id_by_ticker", symbol)
-        if isinstance(cid, str):
-            val = await _try_call(mds, "get_price_by_id", coin_id=cid, vs=quote)
-            if isinstance(val, (int, float)):
-                return float(val)
+        for m in ("find_coin_id", "get_id_by_ticker", "get_id_by_symbol", "resolve_id", "by_ticker"):
+            coin_id = await _try_call(cls, m, symbol_u)
+            if isinstance(coin_id, str) and coin_id:
+                for name in ("get_price_by_id", "price_by_id", "get_spot_by_id", "fetch_price_by_id"):
+                    val = await _try_call(mds, name, coin_id=coin_id, vs=quote_u)
+                    if isinstance(val, (int, float)):
+                        return float(val)
+                    if isinstance(val, dict):
+                        v = (val.get("price") or val.get("spot") or val.get("last"))
+                        if isinstance(v, (int, float)):
+                            return float(v)
+                break
     return None
 
 
@@ -107,11 +117,7 @@ async def cmd_price(message: Message, deps) -> None:
         return
 
     text = f"<b>{symbol}/{quote}</b>: <code>{_fmt_price(price)}</code>"
-    try:
-        top = await _try_call(getattr(deps, "price_service", None), "_get_top_symbols") or ["BTC", "ETH", "BNB", "SOL", "XRP"]
-    except Exception:
-        top = ["BTC", "ETH", "BNB", "SOL", "XRP"]
-
+    top = await _try_call(getattr(deps, "price_service", None), "_get_top_symbols") or ["BTC", "ETH", "BNB", "SOL", "XRP"]
     await message.answer(text, parse_mode="HTML", reply_markup=_kb_top(list(top), quote))
 
 
@@ -125,14 +131,10 @@ async def cb_price(call: CallbackQuery, deps) -> None:
 
     if parts[1] == "refresh":
         quote = (parts[2] if len(parts) > 2 else "USDT").upper()
-        try:
-            top = await _try_call(getattr(deps, "price_service", None), "_get_top_symbols") or ["BTC", "ETH", "BNB", "SOL", "XRP"]
-        except Exception:
-            top = ["BTC", "ETH", "BNB", "SOL", "XRP"]
+        top = await _try_call(getattr(deps, "price_service", None), "_get_top_symbols") or ["BTC", "ETH", "BNB", "SOL", "XRP"]
         await call.message.edit_reply_markup(reply_markup=_kb_top(list(top), quote))  # type: ignore[union-attr]
         return
 
-    # parts: ["price", SYMBOL, QUOTE]
     symbol = parts[1].upper()
     quote = (parts[2] if len(parts) > 2 else "USDT").upper()
     price = await _get_price_any(deps, symbol, quote)
