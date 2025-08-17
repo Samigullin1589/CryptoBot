@@ -1,13 +1,15 @@
 # ======================================================================================
 # File: bot/handlers/news_handler.py
-# Version: "Distinguished Engineer" — Aug 16, 2025
+# Version: "Distinguished Engineer" — Aug 17, 2025
 # Description:
-#   /news with cached items (NewsService). Paged inline navigation.
+#   /news с кешем и постраничной навигацией.
+#   Исправления: безопасные фолбэки к методам NewsService, всегда есть callback.answer()
 # ======================================================================================
 
 from __future__ import annotations
 
-from typing import List, Dict, Any
+import asyncio
+from typing import List, Dict, Any, Optional
 
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -32,21 +34,57 @@ def _render(items: List[Dict[str, Any]], page: int) -> str:
         return "Пока новостей нет."
     lines = [f"<b>📰 Крипто-новости — страница {page+1}</b>", ""]
     for it in chunk:
-        title = (it.get("title") or "").strip()
-        url = (it.get("url") or "").strip()
-        src = it.get("src") or ""
-        lines.append(f"• <a href=\"{url}\">{title}</a> <i>({src})</i>")
+        title = (it.get("title") or it.get("headline") or "").strip()
+        url = (it.get("url") or it.get("link") or "").strip()
+        src = (it.get("src") or it.get("source") or "").strip()
+        if url and title:
+            lines.append(f"• <a href=\"{url}\">{title}</a> <i>({src})</i>")
+        elif title:
+            lines.append(f"• {title}")
     lines.append("")
     lines.append(f"<i>Показано {len(chunk)} из {len(items)}.</i>")
     return "\n".join(lines)
 
 
+async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
+    if not obj or not hasattr(obj, method):
+        return None
+    fn = getattr(obj, method)
+    try:
+        res = fn(*args, **kwargs)
+        if asyncio.iscoroutine(res):
+            res = await res
+        return res
+    except Exception:
+        return None
+
+
 async def _get_items(deps) -> List[Dict[str, Any]]:
-    svc = deps.news_service  # type: ignore[attr-defined]
-    items = await svc.get_cached()
-    if not items:
-        items = await svc.get_all_latest_news()
-    return items or []
+    svc = getattr(deps, "news_service", None)
+    if not svc:
+        return []
+    # популярные варианты API
+    calls = [
+        ("get_cached", {}),
+        ("get_all_latest_news", {}),
+        ("get_latest", {"limit": 50}),
+        ("fetch", {"limit": 50}),
+        ("headlines", {"limit": 50}),
+    ]
+    for name, kw in calls:
+        data = await _try_call(svc, name, **kw)
+        if not data:
+            continue
+        items: List[Dict[str, Any]] = []
+        if isinstance(data, dict):
+            data = data.get("items") or data.get("news") or data.get("results") or []
+        if isinstance(data, (list, tuple)):
+            for it in data:
+                if isinstance(it, dict):
+                    items.append(it)
+        if items:
+            return items
+    return []
 
 
 @router.message(Command("news"))
@@ -60,10 +98,12 @@ async def cmd_news(message: Message, deps) -> None:
     )
 
 
-@router.callback_query(F.data.startswith("news:"))
+@router.callback_query(F.data.startswith("news:")))
 async def cb_news(call: CallbackQuery, deps) -> None:
+    await call.answer()
     data = (call.data or "").split(":")
     items = await _get_items(deps)
+
     if len(data) >= 3 and data[1] == "page":
         try:
             page = max(0, int(data[2]))
@@ -75,17 +115,21 @@ async def cb_news(call: CallbackQuery, deps) -> None:
             disable_web_page_preview=True,
             reply_markup=_page_kb(page),
         )  # type: ignore[union-attr]
-        await call.answer()
         return
 
-    if data[1] == "refresh":
+    if len(data) >= 2 and data[1] == "refresh":
         await call.message.edit_text(
             _render(items, page=0),
             parse_mode="HTML",
             disable_web_page_preview=True,
             reply_markup=_page_kb(0),
         )  # type: ignore[union-attr]
-        await call.answer("Обновлено.")
         return
 
-    await call.answer("Неизвестное действие.")
+    # неизвестное действие — просто перерисуем первую страницу
+    await call.message.edit_text(
+        _render(items, page=0),
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=_page_kb(0),
+    )  # type: ignore[union-attr]
