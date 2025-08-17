@@ -1,97 +1,185 @@
-# ===============================================================
-# Файл: bot/services/moderation_service.py (ПРОДАКШН-ВЕРСИЯ 2025 - ПОЛНАЯ РЕАЛИЗАЦИЯ)
-# Описание: Сервис, инкапсулирующий всю логику модерации:
-#           бан, предупреждения, работа со стоп-словами и
-#           уведомление администраторов.
-# ИСПРАВЛЕНИЕ: Добавлен недостающий метод process_threat_action.
-# ===============================================================
-import logging
-from typing import List, Optional
-from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import Message
+# ======================================================================================
+# Файл: bot/services/moderation_service.py
+# Версия: 2025-08-17
+# ======================================================================================
 
-from bot.services.user_service import UserService
-from bot.services.admin_service import AdminService
-from bot.services.stop_word_service import StopWordService
-from bot.config.settings import ThreatFilterConfig
-from bot.utils.models import UserRole
-from bot.keyboards.threat_keyboards import get_threat_notification_keyboard
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+
+from redis.asyncio import Redis
+
+from bot.config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
-class ModerationService:
-    """Оркестрирует все действия, связанные с модерацией чата."""
 
-    def __init__(self, bot: Bot, user_service: UserService, admin_service: AdminService,
-                 stop_word_service: StopWordService, config: ThreatFilterConfig):
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _prefix(settings: Settings) -> str:
+    return (
+        getattr(settings, "redis_prefix", None)
+        or getattr(settings, "project_slug", None)
+        or "bot"
+    )
+
+
+@dataclass
+class BanRecord:
+    user_id: int
+    by_id: int
+    reason: Optional[str]
+    created_at: str  # iso
+    until: Optional[str]  # iso or None (permanent)
+
+    @property
+    def is_permanent(self) -> bool:
+        return self.until is None
+
+
+@dataclass
+class MuteRecord:
+    user_id: int
+    by_id: int
+    reason: Optional[str]
+    created_at: str
+    until: Optional[str]
+
+
+class ModerationService:
+    def __init__(
+        self,
+        *,
+        redis: Redis,
+        settings: Settings,
+        bot: Any | None = None,
+        user_service: Any | None = None,
+        admin_service: Any | None = None,
+        stop_word_service: Any | None = None,
+        config: Any | None = None,
+    ) -> None:
+        self.redis = redis
+        self.settings = settings
         self.bot = bot
         self.user_service = user_service
         self.admin_service = admin_service
         self.stop_word_service = stop_word_service
         self.config = config
 
-    async def ban_user(self, admin_id: int, target_user_id: int, target_chat_id: int,
-                       reason: str, original_message: Optional[Message] = None) -> str:
-        """Банит пользователя, удаляет его сообщения и уведомляет об этом."""
-        try:
-            await self.bot.ban_chat_member(chat_id=target_chat_id, user_id=target_user_id)
-            logger.info(f"Администратор {admin_id} забанил пользователя {target_user_id} в чате {target_chat_id} по причине: {reason}")
-            
-            if original_message:
-                try:
-                    await original_message.delete()
-                except TelegramBadRequest:
-                    pass # Сообщение уже могло быть удалено
-            
-            # Обновляем роль пользователя в нашей БД
-            user = await self.user_service.get_user(target_user_id)
-            if user:
-                user.role = UserRole.BANNED
-                await self.user_service.save_user(user)
+        self._pfx = _prefix(settings)
 
-            return f"✅ Пользователь {target_user_id} успешно забанен. Причина: {reason}"
-        except TelegramBadRequest as e:
-            logger.error(f"Не удалось забанить пользователя {target_user_id}: {e.message}")
-            return f"❌ Не удалось забанить пользователя. Возможно, у меня недостаточно прав."
-        except Exception as e:
-            logger.error(f"Непредвиденная ошибка при бане пользователя {target_user_id}: {e}", exc_info=True)
-            return "❌ Произошла внутренняя ошибка при попытке бана."
+    # ---------- BAN ----------
 
-    async def process_detected_threat(self, message: Message, threat_score: float, reasons: List[str]):
-        """Обрабатывает угрозу, обнаруженную фильтром."""
-        user = message.from_user
-        if not user: return
+    def _ban_key(self, user_id: int) -> str:
+        return f"{self._pfx}:mod:ban:{user_id}"
 
-        # Логика снижения рейтинга доверия (если она будет реализована в UserService)
-        # await self.user_service.log_violation(...)
+    async def ban(
+        self,
+        user_id: int,
+        *,
+        by_id: int,
+        reason: Optional[str] = None,
+        duration: Optional[timedelta] = None,
+    ) -> BanRecord:
+        created = _utc_now()
+        until = None if duration is None else (created + duration)
 
-        reasons_text = "\n".join([f"• {r}" for r in reasons])
-        admin_alert = (
-            f"🚨 <b>Обнаружена угроза!</b> 🚨\n\n"
-            f"<b>Пользователь:</b> <a href='tg://user?id={user.id}'>{user.full_name}</a> (@{user.username})\n"
-            f"<b>ID:</b> <code>{user.id}</code>\n"
-            f"<b>Чат ID:</b> <code>{message.chat.id}</code>\n"
-            f"<b>Балл угрозы:</b> {threat_score:.2f}\n"
-            f"<b>Причины:</b>\n{reasons_text}\n\n"
-            f"<i>Сообщение удалено.</i>"
+        rec = BanRecord(
+            user_id=user_id,
+            by_id=by_id,
+            reason=reason,
+            created_at=created.isoformat(),
+            until=None if until is None else until.isoformat(),
         )
-        
-        # message.message_id больше не нужен, т.к. сообщение удаляется сразу
-        keyboard = get_threat_notification_keyboard(user.id, message.chat.id)
-        await self.admin_service.notify_admins(admin_alert, reply_markup=keyboard)
 
-    # --- Методы для управления стоп-словами ---
-    async def add_stop_word(self, word: str) -> str:
-        success = await self.stop_word_service.add_stop_word(word)
-        return f"✅ Слово «{word}» добавлено в стоп-лист." if success else f"ℹ️ Слово «{word}» уже было в стоп-листе."
+        key = self._ban_key(user_id)
+        data = json.dumps(asdict(rec), ensure_ascii=False)
+        if duration is None:
+            await self.redis.set(key, data)  # без TTL
+        else:
+            ttl = int(duration.total_seconds())
+            ttl = max(ttl, 1)
+            await self.redis.setex(key, ttl, data)
 
-    async def remove_stop_word(self, word: str) -> str:
-        success = await self.stop_word_service.remove_stop_word(word)
-        return f"✅ Слово «{word}» удалено из стоп-листа." if success else f"⚠️ Слово «{word}» не найдено в стоп-листе."
+        logger.info("BAN set user_id=%s by=%s duration=%s reason=%r", user_id, by_id, duration, reason)
+        return rec
 
-    async def list_stop_words(self) -> str:
-        words = await self.stop_word_service.get_all_stop_words()
-        if not words:
-            return "🚫 Стоп-лист пуст."
-        return "<b>Текущий стоп-лист:</b>\n\n" + ", ".join(f"<code>{word}</code>" for word in words)
+    async def unban(self, user_id: int) -> bool:
+        res = await self.redis.delete(self._ban_key(user_id))
+        logger.info("UNBAN user_id=%s -> %s", user_id, bool(res))
+        return bool(res)
+
+    async def is_banned(self, user_id: int) -> bool:
+        return await self.redis.exists(self._ban_key(user_id)) == 1
+
+    async def get_ban(self, user_id: int) -> Optional[BanRecord]:
+        raw = await self.redis.get(self._ban_key(user_id))
+        if not raw:
+            return None
+        try:
+            obj = json.loads(raw)
+            return BanRecord(**obj)
+        except Exception:
+            logger.warning("Corrupted ban record for user_id=%s", user_id)
+            return None
+
+    # ---------- MUTE ----------
+
+    def _mute_key(self, user_id: int) -> str:
+        return f"{self._pfx}:mod:mute:{user_id}"
+
+    async def mute(
+        self,
+        user_id: int,
+        *,
+        by_id: int,
+        reason: Optional[str] = None,
+        duration: Optional[timedelta] = None,
+    ) -> MuteRecord:
+        created = _utc_now()
+        until = None if duration is None else (created + duration)
+
+        rec = MuteRecord(
+            user_id=user_id,
+            by_id=by_id,
+            reason=reason,
+            created_at=created.isoformat(),
+            until=None if until is None else until.isoformat(),
+        )
+
+        key = self._mute_key(user_id)
+        data = json.dumps(asdict(rec), ensure_ascii=False)
+        if duration is None:
+            await self.redis.set(key, data)
+        else:
+            ttl = int(duration.total_seconds())
+            ttl = max(ttl, 1)
+            await self.redis.setex(key, ttl, data)
+
+        logger.info("MUTE set user_id=%s by=%s duration=%s reason=%r", user_id, by_id, duration, reason)
+        return rec
+
+    async def unmute(self, user_id: int) -> bool:
+        res = await self.redis.delete(self._mute_key(user_id))
+        logger.info("UNMUTE user_id=%s -> %s", user_id, bool(res))
+        return bool(res)
+
+    async def is_muted(self, user_id: int) -> bool:
+        return await self.redis.exists(self._mute_key(user_id)) == 1
+
+    async def get_mute(self, user_id: int) -> Optional[MuteRecord]:
+        raw = await self.redis.get(self._mute_key(user_id))
+        if not raw:
+            return None
+        try:
+            obj = json.loads(raw)
+            return MuteRecord(**obj)
+        except Exception:
+            logger.warning("Corrupted mute record for user_id=%s", user_id)
+            return None

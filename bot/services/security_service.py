@@ -1,27 +1,28 @@
 # ======================================================================================
 # File: bot/services/security_service.py
-# Version: "Distinguished Engineer" — MAX Build (Aug 16, 2025)
+# Version: "Distinguished Engineer" — MAX Build (Aug 17, 2025)
 # Description:
 #   Production-grade anti-spam & safety service for aiogram + Redis.
 #   Features:
 #     • Fast heuristics for spam/toxicity/raid
 #     • Offense tracking in Redis with escalation (warn → mute → autoban)
-#     • Media analysis (photos/docs) via AIContentService vision (Gemini fallback)
+#     • Media analysis (photos/docs) via AIContentService vision (Gemini/OpenAI fallback)
 #     • Domain allow/deny lists, link density, mention storms, repeats
 #     • Safe-by-default: if AI unavailable — heuristics still protect
 #     • Pluggable thresholds via settings.threat_filter (with safe defaults)
 #
 #   Public API (used by middlewares/handlers):
 #     - is_enabled() -> bool
+#     - is_blocked(user_id) -> bool                   # uses ModerationService if present
 #     - analyze_message(message) -> Verdict
 #     - register_violation(user_id, chat_id, reason, weight=1) -> Escalation
-#     - decide_and_enforce(bot, message, verdict)  # deletes/mutes/bans
+#     - decide_and_enforce(bot, message, verdict)     # deletes/mutes/bans in groups
 #     - ban_user(admin_id, target_user_id, target_chat_id, reason)
 #     - pardon_user(admin_id, target_user_id, target_chat_id)
 #
-#   Redis keys:
-#     sec:off:u:<uid>:c:<chat_id>       -> integer offense counter (EX=window)
-#     sec:last:u:<uid>:c:<chat_id>      -> last offense timestamp
+#   Redis keys (with project prefix):
+#     <pfx>:sec:off:u:<uid>:c:<chat_id>   -> integer offense counter (EX=window)
+#     <pfx>:sec:last:u:<uid>:c:<chat_id>  -> last offense timestamp
 # ======================================================================================
 
 from __future__ import annotations
@@ -33,14 +34,21 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import redis.asyncio as redis
 from aiogram import Bot
 from aiogram import types as tg
 
-from bot.config.settings import settings
+from bot.config.settings import settings, Settings
 from bot.services.ai_content_service import AIContentService
+
+try:
+    # Опционально — даёт «жёсткий» глобальный бан по твоему ModerationService
+    from bot.services.moderation_service import ModerationService  # type: ignore
+except Exception:  # noqa: BLE001
+    ModerationService = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +56,11 @@ logger = logging.getLogger(__name__)
 URL_RE = re.compile(
     r"(?i)\b((?:https?://|www\.)[^\s<>\"']+|t\.me/[A-Za-z0-9_]+|@[A-Za-z0-9_]{4,})"
 )
-REPEAT_CHUNK_RE = re.compile(r"(.)\1{6,}")  # 7+ same chars
+REPEAT_CHUNK_RE = re.compile(r"(.)\1{6,}")  # 7+ same chars подряд
 CAPS_HEAVY_RE = re.compile(r"[A-ZА-ЯЁ]{8,}")
 INVITE_RE = re.compile(r"(joinchat|invite|airdrop|free\s+crypto|bonus|giveaway)", re.IGNORECASE)
 
-# ---------- defaults (will be overridden by settings.threat_filter if present) ----------
+# ---------- defaults (overridden by settings.threat_filter if present) ----------
 DEF_ENABLED = True
 DEF_TOXICITY_THRESHOLD = 0.75
 DEF_OFFENSE_WINDOW_SEC = 6 * 3600
@@ -81,7 +89,7 @@ class Verdict:
     score: float = 0.0
     labels: List[str] = None  # type: ignore[assignment]
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.labels is None:
             self.labels = []
 
@@ -98,17 +106,23 @@ class SecurityService:
         self,
         *,
         redis: redis.Redis,
+        settings: Optional[Settings] = None,
         ai_content_service: Optional[AIContentService] = None,
+        moderation_service: Optional[Any] = None,
         **_: Any,
     ) -> None:
+        """
+        Safe-by-default. If AI is missing, heuristics still protect.
+        """
         self.redis = redis
+        self.settings: Settings = settings or globals().get("settings")  # type: ignore[assignment]
         self.ai = ai_content_service
+        self.moderation: Optional[ModerationService] = moderation_service  # type: ignore[assignment]
 
-        tf = getattr(settings, "threat_filter", None)
+        tf = getattr(self.settings, "threat_filter", None)
         self.enabled: bool = getattr(tf, "enabled", DEF_ENABLED) if tf else DEF_ENABLED
         self.toxicity_thr: float = getattr(tf, "toxicity_threshold", DEF_TOXICITY_THRESHOLD) if tf else DEF_TOXICITY_THRESHOLD
 
-        # Optional extended fields (if present in your settings)
         self.window_sec: int = getattr(tf, "offense_window_seconds", DEF_OFFENSE_WINDOW_SEC) if tf else DEF_OFFENSE_WINDOW_SEC
         self.warn_thr: int = getattr(tf, "warn_threshold", DEF_WARN_THRESHOLD) if tf else DEF_WARN_THRESHOLD
         self.mute_thr: int = getattr(tf, "mute_threshold", DEF_MUTE_THRESHOLD) if tf else DEF_MUTE_THRESHOLD
@@ -117,7 +131,17 @@ class SecurityService:
         self.allow_domains: Sequence[str] = tuple(getattr(tf, "allow_domains", DEF_DOMAIN_ALLOW) or DEF_DOMAIN_ALLOW)
         self.deny_domains: Sequence[str] = tuple(getattr(tf, "deny_domains", DEF_DOMAIN_DENY) or DEF_DOMAIN_DENY)
 
-        logger.info("SecurityService инициализирован. Защита %s.", "включена" if self.enabled else "выключена")
+        # Project-wide Redis prefix (isolation across envs)
+        self._pfx: str = (
+            getattr(self.settings, "redis_prefix", None)
+            or getattr(self.settings, "project_slug", None)
+            or "bot"
+        )
+
+        logger.info(
+            "SecurityService initialized: enabled=%s, window=%ss, thresholds(warn/mute/ban)=%s/%s/%s.",
+            self.enabled, self.window_sec, self.warn_thr, self.mute_thr, self.ban_thr
+        )
 
     # -------- lifecycle --------
 
@@ -126,13 +150,29 @@ class SecurityService:
         inst = cls(**kwargs)
         return inst
 
-    async def close(self) -> None:
-        pass  # no-op
+    async def close(self) -> None:  # for DI .close()
+        pass
+
+    async def aclose(self) -> None:  # for DI .aclose()
+        await self.close()
 
     # -------- toggles --------
 
     def is_enabled(self) -> bool:
         return bool(self.enabled)
+
+    # External ban integration for middleware compatibility
+    async def is_blocked(self, user_id: int) -> bool:
+        """
+        If ModerationService is present, defer to it for global/user-level bans.
+        Otherwise, return False (anti-spam works per-chat via escalation).
+        """
+        if self.moderation and hasattr(self.moderation, "is_banned"):
+            try:
+                return bool(await self.moderation.is_banned(user_id))  # type: ignore[misc]
+            except Exception:
+                return False
+        return False
 
     # -------- high-level API --------
 
@@ -152,8 +192,8 @@ class SecurityService:
 
         # 1) Quick heuristics on text
         if text:
-            t_res, t_labels, t_score = self._heuristics_text(text)
-            if not t_res:
+            t_ok, t_labels, t_score = self._heuristics_text(text)
+            if not t_ok:
                 reasons.append("heuristics_text")
             labels.extend(t_labels)
             score = max(score, t_score)
@@ -169,7 +209,8 @@ class SecurityService:
                 labels.append("link_heavy")
                 score = max(score, 0.6)
 
-            if text.count("@") >= 8:
+            at_count = text.count("@")
+            if at_count >= 8 and len(text) < 2000:
                 labels.append("mentions_storm")
                 score = max(score, 0.8)
                 reasons.append("mentions_storm")
@@ -184,11 +225,10 @@ class SecurityService:
 
         # Decision
         if reasons:
-            # Escalate action by score/labels
             action = "delete"
-            if "phishing" in labels or "suspicious_link" in labels:
-                action = "delete"
             if "nsfw" in labels or score >= 0.95:
+                action = "delete"
+            if "phishing" in labels or "suspicious_link" in labels:
                 action = "delete"
             return Verdict(ok=False, reasons=sorted(set(reasons)), action=action, score=score, labels=sorted(set(labels)))
 
@@ -197,6 +237,8 @@ class SecurityService:
     async def decide_and_enforce(self, bot: Bot, message: tg.Message, verdict: Verdict) -> Optional[Escalation]:
         """
         Applies the verdict and updates offense counters with escalation.
+        - In private chats: only delete & warn.
+        - In groups/supergroups: delete + (warn/mute/ban).
         Returns Escalation or None.
         """
         if verdict.ok:
@@ -204,21 +246,24 @@ class SecurityService:
 
         user_id = message.from_user.id if message.from_user else None
         chat_id = message.chat.id if message.chat else None
+        chat_type = message.chat.type if message.chat else "private"
         if not user_id or not chat_id:
             return None
 
-        # 1) delete message
+        # 1) delete message (if possible)
         with contextlib.suppress(Exception):
             await message.delete()
 
         # 2) register offense & escalate
         esc = await self.register_violation(user_id, chat_id, reason=";".join(verdict.reasons))
 
+        is_group = chat_type in ("group", "supergroup")
+
         # 3) enforce escalation
         if esc.decision == "warn":
-            await self._send_ephemeral(bot, chat_id, f"⚠️ Пользователь {self._u_mention(message)}: предупреждение за спам/нарушение.")
-        elif esc.decision == "mute":
-            until = tg.utils.datetime.datetime.now(tg.utils.datetime.timezone.utc) + tg.utils.timedelta(seconds=esc.mute_seconds)
+            await self._send_ephemeral(bot, chat_id, f"⚠️ {self._u_mention(message)}: предупреждение за спам/нарушение.")
+        elif esc.decision == "mute" and is_group:
+            until = datetime.now(timezone.utc) + timedelta(seconds=esc.mute_seconds or self.mute_seconds)
             with contextlib.suppress(Exception):
                 await bot.restrict_chat_member(
                     chat_id=chat_id,
@@ -226,11 +271,17 @@ class SecurityService:
                     permissions=tg.ChatPermissions(can_send_messages=False),
                     until_date=until,
                 )
-            await self._send_ephemeral(bot, chat_id, f"🔇 Пользователь {self._u_mention(message)} заглушен на {esc.mute_seconds // 60} мин.")
-        elif esc.decision == "ban":
+            await self._send_ephemeral(bot, chat_id, f"🔇 {self._u_mention(message)} заглушен на {(esc.mute_seconds or self.mute_seconds) // 60} мин.")
+        elif esc.decision == "ban" and is_group:
+            # Баним в чате
             with contextlib.suppress(Exception):
                 await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-            await self._send_ephemeral(bot, chat_id, f"⛔ Пользователь {self._u_mention(message)} заблокирован за повторные нарушения.")
+            await self._send_ephemeral(bot, chat_id, f"⛔ {self._u_mention(message)} заблокирован за повторные нарушения.")
+
+            # При наличии ModerationService — фиксируем глобальный бан (опционально)
+            if self.moderation and hasattr(self.moderation, "ban"):
+                with contextlib.suppress(Exception):
+                    await self.moderation.ban(user_id=user_id, by_id=0, reason="auto-ban by security", duration=None)  # type: ignore[misc]
 
         return esc
 
@@ -238,8 +289,8 @@ class SecurityService:
         """
         Increments offense counter within window. Decides escalation stage.
         """
-        k = f"sec:off:u:{user_id}:c:{chat_id}"
-        k_last = f"sec:last:u:{user_id}:c:{chat_id}"
+        k = f"{self._pfx}:sec:off:u:{user_id}:c:{chat_id}"
+        k_last = f"{self._pfx}:sec:last:u:{user_id}:c:{chat_id}"
         try:
             pipe = self.redis.pipeline()
             pipe.incrby(k, amount=max(1, int(weight)))
@@ -262,8 +313,7 @@ class SecurityService:
 
     async def ban_user(self, admin_id: int, target_user_id: int, target_chat_id: int, reason: str = "") -> str:
         """
-        Helper for handlers (admin panels). Does not require message context.
-        (Actual banning is done by handlers with Bot instance; this method returns text.)
+        Helper for handlers (admin panels). Does not perform Telegram API calls here.
         """
         txt = f"Администратор {admin_id} инициировал бан {target_user_id} в чате {target_chat_id}."
         if reason:
@@ -276,8 +326,8 @@ class SecurityService:
         Clears counters and returns text for UI.
         """
         with contextlib.suppress(Exception):
-            await self.redis.delete(f"sec:off:u:{target_user_id}:c:{target_chat_id}")
-            await self.redis.delete(f"sec:last:u:{target_user_id}:c:{target_chat_id}")
+            await self.redis.delete(f"{self._pfx}:sec:off:u:{target_user_id}:c:{target_chat_id}")
+            await self.redis.delete(f"{self._pfx}:sec:last:u:{target_user_id}:c:{target_chat_id}")
         txt = f"Администратор {admin_id} помиловал {target_user_id} в чате {target_chat_id}."
         logger.info("SecurityService: %s", txt)
         return txt
@@ -289,7 +339,6 @@ class SecurityService:
         if m.photo:
             types.append("photo")
         if m.document:
-            # try to distinguish image docs
             mime = getattr(m.document, "mime_type", "") or ""
             if mime.startswith("image/"):
                 types.append("image")
@@ -311,6 +360,7 @@ class SecurityService:
             labels.append("repeat")
             score = max(score, 0.7)
             ok = False
+        # caps — сигнал, но не всегда блокирующий
         if CAPS_HEAVY_RE.search(text) and len(text) >= 16:
             labels.append("caps")
             score = max(score, 0.55)
@@ -362,9 +412,6 @@ class SecurityService:
         if not self.ai:
             return True, [], 0.0
 
-        # Collect file_ids to download via Bot.get_file? We don't download in service.
-        # We’ll pass Telegram file IDs/bytes to AI service only if it supports it.
-        # Our AIContentService vision method accepts: bytes OR (tg.Message, bot) pair.
         labels: List[str] = []
         score = 0.0
 
@@ -383,10 +430,8 @@ class SecurityService:
             # Preferred signature: (message=..., bot=...) so service can fetch bytes by itself
             res: Dict[str, Any]
             try:
-                # Try call with named args
-                res = await method(message=message, bot=message.bot)  # type: ignore[misc]
+                res = await method(message=message, bot=getattr(message, "bot", None))  # type: ignore[misc]
             except TypeError:
-                # Fallback: just raw text prompt of what to check
                 prompt = "Проверь изображение/медиа на спам, фишинг, NSFW, QR/фишинговые линки, крипто-лохотроны."
                 res = await method(prompt)  # type: ignore[misc]
 
@@ -402,19 +447,35 @@ class SecurityService:
             v_score = float(res.get("score", 0.0))
             reason = str(res.get("reason", ""))
 
-            if not v_ok:
-                if reason:
-                    v_labels.append(reason)
-            return v_ok, v_labels, v_score
+            if not v_ok and reason:
+                v_labels.append(reason)
+
+            # Normalize NSFW/phishing hints from AI
+            if any(lbl.lower() in {"nsfw", "adult", "explicit"} for lbl in v_labels):
+                labels.append("nsfw")
+                v_ok = False
+                v_score = max(v_score, 0.95)
+            if any("phish" in lbl.lower() for lbl in v_labels):
+                labels.append("phishing_image")
+                v_ok = False
+                v_score = max(v_score, 0.9)
+
+            labels.extend(v_labels)
+            score = max(score, v_score)
+            return v_ok, labels, score
         except Exception as e:
             logger.debug("Vision gate error: %s", e)
             return True, [], 0.0
 
     async def _send_ephemeral(self, bot: Bot, chat_id: int, text: str) -> None:
+        """
+        Sends a temporary message and deletes it after 5 seconds.
+        """
         with contextlib.suppress(Exception):
             msg = await bot.send_message(chat_id, text)
             await asyncio.sleep(5)
-            await msg.delete()
+            with contextlib.suppress(Exception):
+                await msg.delete()
 
     @staticmethod
     def _u_mention(message: tg.Message) -> str:
@@ -423,3 +484,6 @@ class SecurityService:
             return "user"
         name = (u.full_name or u.username or str(u.id)).strip()
         return f"<a href=\"tg://user?id={u.id}\">{html.escape(name)}</a>"
+
+
+__all__ = ["SecurityService", "Verdict", "Escalation"]
