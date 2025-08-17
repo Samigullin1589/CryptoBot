@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import signal
 from importlib import import_module
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Type
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -70,7 +71,7 @@ async def setup_commands(bot: Bot) -> None:
 def _collect_routers(module) -> List[Router]:
     """Ищет все объекты Router в модуле (router, *_router и т.п.)."""
     routers: List[Router] = []
-    for name, obj in vars(module).items():
+    for _, obj in vars(module).items():
         if isinstance(obj, Router):
             routers.append(obj)
     return routers
@@ -88,7 +89,6 @@ def register_routers(dp: Dispatcher) -> None:
     """
     Импортирует и регистрирует все известные роутеры проекта.
     Если какой-то модуль отсутствует — просто пропускаем (без заглушек).
-    Под твою структуру каталогов: handlers/{public,tools,admin,game,threats}
     """
     module_paths: List[str] = [
         # --- public ---
@@ -166,6 +166,31 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
             pass
 
 
+# --------- Вспомогательная фабрика (безопасное создание по сигнатуре) ---------
+
+def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        sig = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        sig = inspect.signature(getattr(callable_obj, "__init__", callable_obj))
+    supported = {
+        p.name
+        for p in sig.parameters.values()
+        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+    }
+    return {k: v for k, v in candidates.items() if k in supported}
+
+
+def _safe_make_instance(cls: Type, candidates: Dict[str, Any]) -> Any:
+    """Пытается вызвать async/classmethod create(...) или __init__(...)."""
+    create = getattr(cls, "create", None)
+    if create and inspect.iscoroutinefunction(getattr(create, "__func__", create)):
+        kwargs = _filter_kwargs(create, candidates)
+        return asyncio.get_event_loop().run_until_complete(create(**kwargs))  # type: ignore[misc]
+    kwargs = _filter_kwargs(cls, candidates)
+    return cls(**kwargs)  # type: ignore[misc]
+
+
 # -------------------- Создание модерации/безопасности -------------------------
 
 def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
@@ -173,63 +198,50 @@ def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     Создаёт ModerationService и SecurityService и сохраняет в deps.
     Все импорты и зависимости — опционально, чтобы не валить процесс.
     """
-    # Опциональные импорты сервисов
-    try:
-        from bot.services.moderation_service import ModerationService  # type: ignore
-    except Exception as e:
-        logger.info("ModerationService недоступен: %s — пропускаю создание.", e)
-        return
-
-    try:
-        from bot.services.security_service import SecurityService  # type: ignore
-    except Exception as e:
-        SecurityService = None  # type: ignore
-        logger.info("SecurityService недоступен: %s — подключу только модерацию.", e)
+    # Сбор общих кандидатов для конструкторов
+    base_kwargs: Dict[str, Any] = {
+        "bot": bot,
+        "settings": settings,
+        "config": settings,         # если сервис ждёт параметр 'config'
+        "redis": deps.redis,
+        "http_session": deps.http_session,
+        "user_service": deps.user_service,
+        "admin_service": deps.admin_service,
+        "moderation_service": deps.moderation_service,  # для SecurityService
+    }
 
     # Необязательный StopWordService
     stop_word_service = None
     try:
         from bot.services.stop_word_service import StopWordService  # type: ignore
-        # конструктор подбираем максимально безопасно
         try:
-            stop_word_service = StopWordService(
-                settings=settings,
-                redis=deps.redis,
-                http_session=deps.http_session,
-            )
-        except TypeError:
-            # fallback на минимальный конструктор
-            stop_word_service = StopWordService(settings=settings)
-        logger.info("StopWordService инициализирован.")
+            stop_word_service = _safe_make_instance(StopWordService, base_kwargs)
+            base_kwargs["stop_word_service"] = stop_word_service
+            logger.info("StopWordService инициализирован.")
+        except Exception as e:
+            logger.warning("StopWordService init failed: %s", e, exc_info=True)
     except Exception:
         logger.info("StopWordService не найден — продолжаю без него.")
 
-    # ModerationService: по логам требуются: bot, user_service, admin_service, stop_word_service, config
+    # ModerationService
     try:
-        deps.moderation_service = ModerationService(
-            bot=bot,
-            user_service=deps.user_service,
-            admin_service=deps.admin_service,
-            stop_word_service=stop_word_service,
-            config=settings,  # именно 'config', т.к. так требует сигнатура
-        )
+        from bot.services.moderation_service import ModerationService  # type: ignore
+        deps.moderation_service = _safe_make_instance(ModerationService, base_kwargs)
         logger.info("ModerationService инициализирован.")
+        # Обновим кандидатов: теперь moderation_service доступен для SecurityService
+        base_kwargs["moderation_service"] = deps.moderation_service
     except Exception as e:
         deps.moderation_service = None
         logger.warning("ModerationService init failed: %s", e, exc_info=True)
 
-    # SecurityService обычно зависит от moderation_service
-    if 'SecurityService' in locals() and SecurityService is not None:
-        try:
-            deps.security_service = SecurityService(
-                moderation_service=deps.moderation_service,
-                settings=settings,
-                redis=deps.redis,
-            )
-            logger.info("SecurityService инициализирован.")
-        except Exception as e:
-            deps.security_service = None
-            logger.warning("SecurityService init failed: %s", e, exc_info=True)
+    # SecurityService (если есть)
+    try:
+        from bot.services.security_service import SecurityService  # type: ignore
+        deps.security_service = _safe_make_instance(SecurityService, base_kwargs)
+        logger.info("SecurityService инициализирован.")
+    except Exception as e:
+        deps.security_service = None
+        logger.info("SecurityService недоступен или не инициализировался: %s", e)
 
 
 # --------------------------------- main() -------------------------------------
@@ -308,8 +320,14 @@ async def main() -> None:
         )
     finally:
         logger.info("Запуск процедур on_shutdown...")
-        # Закрываем DI/ресурсы
-        await deps.close()
+        try:
+            await deps.close()
+        finally:
+            # Закрываем HTTP-сессию бота (на всякий случай)
+            try:
+                await bot.session.close()
+            except Exception:
+                pass
         logger.info("Процедуры on_shutdown завершены.")
 
 

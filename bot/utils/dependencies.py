@@ -1,19 +1,6 @@
 # ======================================================================================
 # Файл: bot/utils/dependencies.py
 # Версия: "Distinguished Engineer" — МАКСИМАЛЬНАЯ (DI с безопасными опционалами)
-# Описание:
-#   Универсальный контейнер зависимостей (aiogram 3 + redis.asyncio + aiohttp),
-#   аккуратно инициализирующий все ключевые сервисы проекта и передающий их в хендлеры.
-#   Особенности:
-#     • Надёжное создание Redis-клиента (asyncio) и HTTP-сессии (aiohttp).
-#     • Автонастройка AIContentService (Gemini по умолчанию, OpenAI — если ключ доступен).
-#     • Динамическая сборка сервисов по их сигнатурам (поддержка create()/__init__).
-#     • Загрузка LUA-скриптов для Market/MiningGame при наличии методов.
-#     • Безопасное завершение (await aclose()) — без DeprecationWarning.
-#     • Middleware для прокидывания deps в data каждого апдейта.
-#     • Совместимость: поддержаны и Deps.create(...), и Deps(...); await deps.init().
-#     • ВАЖНО: ModerationService и SecurityService НЕ создаются здесь (нужен Bot и др.).
-#       Их создаём позже в main.py и записываем в deps.moderation_service / deps.security_service.
 # ======================================================================================
 
 from __future__ import annotations
@@ -23,6 +10,7 @@ import contextlib
 import inspect
 import logging
 from importlib import import_module
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional, Type
 
@@ -76,10 +64,7 @@ logger = logging.getLogger(__name__)
 # =============================== Middleware (deps) ===============================
 
 class DependenciesMiddleware(BaseMiddleware):
-    """
-    Простой middleware, который кладёт экземпляр Deps в data каждого апдейта.
-    Подключается в main.py для router/message/callback_query и пр.
-    """
+    """Кладёт экземпляр Deps в data каждого апдейта."""
     def __init__(self, deps: "Deps") -> None:
         super().__init__()
         self.deps = deps
@@ -90,7 +75,6 @@ class DependenciesMiddleware(BaseMiddleware):
 
 
 def dependencies_middleware(deps: "Deps") -> DependenciesMiddleware:
-    """Шорткат для регистрации в main.py"""
     return DependenciesMiddleware(deps)
 
 
@@ -99,38 +83,7 @@ def dependencies_middleware(deps: "Deps") -> DependenciesMiddleware:
 class Deps:
     """
     Контейнер зависимостей.
-
-    Доступные поля (основные):
-        settings: Settings
-
-        # низкоуровневые ресурсы
-        redis_pool: redis.asyncio.Redis
-        redis: redis.asyncio.Redis       # алиас
-        http_session: aiohttp.ClientSession
-
-        # доменные сервисы
-        ai_content_service: AIContentService
-        ai_service: AIContentService          # алиас для совместимости
-        price_service: PriceService
-        coin_list_service: CoinListService
-        news_service: NewsService
-        market_data_service: MarketDataService
-        asic_service: AsicService
-        market_service: MarketService
-        mining_service: MiningService
-        mining_game_service: MiningGameService
-        achievement_service: AchievementService
-        event_service: EventService
-        quiz_service: QuizService
-        user_service: UserService
-
-        # опциональные — НЕ создаются в DI, а выставляются позже в main.py
-        moderation_service: Optional[Any]
-        security_service: Optional[Any]
-        admin_service: Optional[AdminService]
     """
-
-    # --------- создание / завершение ---------
 
     def __init__(self, cfg: Settings) -> None:
         self.settings: Settings = cfg
@@ -140,7 +93,7 @@ class Deps:
         self.redis: Optional[redis.Redis] = None
         self.http_session: Optional[aiohttp.ClientSession] = None
 
-        # доменные сервисы (заполнятся в _init_services)
+        # доменные сервисы
         self.ai_content_service: Optional[AIContentService] = None
         self.ai_service: Optional[AIContentService] = None  # alias
         self.price_service: Optional[PriceService] = None
@@ -156,18 +109,15 @@ class Deps:
         self.quiz_service: Optional[QuizService] = None
         self.user_service: Optional[UserService] = None
 
-        # Опциональные (создаём позже в main.py)
+        # опциональные (создаём позже в main.py)
         self.moderation_service: Optional[Any] = None
         self.security_service: Optional[Any] = None
         self.admin_service: Optional[AdminService] = None
 
-    # --- поддержка обоих вариантов запуска ---
+    # --- фабрика ---
 
     @classmethod
     async def create(cls, cfg: Settings | None = None) -> "Deps":
-        """
-        Основная точка входа (фабричный метод): создаёт и настраивает всё необходимое.
-        """
         cfg = cfg or settings
         self = cls(cfg)
         try:
@@ -176,27 +126,17 @@ class Deps:
             logger.info("Контейнер зависимостей (Deps) успешно собран.")
             return self
         except Exception:
-            # Если что-то пошло не так — аккуратно закрываем частично поднятые ресурсы
             with contextlib.suppress(Exception):
                 await self.close()
             raise
 
     async def init(self) -> None:
-        """
-        Альтернативная инициализация для совместимости с существующим main.py:
-            deps = Deps(settings)
-            await deps.init()
-        """
         await self._init_low_level()
         await self._init_services()
         logger.info("Контейнер зависимостей (Deps) успешно собран.")
 
     async def close(self) -> None:
-        """
-        Корректное завершение всех ресурсов и сервисов.
-        Вызывается из on_shutdown (main.py).
-        """
-        # Закрываем сервисы, у которых есть async close()/aclose()
+        # Закрываем сервисы
         for svc_name in [
             "ai_content_service",
             "price_service",
@@ -224,16 +164,16 @@ class Deps:
                             await res
                     except Exception as e:
                         logger.warning("Ошибка при закрытии %s.%s(): %s", svc_name, meth, e)
-                    break  # не вызываем второй метод, если первый сработал
+                    break
 
-        # Закрываем HTTP-сессию
+        # HTTP-сессия
         if self.http_session and not self.http_session.closed:
             try:
                 await self.http_session.close()
             except Exception as e:
                 logger.warning("Ошибка при закрытии http_session: %s", e)
 
-        # Закрываем Redis (aclose — предпочтительно)
+        # Redis
         if self.redis_pool is not None:
             try:
                 aclose = getattr(self.redis_pool, "aclose", None)
@@ -244,32 +184,22 @@ class Deps:
             except Exception as e:
                 logger.warning("Ошибка при закрытии Redis: %s", e)
 
-    # --------- низкоуровневая инициализация ---------
+    # --------- низкоуровневые ресурсы ---------
 
     async def _init_low_level(self) -> None:
-        """
-        Создаёт Redis-подключение и aiohttp-сессию.
-        Настраивает провайдера Gemini (и OpenAI — если ключ есть).
-        """
-        # Redis
         self.redis_pool = redis.from_url(
             str(self.settings.REDIS_URL),
             encoding="utf-8",
-            decode_responses=True,  # удобно для hgetall/hget
+            decode_responses=True,
             max_connections=50,
         )
-        # Алиас
         self.redis = self.redis_pool
-
-        # sanity check
         await self.redis_pool.ping()
         logger.info("Успешное подключение к Redis.")
 
-        # HTTP-сессия
         timeout = aiohttp.ClientTimeout(total=30)
         self.http_session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False, trust_env=True)
 
-        # AI / LLM (только лог; сами клиенты поднимет AIContentService)
         logger.info(
             "AIContentService: провайдер=%s, model=%s (flash=%s).",
             self.settings.ai.provider,
@@ -277,56 +207,47 @@ class Deps:
             self.settings.ai.flash_model_name,
         )
 
-    # --------- инициализация доменных сервисов ---------
+    # --------- доменные сервисы ---------
 
     async def _init_services(self) -> None:
-        """
-        Инициализирует все сервисы. Поддерживает 2 контракта:
-          • async @classmethod create(...): return instance
-          • __init__(...) обычный конструктор
-        В аргументы передаются то, что сервис способен принять
-        по своей сигнатуре (подбирается автоматически).
-        """
-        # Кандидаты (общий пул зависимостей), из которого будут выбраны подходящие
         base_kwargs: Dict[str, Any] = {
             "settings": self.settings,
-            "cfg": self.settings,               # на случай, если сервис просит cfg
-            "config": self.settings,            # некоторые классы ждут имя параметра 'config'
+            "cfg": self.settings,
+            "config": self.settings,
             "redis": self.redis,
             "redis_pool": self.redis_pool,
             "http_session": self.http_session,
-            "session": self.http_session,       # если параметр так называется
+            "session": self.http_session,
             "endpoints": self.settings.endpoints,
             "ai_config": self.settings.ai,
             "gemini_api_key": self.settings.GEMINI_API_KEY.get_secret_value(),
         }
 
-        # Базовые сервисы
+        # Базовые
         self.user_service = await self._make_instance(UserService, base_kwargs)
-        self.ai_content_service = await self._make_instance(AIContentService, base_kwargs)
-        # алиас для совместимости с кодом, который ожидает ai_service
-        self.ai_service = self.ai_content_service
 
-        # Сначала список монет и рыночные данные (они — база для цен/майнинга)
+        self.ai_content_service = await self._make_instance(AIContentService, base_kwargs)
+        self.ai_service = self.ai_content_service
+        base_kwargs |= {"ai_content_service": self.ai_content_service, "ai_service": self.ai_content_service}
+
+        # Монеты / рынок как основа
         self.coin_list_service = await self._make_instance(CoinListService, base_kwargs)
+        base_kwargs |= {"coin_list_service": self.coin_list_service}
+
         self.market_data_service = await self._make_instance(
             MarketDataService,
-            base_kwargs | {"coin_list_service": self.coin_list_service}
+            base_kwargs | {"coin_list_service": self.coin_list_service},
         )
+        base_kwargs |= {"market_data_service": self.market_data_service}
 
         # Цены и новости
         self.price_service = await self._make_instance(
             PriceService,
-            base_kwargs | {"coin_list_service": self.coin_list_service}
+            base_kwargs | {"coin_list_service": self.coin_list_service},
         )
         self.news_service = await self._make_instance(NewsService, base_kwargs)
 
-        # ВАЖНО: ModerationService / SecurityService НЕ поднимаем здесь — они зависят от Bot/конфигураций проекта.
-        # Их нужно (при необходимости) создать в main.py после Bot/AdminService:
-        #   deps.moderation_service = ModerationService(...)
-        #   deps.security_service   = SecurityService(...)
-
-        # --- Опциональный ParserService для AsicService (если в проекте есть) ---
+        # Опциональный парсер для AsicService
         parser_service = None
         for module_path, class_name in [
             ("bot.services.parser_service", "ParserService"),
@@ -345,29 +266,31 @@ class Deps:
         # Майнинг / рынок / ASIC
         self.asic_service = await self._make_instance(
             AsicService,
-            base_kwargs | {"parser_service": parser_service}
+            base_kwargs | {"parser_service": parser_service},
         )
+        base_kwargs |= {"asic_service": self.asic_service}
+
         self.market_service = await self._make_instance(
             MarketService,
-            base_kwargs | {"asic_service": self.asic_service}
+            base_kwargs | {"asic_service": self.asic_service},
         )
+        base_kwargs |= {"market_service": self.market_service}
 
-        # ТЕПЕРЬ можно создать MiningService — передаём market_data_service
         self.mining_service = await self._make_instance(
             MiningService,
-            base_kwargs | {"market_data_service": self.market_data_service}
+            base_kwargs | {"market_data_service": self.market_data_service},
         )
+        base_kwargs |= {"mining_service": self.mining_service}
 
-        # -------- AchievementService: совместимость с разными конструкторами -------
-        # 1) Сервису точно нужен market_data_service.
-        # 2) Некоторые версии внутри читают self.config.config_path.
-        #    Settings таким поля не имеет -> даём прокси.
+        # ---- AchievementService (разные сигнатуры) ----
         achievements_cfg_path = (
             getattr(self.settings, "ACHIEVEMENTS_CONFIG_PATH", None)
             or getattr(self.settings, "achievements_config_path", None)
             or getattr(getattr(self.settings, "paths", None) or object(), "achievements", None)
             or "bot/config/achievements.yaml"
         )
+        if not Path(str(achievements_cfg_path)).is_file():
+            logger.warning("Achievement config file not found: %s — продолжу без падения", achievements_cfg_path)
 
         def _param_names(callable_obj: Any) -> set[str]:
             try:
@@ -383,7 +306,7 @@ class Deps:
         ach_param_names = _param_names(AchievementService)
 
         class _SettingsProxy:
-            """Прозрачно проксируем Settings + добавляем config_path для старых реализаций."""
+            """Прозрачный прокси Settings с добавленным config_path для старых реализаций."""
             def __init__(self, base: Settings, config_path: str) -> None:
                 self.__dict__["_base"] = base
                 self.__dict__["config_path"] = config_path
@@ -395,30 +318,26 @@ class Deps:
                 self.__dict__[key] = value
 
         ach_kwargs = base_kwargs | {"market_data_service": self.market_data_service}
-
-        # Если конструктор ждёт 'config' – передаём объект с полем config_path
         if "config" in ach_param_names:
-            ach_kwargs = ach_kwargs | {"config": SimpleNamespace(config_path=str(achievements_cfg_path))}
-        # Если ждёт 'settings' и потом обращается к self.config.config_path – проксируем Settings
+            ach_kwargs |= {"config": SimpleNamespace(config_path=str(achievements_cfg_path))}
         elif "settings" in ach_param_names:
-            ach_kwargs = ach_kwargs | {"settings": _SettingsProxy(self.settings, str(achievements_cfg_path))}
+            ach_kwargs |= {"settings": _SettingsProxy(self.settings, str(achievements_cfg_path))}
 
         self.achievement_service = await self._make_instance(AchievementService, ach_kwargs)
+        base_kwargs |= {"achievement_service": self.achievement_service}
 
-        # Игровые сервисы (ссылки на другие)
-        game_extra = base_kwargs | {
-            "user_service": self.user_service,
-            "asic_service": self.asic_service,
-            "market_service": self.market_service,
-            "mining_service": self.mining_service,
-            "achievement_service": self.achievement_service,
-        }
-        self.mining_game_service = await self._make_instance(MiningGameService, game_extra)
+        # Игровые сервисы
+        self.mining_game_service = await self._make_instance(
+            MiningGameService,
+            base_kwargs,
+        )
 
         self.event_service = await self._make_instance(EventService, base_kwargs)
+
+        # ВАЖНО: теперь QuizService получит ai_content_service из base_kwargs
         self.quiz_service = await self._make_instance(QuizService, base_kwargs)
 
-        # ----- Доп. этапы инициализации (LUA-скрипты и т.п.) -----
+        # ----- Доп. этапы (LUA) -----
         if self.market_service and hasattr(self.market_service, "load_lua_scripts"):
             try:
                 await self.market_service.load_lua_scripts()  # type: ignore[attr-defined]
@@ -433,17 +352,11 @@ class Deps:
             except Exception as e:
                 logger.warning("Не удалось загрузить LUA для MiningGameService: %s", e)
 
-    # --------- фабрики / рефлексия ---------
+    # --------- фабрика инстансов ---------
 
     async def _make_instance(self, cls: type, candidates: Dict[str, Any]) -> Any:
-        """
-        Универсальный конструктор:
-          1) если есть async @classmethod create(...) — используем его
-          2) иначе создаём через __init__(...) по пересечению параметров
-        """
         name = cls.__name__
 
-        # Попытка: async @classmethod create
         create = getattr(cls, "create", None)
         if create and (inspect.iscoroutinefunction(create) or inspect.iscoroutinefunction(getattr(create, "__func__", create))):
             kwargs = self._filter_kwargs(create, candidates)
@@ -451,7 +364,6 @@ class Deps:
             logger.debug("Создан сервис %s через async create(**kwargs).", name)
             return inst
 
-        # Обычный конструктор
         kwargs = self._filter_kwargs(cls, candidates)
         inst = cls(**kwargs)  # type: ignore[misc]
         logger.debug("Создан сервис %s через __init__(**kwargs).", name)
@@ -459,10 +371,6 @@ class Deps:
 
     @staticmethod
     def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Выбирает из candidates только те параметры, которые поддерживаются у callable_obj.
-        Поддерживает функции/методы (create) и конструкторы (__init__).
-        """
         try:
             sig = inspect.signature(callable_obj)
         except (TypeError, ValueError):
@@ -478,23 +386,13 @@ class Deps:
     # --------- утилиты ---------
 
     async def ping(self) -> bool:
-        """
-        Быстрая самопроверка работоспособности Deps (Redis + HTTP).
-        """
-        # Redis
         try:
             assert self.redis is not None
-            pong = await self.redis.ping()
-            if not pong:
+            if not await self.redis.ping():
                 return False
         except Exception:
             return False
-
-        # HTTP session
-        if not self.http_session or self.http_session.closed:
-            return False
-
-        return True
+        return bool(self.http_session and not self.http_session.closed)
 
 
 __all__ = [
