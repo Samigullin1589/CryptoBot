@@ -23,6 +23,7 @@ import contextlib
 import inspect
 import logging
 from importlib import import_module
+from types import SimpleNamespace
 from typing import Any, Dict, Optional, Type
 
 import aiohttp
@@ -357,24 +358,62 @@ class Deps:
             base_kwargs | {"market_data_service": self.market_data_service}
         )
 
+        # -------- AchievementService: совместимость с разными конструкторами -------
+        # 1) Сервису точно нужен market_data_service.
+        # 2) Некоторые версии внутри читают self.config.config_path.
+        #    Settings таким поля не имеет -> даём прокси.
+        achievements_cfg_path = (
+            getattr(self.settings, "ACHIEVEMENTS_CONFIG_PATH", None)
+            or getattr(self.settings, "achievements_config_path", None)
+            or getattr(getattr(self.settings, "paths", None) or object(), "achievements", None)
+            or "bot/config/achievements.yaml"
+        )
+
+        def _param_names(callable_obj: Any) -> set[str]:
+            try:
+                sig = inspect.signature(callable_obj)
+            except (TypeError, ValueError):
+                sig = inspect.signature(getattr(callable_obj, "__init__", callable_obj))
+            return {
+                p.name
+                for p in sig.parameters.values()
+                if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+            }
+
+        ach_param_names = _param_names(AchievementService)
+
+        class _SettingsProxy:
+            """Прозрачно проксируем Settings + добавляем config_path для старых реализаций."""
+            def __init__(self, base: Settings, config_path: str) -> None:
+                self.__dict__["_base"] = base
+                self.__dict__["config_path"] = config_path
+
+            def __getattr__(self, item: str) -> Any:
+                return getattr(self.__dict__["_base"], item)
+
+            def __setattr__(self, key: str, value: Any) -> None:
+                self.__dict__[key] = value
+
+        ach_kwargs = base_kwargs | {"market_data_service": self.market_data_service}
+
+        # Если конструктор ждёт 'config' – передаём объект с полем config_path
+        if "config" in ach_param_names:
+            ach_kwargs = ach_kwargs | {"config": SimpleNamespace(config_path=str(achievements_cfg_path))}
+        # Если ждёт 'settings' и потом обращается к self.config.config_path – проксируем Settings
+        elif "settings" in ach_param_names:
+            ach_kwargs = ach_kwargs | {"settings": _SettingsProxy(self.settings, str(achievements_cfg_path))}
+
+        self.achievement_service = await self._make_instance(AchievementService, ach_kwargs)
+
         # Игровые сервисы (ссылки на другие)
         game_extra = base_kwargs | {
             "user_service": self.user_service,
             "asic_service": self.asic_service,
             "market_service": self.market_service,
             "mining_service": self.mining_service,
-            "achievement_service": None,  # заполним после создания achievement_service
+            "achievement_service": self.achievement_service,
         }
         self.mining_game_service = await self._make_instance(MiningGameService, game_extra)
-
-        # AchievementService ТРЕБУЕТ market_data_service — передаём явно
-        self.achievement_service = await self._make_instance(
-            AchievementService,
-            base_kwargs | {"market_data_service": self.market_data_service}
-        )
-        if self.mining_game_service and hasattr(self.mining_game_service, "__dict__"):
-            with contextlib.suppress(Exception):
-                setattr(self.mining_game_service, "achievement_service", self.achievement_service)
 
         self.event_service = await self._make_instance(EventService, base_kwargs)
         self.quiz_service = await self._make_instance(QuizService, base_kwargs)
