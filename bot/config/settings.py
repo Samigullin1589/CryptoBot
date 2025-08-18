@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, RedisDsn, SecretStr, ValidationError, field_validator, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -72,12 +71,12 @@ class CoinListServiceConfig(BaseModel):
 
 class NewsFeeds(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
-    main_rss_feeds: List[HttpUrl] = [
+    main_rss_feeds: list[HttpUrl] = [
         "https://forklog.com/feed",
         "https://beincrypto.ru/feed/",
         "https://cointelegraph.com/rss",
     ]
-    alpha_rss_feeds: List[HttpUrl] = []
+    alpha_rss_feeds: list[HttpUrl] = []
 
 
 class NewsServiceConfig(BaseModel):
@@ -110,12 +109,12 @@ class EndpointsConfig(BaseModel):
     mempool_space_tip_height: HttpUrl = "https://mempool.space/api/blocks/tip/height"
     blockchain_info_hashrate: HttpUrl = "https://blockchain.info/q/hashrate"
 
-    whattomine_api: Optional[HttpUrl] = "https://whattomine.com/asics.json"
-    asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
-    minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
+    whattomine_api: HttpUrl | None = "https://whattomine.com/asics.json"
+    asicminervalue_url: HttpUrl | None = "https://www.asicminervalue.com/"
+    minerstat_api: HttpUrl | None = "https://api.minerstat.com/v2"
 
     # Новый эндпоинт для курсов валют (USD-база по умолчанию)
-    currency_rate_api: Optional[HttpUrl] = "https://api.exchangerate-api.com/v4/latest/USD"
+    currency_rate_api: HttpUrl | None = "https://api.exchangerate-api.com/v4/latest/USD"
 
 
 # ----------------------------- Security / Threats -----------------------------
@@ -190,7 +189,7 @@ class MiningGameServiceConfig(BaseModel):
     default_electricity_tariff: str = "Бытовой"
 
     # ВАЖНО: Pydantic приведёт вложенные dict'ы к ElectricityTariff-моделям.
-    electricity_tariffs: Dict[str, ElectricityTariff] = Field(
+    electricity_tariffs: dict[str, ElectricityTariff] = Field(
         default_factory=lambda: {
             "Бытовой": {"cost_per_kwh": 0.10, "unlock_price": 0},
             "Промышленный": {"cost_per_kwh": 0.07, "unlock_price": 5_000},
@@ -212,7 +211,7 @@ class LoggingConfig(BaseModel):
     # Префикс для структурированных логов, если нужен
     service_name: str = "ai-bot"
     # Список логгеров, которым повышаем уровень (например, отладка HTTP)
-    debug_loggers: List[str] = []
+    debug_loggers: list[str] = []
 
 
 # ----------------------------- Settings (root) --------------------------------
@@ -228,14 +227,14 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: SecretStr
 
     # --- опциональные ключи провайдеров/сервисов ---
-    OPENAI_API_KEY: Optional[SecretStr] = None
-    COINGECKO_API_KEY: Optional[SecretStr] = None
-    CRYPTOCOMPARE_API_KEY: Optional[SecretStr] = None
+    OPENAI_API_KEY: SecretStr | None = None
+    COINGECKO_API_KEY: SecretStr | None = None
+    CRYPTOCOMPARE_API_KEY: SecretStr | None = None
 
     # --- телеграм-идентификаторы ---
-    admin_ids: Any = Field(alias="ADMIN_USER_IDS")
-    ADMIN_CHAT_ID: Optional[int] = None
-    NEWS_CHAT_ID: Optional[int] = None
+    admin_ids: list[int] = Field(alias="ADMIN_USER_IDS")
+    ADMIN_CHAT_ID: int | None = None
+    NEWS_CHAT_ID: int | None = None
 
     # --- процесс / хостинг ---
     IS_WEB_PROCESS: bool = False
@@ -267,7 +266,7 @@ class Settings(BaseSettings):
 
     @field_validator("admin_ids", mode="before")
     @classmethod
-    def parse_admin_ids(cls, v: Any) -> List[int]:
+    def parse_admin_ids(cls, v: str | list[object]) -> list[int]:
         """
         ADMIN_USER_IDS в .env:
           - "123,456,789"
