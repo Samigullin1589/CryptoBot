@@ -8,7 +8,7 @@
 
 import logging
 import asyncio
-from typing import Any, Literal, Optional, Dict
+from typing import Any, Literal
 
 import aiohttp
 import backoff
@@ -30,12 +30,12 @@ async def make_request(
     session: aiohttp.ClientSession,
     url: str,
     method: str = "GET",
-    params: Optional[Dict[str, Any]] = None,
-    json_data: Optional[Dict[str, Any]] = None,
-    headers: Optional[Dict[str, str]] = None,
+    params: dict[str, Any] | None = None,
+    json_data: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
     response_type: Literal["json", "text"] = "json",
-    timeout: int = 15
-) -> Optional[Any]:
+    timeout: int = 15,
+) -> Any | None:
     
     request_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
@@ -70,3 +70,4 @@ async def make_request(
     except Exception:
         logger.exception("An unexpected error occurred in make_request for URL: %s", url)
         return None
+

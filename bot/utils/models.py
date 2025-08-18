@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,15 +28,15 @@ class UserGameProfile(BaseModel):
     balance: float = 0.0
     total_earned: float = 0.0
     current_tariff: str
-    owned_tariffs: List[str]
+    owned_tariffs: list[str]
 
 
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
 class User(BaseModel):
     id: int = Field(alias="user_id")
-    username: Optional[str] = None
+    username: str | None = None
     first_name: str = Field(alias="full_name")
-    language_code: Optional[str] = None
+    language_code: str | None = None
     role: UserRole = UserRole.USER
     verification_data: VerificationData = Field(default_factory=VerificationData)
     electricity_cost: float = 0.05
@@ -76,9 +76,9 @@ class Coin(BaseModel):
 
 class PriceInfo(BaseModel):
     price: float
-    market_cap: Optional[float] = None
-    volume_24h: Optional[float] = None
-    change_24h: Optional[float] = None
+    market_cap: float | None = None
+    volume_24h: float | None = None
+    change_24h: float | None = None
 
 
 class MiningEvent(BaseModel):
@@ -92,25 +92,25 @@ class MiningEvent(BaseModel):
 class AsicMiner(BaseModel):
     id: str
     name: str
-    vendor: Optional[str] = "Unknown"
+    vendor: str | None = "Unknown"
     hashrate: str
     power: int
     algorithm: str
-    profitability: Optional[float] = None
-    price: Optional[float] = None
-    net_profit: Optional[float] = None
-    gross_profit: Optional[float] = None
-    electricity_cost_per_day: Optional[float] = None
+    profitability: float | None = None
+    price: float | None = None
+    net_profit: float | None = None
+    gross_profit: float | None = None
+    electricity_cost_per_day: float | None = None
 
 
 class NewsArticle(BaseModel):
     title: str
     url: str
-    body: Optional[str] = None
-    source: Optional[str] = None
-    timestamp: Optional[int] = None
-    published_at: Optional[str] = None
-    ai_summary: Optional[str] = None
+    body: str | None = None
+    source: str | None = None
+    timestamp: int | None = None
+    published_at: str | None = None
+    ai_summary: str | None = None
 
 
 class AirdropProject(BaseModel):
@@ -118,8 +118,8 @@ class AirdropProject(BaseModel):
     name: str
     description: str
     status: str
-    tasks: List[str]
-    guide_url: Optional[str] = None
+    tasks: list[str]
+    guide_url: str | None = None
 
 
 class Achievement(BaseModel):
@@ -129,7 +129,7 @@ class Achievement(BaseModel):
     reward_coins: float
     trigger_event: str
     type: str = "static"
-    trigger_conditions: Optional[Dict[str, Any]] = None
+    trigger_conditions: dict[str, Any | None] = None
 
 
 class MiningSessionResult(BaseModel):
@@ -138,8 +138,8 @@ class MiningSessionResult(BaseModel):
     gross_earned: float
     total_electricity_cost: float
     net_earned: float
-    event_description: Optional[str] = None
-    unlocked_achievement: Optional[Achievement] = None
+    event_description: str | None = None
+    unlocked_achievement: Achievement | None = None
 
 
 class MarketListing(BaseModel):
@@ -152,9 +152,9 @@ class MarketListing(BaseModel):
 
 class QuizQuestion(BaseModel):
     question: str
-    options: List[str]
+    options: list[str]
     correct_option_index: int
-    explanation: Optional[str] = None
+    explanation: str | None = None
 
 
 # --- ВЕРДИКТ ДЛЯ ФИЛЬТРА УГРОЗ ---
@@ -165,4 +165,4 @@ class AIVerdict(BaseModel):
     is_potential_phishing: bool = False
     # Для ThreatFilter и логирования:
     score: float = 0.0
-    reasons: List[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
