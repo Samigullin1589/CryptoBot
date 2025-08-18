@@ -4,7 +4,8 @@
 # ИСПРАВЛЕНИЕ: Промпт для 'alpha' полностью переработан для
 #              активного использования AI-агентом поиска Google.
 # ===============================================================
-from typing import Dict, Any, List
+from typing import Any
+
 
 def get_summary_prompt(text_to_summarize: str) -> str:
     return (
@@ -12,6 +13,7 @@ def get_summary_prompt(text_to_summarize: str) -> str:
         "one-sentence summary in Russian (10-15 words max) that captures the main point. "
         f"Be concise and informative. Here is the article: \n\n{text_to_summarize}"
     )
+
 
 def get_consultant_prompt() -> str:
     return (
@@ -22,6 +24,7 @@ def get_consultant_prompt() -> str:
         "NEVER give financial advice."
     )
 
+
 def get_quiz_question_prompt() -> str:
     return (
         "Создай интересный и не слишком сложный вопрос для викторины на тему криптовалют или майнинга. "
@@ -29,32 +32,40 @@ def get_quiz_question_prompt() -> str:
         "Вопрос и ответы должны быть на русском языке."
     )
 
-def get_quiz_json_schema() -> Dict[str, Any]:
+
+def get_quiz_json_schema() -> dict[str, Any]:
     return {
         "type": "OBJECT",
         "properties": {
             "question": {"type": "STRING"},
             "options": {"type": "ARRAY", "items": {"type": "STRING"}},
-            "correct_option_index": {"type": "NUMBER"}
+            "correct_option_index": {"type": "NUMBER"},
         },
-        "required": ["question", "options", "correct_option_index"]
+        "required": ["question", "options", "correct_option_index"],
     }
 
-def get_personalized_alpha_prompt(user_profile: Dict[str, List[str]], alpha_type: str) -> str:
+
+def get_personalized_alpha_prompt(
+    user_profile: dict[str, list[str]], alpha_type: str
+) -> str:
     """
     Создает персонализированный промпт для поиска 'альфы', давая AI команду
     использовать встроенный поиск Google.
     """
-    tags = user_profile.get('tags')
-    coins = user_profile.get('interacted_coins')
-    
+    tags = user_profile.get("tags")
+    coins = user_profile.get("interacted_coins")
+
     profile_parts = []
     if tags:
         profile_parts.append(f"темы (теги): {', '.join(tags)}")
     if coins:
-        profile_parts.append(f"монеты, с которыми он взаимодействовал: {', '.join(coins)}")
+        profile_parts.append(
+            f"монеты, с которыми он взаимодействовал: {', '.join(coins)}"
+        )
 
-    profile_str = ", ".join(profile_parts) if profile_parts else "общие интересы в криптовалюте"
+    profile_str = (
+        ", ".join(profile_parts) if profile_parts else "общие интересы в криптовалюте"
+    )
 
     if alpha_type == "airdrop":
         task_description = (
@@ -63,7 +74,7 @@ def get_personalized_alpha_prompt(user_profile: Dict[str, List[str]], alpha_type
             "Для каждого проекта предоставь: 'id' (уникальный идентификатор), 'name', 'description' (короткое описание), 'status' (например, 'активный тестнет'), "
             "'tasks' (список из 3-5 конкретных действий для получения дропа) и, если возможно, 'guide_url'."
         )
-    else: # mining
+    else:  # mining
         task_description = (
             "Твоя задача — выступить в роли элитного майнинг-аналитика. "
             "Используй свой инструмент поиска Google, чтобы найти 3 самые актуальные и потенциально прибыльные майнинг-возможности (новые монеты, алгоритмы). "
@@ -75,5 +86,5 @@ def get_personalized_alpha_prompt(user_profile: Dict[str, List[str]], alpha_type
         f"Профиль интересов пользователя для дополнительного контекста и ранжирования: {profile_str}.\n"
         "ВСЕ ТЕКСТОВЫЕ ДАННЫЕ в твоем ответе ДОЛЖНЫ БЫТЬ НА РУССКОМ ЯЗЫКЕ."
     )
-    
+
     return final_prompt

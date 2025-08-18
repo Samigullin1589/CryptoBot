@@ -3,7 +3,6 @@
 import asyncio
 import logging
 import re
-from typing import Optional, Tuple
 
 from aiogram import Router, F
 from aiogram.types import Message
@@ -23,6 +22,7 @@ router = Router(name="public_common")
 
 # ------------------------- Режим ИИ по команде /ask -------------------------
 
+
 class AIConsultantState(StatesGroup):
     waiting_question = State()
 
@@ -34,7 +34,9 @@ async def cmd_ask(message: Message, state: FSMContext):
     await message.answer("Напишите свой вопрос для ИИ одним сообщением:")
 
 
-@router.message(F.chat.type == ChatType.PRIVATE, AIConsultantState.waiting_question, F.text)
+@router.message(
+    F.chat.type == ChatType.PRIVATE, AIConsultantState.waiting_question, F.text
+)
 async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
     """Обрабатываем вопрос к ИИ только когда пользователь в соответствующем состоянии (ЛС)."""
     user_text = (message.text or "").strip()
@@ -44,16 +46,22 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
     history_provider = getattr(deps, "history_service", None)
     if history_provider and hasattr(history_provider, "get_history_for_user"):
         try:
-            h = history_provider.get_history_for_user(message.from_user.id if message.from_user else 0)
+            h = history_provider.get_history_for_user(
+                message.from_user.id if message.from_user else 0
+            )
             history = await h if asyncio.iscoroutine(h) else h
         except Exception:
             history = None
 
     # Запрос к ИИ
     try:
-        ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
+        ai_answer = await deps.ai_content_service.get_consultant_answer(
+            user_text, history
+        )
         ai_answer = ai_answer or "Не удалось получить ответ от AI."
-        await message.answer(f"Ваш вопрос:\n«{user_text}»\n\nОтвет AI-Консультанта:\n{ai_answer}")
+        await message.answer(
+            f"Ваш вопрос:\n«{user_text}»\n\nОтвет AI-Консультанта:\n{ai_answer}"
+        )
     except Exception as e:
         logger.error("AI answer failed: %s", e, exc_info=True)
         await message.answer("Произошла ошибка при обращении к AI.")
@@ -62,6 +70,7 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
 
 
 # ------------------------- Команда /check (разрешена и в группах) -------------------------
+
 
 @router.message(Command("check"))
 async def cmd_check(message: Message, command: CommandObject, deps: Deps):
@@ -79,7 +88,9 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
         target = f"@{u.username}" if u.username else str(u.id)
 
     if not target:
-        await message.answer("Укажите пользователя: /check @username\nМожно также ответить на его сообщение и набрать /check.")
+        await message.answer(
+            "Укажите пользователя: /check @username\nМожно также ответить на его сообщение и набрать /check."
+        )
         return
 
     # Нормализуем: обрежем ссылку t.me и оставим username/id
@@ -95,7 +106,9 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
         pass
 
     # Если подключены сервисы безопасности/верификации — пытаемся вызвать
-    svc = getattr(deps, "verification_service", None) or getattr(deps, "security_service", None)
+    svc = getattr(deps, "verification_service", None) or getattr(
+        deps, "security_service", None
+    )
     result_text = None
     if svc:
         for name in ("check_user", "verify_user", "check", "verify"):
@@ -113,7 +126,9 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
                     # Словарь — собираем удобный формат
                     if isinstance(res, dict):
                         # ожидаемые поля, но не требуемые
-                        verified = bool(res.get("verified") or res.get("safe") or res.get("ok"))
+                        verified = bool(
+                            res.get("verified") or res.get("safe") or res.get("ok")
+                        )
                         score = res.get("score")
                         reason = res.get("reason") or res.get("details")
                         profile = res.get("profile") or {}
@@ -124,11 +139,25 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
                         passport_ok = profile.get("passport_ok")
                         deposit = profile.get("deposit")
 
-                        header = "Команда /check\nВерифицированный" if verified else "Команда /check\nНе верифицированный"
+                        header = (
+                            "Команда /check\nВерифицированный"
+                            if verified
+                            else "Команда /check\nНе верифицированный"
+                        )
                         curator = "Бот-куратор @НашБот\n--------------------"
-                        status_line = "✅ ПРОВЕРЕННЫЙ ПОСТАВЩИК ✅" if verified else "⚠️ НЕ ПРОВЕРЕН ⚠️\nПри переводе предоплаты есть риск потерять денежные средства"
-                        passport_line = "✅ Проверен ✅" if passport_ok else "⚠️ НЕ ПРОВЕРЕН ⚠️"
-                        deposit_line = f"${deposit}" if isinstance(deposit, (int, float, str)) and str(deposit) else "Отсутствует"
+                        status_line = (
+                            "✅ ПРОВЕРЕННЫЙ ПОСТАВЩИК ✅"
+                            if verified
+                            else "⚠️ НЕ ПРОВЕРЕН ⚠️\nПри переводе предоплаты есть риск потерять денежные средства"
+                        )
+                        passport_line = (
+                            "✅ Проверен ✅" if passport_ok else "⚠️ НЕ ПРОВЕРЕН ⚠️"
+                        )
+                        deposit_line = (
+                            f"${deposit}"
+                            if isinstance(deposit, (int, float, str)) and str(deposit)
+                            else "Отсутствует"
+                        )
 
                         lines = [
                             header,
@@ -140,7 +169,9 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
                             "Пользователь",
                             f"Идентификатор пользователя: {uid or '-'}",
                             f"Имя: {name or '-'}",
-                            f"Имя пользователя:\n@{uname}" if uname else "Имя пользователя:\n-",
+                            f"Имя пользователя:\n@{uname}"
+                            if uname
+                            else "Имя пользователя:\n-",
                             "",
                             f"Страна: {country}",
                             f"Паспорт : {passport_line}",
@@ -202,7 +233,7 @@ async def _maybe_call(func, *args, **kwargs):
     return res
 
 
-async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional[str]]:
+async def _resolve_coin(deps: Deps, query: str) -> tuple[str | None, str | None]:
     cls = getattr(deps, "coin_list_service", None)
     candidates = [
         ("resolve_query", {"query": query}),
@@ -217,17 +248,27 @@ async def _resolve_coin(deps: Deps, query: str) -> Tuple[Optional[str], Optional
                 obj = await _maybe_call(getattr(cls, name), **kwargs)
                 if not obj:
                     continue
-                coin_id = getattr(obj, "id", None) or (obj.get("id") if isinstance(obj, dict) else None)
-                symbol = getattr(obj, "symbol", None) or (obj.get("symbol") if isinstance(obj, dict) else None)
-                symbol = symbol or getattr(obj, "ticker", None) or (obj.get("ticker") if isinstance(obj, dict) else None)
+                coin_id = getattr(obj, "id", None) or (
+                    obj.get("id") if isinstance(obj, dict) else None
+                )
+                symbol = getattr(obj, "symbol", None) or (
+                    obj.get("symbol") if isinstance(obj, dict) else None
+                )
+                symbol = (
+                    symbol
+                    or getattr(obj, "ticker", None)
+                    or (obj.get("ticker") if isinstance(obj, dict) else None)
+                )
                 if coin_id or symbol:
-                    return (str(coin_id) if coin_id else None), (str(symbol).upper() if symbol else None)
+                    return (str(coin_id) if coin_id else None), (
+                        str(symbol).upper() if symbol else None
+                    )
             except Exception as e:
                 logger.debug("coin_list_service.%s failed: %s", name, e)
     return None, query.upper()
 
 
-async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
+async def _fetch_usd_price(deps: Deps, symbol: str) -> float | None:
     ps = getattr(deps, "price_service", None)
     mds = getattr(deps, "market_data_service", None)
 
@@ -244,11 +285,23 @@ async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
                 if isinstance(res, (int, float)):
                     return float(res)
                 if isinstance(res, dict):
-                    val = res.get(symbol) or res.get(symbol.upper()) or res.get(symbol.lower())
+                    val = (
+                        res.get(symbol)
+                        or res.get(symbol.upper())
+                        or res.get(symbol.lower())
+                    )
                     if isinstance(val, (int, float)):
                         return float(val)
                     if isinstance(val, dict):
-                        return float(val.get("usd") or val.get("USD") or val.get("price") or 0) or None
+                        return (
+                            float(
+                                val.get("usd")
+                                or val.get("USD")
+                                or val.get("price")
+                                or 0
+                            )
+                            or None
+                        )
             except Exception as e:
                 logger.debug("price_service.%s failed: %s", name, e)
 
@@ -264,11 +317,23 @@ async def _fetch_usd_price(deps: Deps, symbol: str) -> Optional[float]:
                 if isinstance(res, (int, float)):
                     return float(res)
                 if isinstance(res, dict):
-                    val = res.get(symbol) or res.get(symbol.upper()) or res.get(symbol.lower())
+                    val = (
+                        res.get(symbol)
+                        or res.get(symbol.upper())
+                        or res.get(symbol.lower())
+                    )
                     if isinstance(val, (int, float)):
                         return float(val)
                     if isinstance(val, dict):
-                        return float(val.get("usd") or val.get("USD") or val.get("price") or 0) or None
+                        return (
+                            float(
+                                val.get("usd")
+                                or val.get("USD")
+                                or val.get("price")
+                                or 0
+                            )
+                            or None
+                        )
             except Exception as e:
                 logger.debug("market_data_service.%s failed: %s", name, e)
 
@@ -301,7 +366,7 @@ def _user_in_price_context(deps: Deps, user_id: int) -> bool:
     return False
 
 
-def _extract_price_query(text: str) -> Optional[str]:
+def _extract_price_query(text: str) -> str | None:
     """
     Строгий детект запроса цены:
       - чистый токен монеты (BTC)
@@ -313,7 +378,11 @@ def _extract_price_query(text: str) -> Optional[str]:
         return None
     if _looks_like_coin_token(t):
         return t
-    m = re.search(r"(?:^|\s)(?:курс)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{1,9})", t, flags=re.IGNORECASE)
+    m = re.search(
+        r"(?:^|\s)(?:курс)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{1,9})",
+        t,
+        flags=re.IGNORECASE,
+    )
     if m:
         return m.group(1)
     return None
@@ -322,17 +391,23 @@ def _extract_price_query(text: str) -> Optional[str]:
 # ------------------------- Глушилка объявлений/прайсов (молчаливо) -------------------------
 
 AD_LIKE = re.compile(
-    r'(?:\+7|8)\d{10}|@\w+|[$€₽]|S\d{2}\s?[A-Z]+|L7|M50|M30s\+\+|XP\s?\d+th|j\s?pro\+|S21|M60|M64|Avalon',
+    r"(?:\+7|8)\d{10}|@\w+|[$€₽]|S\d{2}\s?[A-Z]+|L7|M50|M30s\+\+|XP\s?\d+th|j\s?pro\+|S21|M60|M64|Avalon",
     re.IGNORECASE,
 )
 
-@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), F.text.regexp(AD_LIKE), NotCommandFilter())
+
+@router.message(
+    F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}),
+    F.text.regexp(AD_LIKE),
+    NotCommandFilter(),
+)
 async def ignore_ads_like_group(_: Message):
     """В группах: объявления/прайсы игнорируем полностью (без ответов)."""
     return
 
 
 # ------------------------------ Общий текстовый обработчик ------------------------------
+
 
 # Только ЛС, и без команд
 @router.message(F.chat.type == ChatType.PRIVATE, F.text, NotCommandFilter())
@@ -345,7 +420,9 @@ async def handle_text_common(message: Message, deps: Deps) -> None:
     user_text = (message.text or "").strip()
 
     # 1) Курс монеты (раздел «Курс» или явный запрос)
-    in_price_ctx = _user_in_price_context(deps, message.from_user.id if message.from_user else 0)
+    in_price_ctx = _user_in_price_context(
+        deps, message.from_user.id if message.from_user else 0
+    )
     price_query = _extract_price_query(user_text)
 
     if in_price_ctx or price_query:

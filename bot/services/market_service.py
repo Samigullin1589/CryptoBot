@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 from redis.asyncio import Redis
@@ -40,13 +40,13 @@ class MarketService:
         self.redis = redis
         self.asic_service = asic_service
         self._lua_loaded: bool = False
-        self._lua_sha_ping: Optional[str] = None
+        self._lua_sha_ping: str | None = None
 
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
 
-    async def get_market_overview(self, *, top_n: int = 10) -> Dict[str, Any]:
+    async def get_market_overview(self, *, top_n: int = 10) -> dict[str, Any]:
         """
         Возвращает обобщённую сводку рынка для UI:
           - btc_price_usd
@@ -71,26 +71,42 @@ class MarketService:
             "halving": halving,
         }
 
-    async def get_top_asics(self, electricity_cost_usd: float, count: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    async def get_top_asics(
+        self, electricity_cost_usd: float, count: int = 20
+    ) -> tuple[list[dict[str, Any]], int]:
         """
         Прокси к AsicService: возвращает топ ASIC по доходности при заданной цене электричества.
         """
         try:
-            asics, total = await self.asic_service.get_top_asics(electricity_cost_usd, count=count)
+            asics, total = await self.asic_service.get_top_asics(
+                electricity_cost_usd, count=count
+            )
             # Нормализуем к списку словарей (если вернулись модели)
-            norm = [a.model_dump() if hasattr(a, "model_dump") else dict(a) for a in asics]
+            norm = [
+                a.model_dump() if hasattr(a, "model_dump") else dict(a) for a in asics
+            ]
             return norm, int(total)
         except Exception as e:
             logger.error("get_top_asics() failed: %s", e, exc_info=True)
             return [], 0
 
-    async def get_top_coins_by_market_cap(self, *, limit: int = 10) -> Optional[List[Dict[str, Any]]]:
+    async def get_top_coins_by_market_cap(
+        self, *, limit: int = 10
+    ) -> list[dict[str, Any]] | None:
         """
         Топ-коины по капе (CoinGecko public или Pro — если дан ключ).
         """
-        api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
+        api_key = (
+            self.settings.COINGECKO_API_KEY.get_secret_value()
+            if self.settings.COINGECKO_API_KEY
+            else None
+        )
         headers = {"x-cg-pro-api-key": api_key} if api_key else {}
-        base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
+        base_url = (
+            self.endpoints.coingecko_api_pro_base
+            if api_key
+            else self.endpoints.coingecko_api_base
+        )
         url = f"{base_url}{self.endpoints.coins_markets_endpoint}"
         params = {
             "vs_currency": "usd",
@@ -101,7 +117,9 @@ class MarketService:
             "price_change_percentage": "24h",
         }
         try:
-            data = await make_request(self.session, str(url), params=params, headers=headers)
+            data = await make_request(
+                self.session, str(url), params=params, headers=headers
+            )
             if isinstance(data, list):
                 # Оставим только часто используемое — чтобы не дёргать UI лишними полями
                 trimmed = [
@@ -111,7 +129,9 @@ class MarketService:
                         "name": it.get("name"),
                         "current_price": it.get("current_price"),
                         "market_cap": it.get("market_cap"),
-                        "price_change_percentage_24h": it.get("price_change_percentage_24h"),
+                        "price_change_percentage_24h": it.get(
+                            "price_change_percentage_24h"
+                        ),
                         "image": it.get("image"),
                     }
                     for it in data
@@ -121,20 +141,30 @@ class MarketService:
             logger.error("get_top_coins_by_market_cap() error: %s", e, exc_info=True)
         return None
 
-    async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
+    async def get_prices(self, coin_ids: list[str]) -> dict[str, float | None]:
         """
         Простая утилита цен через CoinGecko (fallback-friendly).
         Возвращает {id: usd_price|None}
         """
         if not coin_ids:
             return {}
-        api_key = self.settings.COINGECKO_API_KEY.get_secret_value() if self.settings.COINGECKO_API_KEY else None
+        api_key = (
+            self.settings.COINGECKO_API_KEY.get_secret_value()
+            if self.settings.COINGECKO_API_KEY
+            else None
+        )
         headers = {"x-cg-pro-api-key": api_key} if api_key else {}
-        base_url = self.endpoints.coingecko_api_pro_base if api_key else self.endpoints.coingecko_api_base
+        base_url = (
+            self.endpoints.coingecko_api_pro_base
+            if api_key
+            else self.endpoints.coingecko_api_base
+        )
         url = f"{base_url}{self.endpoints.simple_price_endpoint}"
         params = {"ids": ",".join(coin_ids), "vs_currencies": "usd"}
         try:
-            data = await make_request(self.session, str(url), params=params, headers=headers)
+            data = await make_request(
+                self.session, str(url), params=params, headers=headers
+            )
             res = {cid: None for cid in coin_ids}
             if isinstance(data, dict):
                 for cid in coin_ids:
@@ -145,13 +175,17 @@ class MarketService:
             logger.error("get_prices() error: %s", e, exc_info=True)
             return {cid: None for cid in coin_ids}
 
-    async def get_btc_network_status(self) -> Optional[Dict[str, Any]]:
+    async def get_btc_network_status(self) -> dict[str, Any] | None:
         """
         Хешрейт/ретаргет из публичных эндпоинтов mempool.space и blockchain.info
         """
         try:
             # Hashrate (blockchain.info/q/hashrate) — GH/s → переведём в EH/s
-            hashrate_ghs_str = await make_request(self.session, str(self.endpoints.blockchain_info_hashrate), response_type="text")
+            hashrate_ghs_str = await make_request(
+                self.session,
+                str(self.endpoints.blockchain_info_hashrate),
+                response_type="text",
+            )
             hashrate_ehs = None
             if hashrate_ghs_str:
                 try:
@@ -161,12 +195,17 @@ class MarketService:
                     hashrate_ehs = None
 
             # Difficulty data
-            diff = await make_request(self.session, str(self.endpoints.mempool_space_difficulty))
+            diff = await make_request(
+                self.session, str(self.endpoints.mempool_space_difficulty)
+            )
             est_date = None
             if diff and diff.get("nextRetargetTimeEstimate"):
                 try:
                     import datetime as _dt
-                    est_date = _dt.datetime.fromtimestamp(diff["nextRetargetTimeEstimate"]).strftime("%d.%m.%Y")
+
+                    est_date = _dt.datetime.fromtimestamp(
+                        diff["nextRetargetTimeEstimate"]
+                    ).strftime("%d.%m.%Y")
                 except Exception:
                     est_date = None
 
@@ -179,12 +218,16 @@ class MarketService:
             logger.error("get_btc_network_status() error: %s", e, exc_info=True)
             return None
 
-    async def get_halving_info(self) -> Optional[Dict[str, Any]]:
+    async def get_halving_info(self) -> dict[str, Any] | None:
         """
         Псевдо-дубликация логики MarketDataService, чтобы не плодить хард-зависимость.
         """
         try:
-            tip = await make_request(self.session, str(self.endpoints.mempool_space_tip_height), response_type="text")
+            tip = await make_request(
+                self.session,
+                str(self.endpoints.mempool_space_tip_height),
+                response_type="text",
+            )
             current_height = int(tip)
             HALVING_INTERVAL = 210000
             AVG_BLOCK_TIME_MINUTES = 10
@@ -195,7 +238,10 @@ class MarketService:
             progress = (current_height % HALVING_INTERVAL) / HALVING_INTERVAL * 100.0
 
             import datetime as _dt
-            estimated_date = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=blocks_remaining * AVG_BLOCK_TIME_MINUTES)
+
+            estimated_date = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(
+                minutes=blocks_remaining * AVG_BLOCK_TIME_MINUTES
+            )
             return {
                 "progressPercent": progress,
                 "remainingBlocks": blocks_remaining,

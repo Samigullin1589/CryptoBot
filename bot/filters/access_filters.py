@@ -6,20 +6,22 @@
 # =================================================================================
 
 import logging
-from typing import Union, Dict, Any
+from typing import Union, Any
 
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery
 
 from bot.utils.dependencies import Deps
-from bot.utils.models import UserRole # <-- ИСПРАВЛЕНО
+from bot.utils.models import UserRole  # <-- ИСПРАВЛЕНО
 
 logger = logging.getLogger(__name__)
+
 
 class PrivilegeFilter(BaseFilter):
     """
     Фильтр для проверки, имеет ли пользователь достаточные права.
     """
+
     def __init__(self, min_role: UserRole):
         self.min_role = min_role
 
@@ -27,14 +29,16 @@ class PrivilegeFilter(BaseFilter):
         """
         Проверяет роль пользователя.
         """
-        deps: Deps = data.get('deps')
-        
+        deps: Deps = data.get("deps")
+
         if not deps:
-            logger.error("Критическая ошибка: DI-контейнер 'deps' не был передан в PrivilegeFilter.")
+            logger.error(
+                "Критическая ошибка: DI-контейнер 'deps' не был передан в PrivilegeFilter."
+            )
             return False
 
         user_id = event.from_user.id
-        
+
         if user_id in deps.settings.admin_ids:
             user_role = UserRole.SUPER_ADMIN
         else:

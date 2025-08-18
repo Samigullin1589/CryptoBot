@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery, InlineQuery
@@ -35,9 +35,9 @@ class ActivityMiddleware(BaseMiddleware):
         super().__init__()
         self.ttl = int(ttl_seconds)
 
-    async def __call__(self, handler, event: Any, data: Dict[str, Any]) -> Any:  # type: ignore[override]
+    async def __call__(self, handler, event: Any, data: dict[str, Any]) -> Any:  # type: ignore[override]
         deps = data.get("deps")
-        r: Optional[Redis] = getattr(deps, "redis", None) if deps else None
+        r: Redis | None = getattr(deps, "redis", None) if deps else None
 
         try:
             now = int(time.time())
@@ -58,7 +58,11 @@ class ActivityMiddleware(BaseMiddleware):
                     await pipe.execute()
             elif isinstance(event, CallbackQuery):
                 uid = event.from_user.id if event.from_user else None
-                chat_id = event.message.chat.id if event.message and event.message.chat else None
+                chat_id = (
+                    event.message.chat.id
+                    if event.message and event.message.chat
+                    else None
+                )
                 if r:
                     pipe = r.pipeline()
                     if uid:

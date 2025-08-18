@@ -21,7 +21,8 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any
+from collections.abc import Sequence
 
 import backoff
 
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Helpers
 # --------------------------------------------------------------------------------------
 
+
 def _clip(s: str, n: int = 4000) -> str:
     return s if len(s) <= n else (s[: n - 1] + "…")
 
@@ -70,6 +72,7 @@ def _guess_mime_from_bytes(b: bytes) -> str:
 # AIContentService
 # --------------------------------------------------------------------------------------
 
+
 class AIContentService:
     """
     Unified wrapper around OpenAI (primary) and Google Gemini (fallback).
@@ -80,26 +83,36 @@ class AIContentService:
 
     def __init__(
         self,
-        settings: Optional[Settings] = None,
-        ai_config: Optional[AIConfig] = None,
+        settings: Settings | None = None,
+        ai_config: AIConfig | None = None,
     ) -> None:
         self.settings = settings
         self.config: AIConfig = ai_config or (settings.ai if settings else AIConfig())
 
         # ---------- OpenAI (primary) ----------
         self.oai_client = None
-        self.oai_model = os.getenv("OPENAI_MODEL") or getattr(self.config, "openai_model", None) or "gpt-4o-mini"
+        self.oai_model = (
+            os.getenv("OPENAI_MODEL")
+            or getattr(self.config, "openai_model", None)
+            or "gpt-4o-mini"
+        )
         oai_key = os.getenv("OPENAI_API_KEY")
         if OpenAI and oai_key:
             try:
                 self.oai_client = OpenAI(api_key=oai_key)
-                logger.info("AIContentService: OpenAI initialized (model=%s).", self.oai_model)
+                logger.info(
+                    "AIContentService: OpenAI initialized (model=%s).", self.oai_model
+                )
             except Exception as e:  # noqa: BLE001
-                logger.warning("AIContentService: failed to init OpenAI: %s", e, exc_info=True)
+                logger.warning(
+                    "AIContentService: failed to init OpenAI: %s", e, exc_info=True
+                )
                 self.oai_client = None
         else:
             if not OpenAI:
-                logger.info("AIContentService: `openai` package not installed — Gemini only.")
+                logger.info(
+                    "AIContentService: `openai` package not installed — Gemini only."
+                )
             else:
                 logger.info("AIContentService: OPENAI_API_KEY not set — Gemini only.")
 
@@ -108,8 +121,12 @@ class AIContentService:
         self.gemini_pro = None
         self.gemini_flash = None
         g_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
-        self.gemini_model_name = getattr(self.config, "model_name", "gemini-1.5-pro-latest")
-        self.gemini_flash_name = getattr(self.config, "flash_model_name", "gemini-1.5-flash-latest")
+        self.gemini_model_name = getattr(
+            self.config, "model_name", "gemini-1.5-pro-latest"
+        )
+        self.gemini_flash_name = getattr(
+            self.config, "flash_model_name", "gemini-1.5-flash-latest"
+        )
         if g_key:
             try:
                 genai.configure(api_key=g_key)
@@ -123,10 +140,16 @@ class AIContentService:
                     self.gemini_flash_name,
                 )
             except Exception as e:  # noqa: BLE001
-                logger.critical("AIContentService: Gemini init failed — disabled fallback: %s", e, exc_info=True)
+                logger.critical(
+                    "AIContentService: Gemini init failed — disabled fallback: %s",
+                    e,
+                    exc_info=True,
+                )
                 self._gemini_enabled = False
         else:
-            logger.info("AIContentService: GOOGLE_API_KEY/GEMINI_API_KEY not set — Gemini disabled.")
+            logger.info(
+                "AIContentService: GOOGLE_API_KEY/GEMINI_API_KEY not set — Gemini disabled."
+            )
 
     async def close(self) -> None:
         """For symmetry with other services; nothing to close explicitly here."""
@@ -139,7 +162,7 @@ class AIContentService:
         return (getattr(resp, "text", None) or "").strip()
 
     @staticmethod
-    def _format_history(history: Optional[List[Any]]) -> List[Dict[str, str]]:
+    def _format_history(history: list[Any] | None) -> list[dict[str, str]]:
         """
         Normalize to OpenAI-compatible messages: [{role, content}, ...]
         Supports:
@@ -148,7 +171,7 @@ class AIContentService:
         """
         if not history:
             return []
-        msgs: List[Dict[str, str]] = []
+        msgs: list[dict[str, str]] = []
         for h in history:
             if isinstance(h, str):
                 msgs.append({"role": "user", "content": h.strip()})
@@ -159,20 +182,20 @@ class AIContentService:
                     msgs.append({"role": role, "content": content})
             else:
                 msgs.append({"role": "user", "content": str(h).strip()})
-        return msgs[-max(4, min(20, int(getattr(self.config, "history_max_size", 10)))) :]
+        return msgs[-10:]
 
     # ---- OpenAI helpers ----
 
     async def _oai_chat(
         self,
         *,
-        system_prompt: Optional[str],
-        messages: List[Dict[str, str]],
-        temperature: Optional[float] = None,
+        system_prompt: str | None,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
     ) -> str:
         if not self.oai_client:
             raise RuntimeError("OpenAI client is not initialized")
-        oai_messages: List[Dict[str, str]] = []
+        oai_messages: list[dict[str, str]] = []
         if system_prompt:
             oai_messages.append({"role": "system", "content": system_prompt})
         oai_messages.extend(messages)
@@ -181,7 +204,9 @@ class AIContentService:
             return self.oai_client.chat.completions.create(
                 model=self.oai_model,
                 messages=oai_messages,
-                temperature=temperature if temperature is not None else self.config.default_temperature,
+                temperature=temperature
+                if temperature is not None
+                else self.config.default_temperature,
             )
 
         resp = await asyncio.to_thread(_call)
@@ -190,10 +215,12 @@ class AIContentService:
         except Exception:  # noqa: BLE001
             return ""
 
-    async def _oai_json(self, *, system_prompt: Optional[str], user_prompt: str) -> Optional[Dict[str, Any]]:
+    async def _oai_json(
+        self, *, system_prompt: str | None, user_prompt: str
+    ) -> dict[str, Any] | None:
         if not self.oai_client:
             raise RuntimeError("OpenAI client is not initialized")
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": user_prompt})
@@ -225,7 +252,11 @@ class AIContentService:
 
     @backoff.on_exception(
         backoff.expo,
-        (google_exceptions.GoogleAPIError, google_exceptions.RetryError, google_exceptions.ResourceExhausted),
+        (
+            google_exceptions.GoogleAPIError,
+            google_exceptions.RetryError,
+            google_exceptions.ResourceExhausted,
+        ),
         max_tries=3,
     )
     async def _gemini_request(
@@ -233,7 +264,7 @@ class AIContentService:
         model: Any,
         *,
         contents: Any,
-        generation_config: Optional[GenerationConfig] = None,
+        generation_config: GenerationConfig | None = None,
         use_search: bool = False,
     ) -> Any:
         if model is None:
@@ -246,12 +277,22 @@ class AIContentService:
                 GoogleSearch = genai.protos.GoogleSearch
                 tools = [Tool(google_search=GoogleSearch())]
             except Exception as e:  # noqa: BLE001
-                logger.warning("Gemini: failed to construct google_search tool: %s — proceed without.", e)
+                logger.warning(
+                    "Gemini: failed to construct google_search tool: %s — proceed without.",
+                    e,
+                )
                 tools = None
 
         if hasattr(model, "generate_content_async"):
-            return await model.generate_content_async(contents=contents, tools=tools, generation_config=generation_config)
-        return await asyncio.to_thread(model.generate_content, contents=contents, tools=tools, generation_config=generation_config)
+            return await model.generate_content_async(
+                contents=contents, tools=tools, generation_config=generation_config
+            )
+        return await asyncio.to_thread(
+            model.generate_content,
+            contents=contents,
+            tools=tools,
+            generation_config=generation_config,
+        )
 
     # ----------------------------------------------------------------------------------
     # Public text helpers
@@ -268,12 +309,16 @@ class AIContentService:
                     temperature=0.3,
                 )
             except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI summary failed (%s). FALLBACK → Gemini.", e, exc_info=True)
+                logger.warning(
+                    "OpenAI summary failed (%s). FALLBACK → Gemini.", e, exc_info=True
+                )
 
         if self._gemini_enabled:
             try:
                 model = self.gemini_flash or self.gemini_pro
-                resp = await self._gemini_request(model, contents=f"{system_prompt}\n\n{text_to_summarize}")
+                resp = await self._gemini_request(
+                    model, contents=f"{system_prompt}\n\n{text_to_summarize}"
+                )
                 return self._extract_text(resp) or ""
             except Exception as e:  # noqa: BLE001
                 logger.error("Gemini summary failed: %s", e, exc_info=True)
@@ -282,12 +327,12 @@ class AIContentService:
     async def get_structured_response(
         self,
         prompt: str,
-        json_schema: Dict[str, Any],
+        json_schema: dict[str, Any],
         *,
         use_grounding: bool = False,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         **_: Any,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Strict JSON by schema. GPT JSON-mode → (fallback) Gemini JSON via response_mime_type."""
         if self.oai_client:
             try:
@@ -297,11 +342,18 @@ class AIContentService:
                     f"Схема-подсказка: {json.dumps(json_schema, ensure_ascii=False)}\n\n"
                     f"Задание:\n{prompt}"
                 )
-                data = await self._oai_json(system_prompt=oai_system or "Ты генерируешь только валидный JSON.", user_prompt=oai_prompt)
+                data = await self._oai_json(
+                    system_prompt=oai_system or "Ты генерируешь только валидный JSON.",
+                    user_prompt=oai_prompt,
+                )
                 if data is not None:
                     return data
             except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI structured failed (%s). FALLBACK → Gemini.", e, exc_info=True)
+                logger.warning(
+                    "OpenAI structured failed (%s). FALLBACK → Gemini.",
+                    e,
+                    exc_info=True,
+                )
 
         if self._gemini_enabled:
             try:
@@ -313,7 +365,12 @@ class AIContentService:
                     "\n\nОтветь ТОЛЬКО корректным JSON без комментариев и Markdown.\n"
                     f"Схема (пример): {json.dumps(json_schema, ensure_ascii=False)}"
                 )
-                resp = await self._gemini_request(model, contents=full_prompt, generation_config=gen_cfg, use_search=use_grounding)
+                resp = await self._gemini_request(
+                    model,
+                    contents=full_prompt,
+                    generation_config=gen_cfg,
+                    use_search=use_grounding,
+                )
                 text = self._extract_text(resp)
                 if not text:
                     return None
@@ -329,20 +386,22 @@ class AIContentService:
     async def generate_structured_content(
         self,
         prompt: str,
-        json_schema: Dict[str, Any],
+        json_schema: dict[str, Any],
         *,
-        system_prompt: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        return await self.get_structured_response(prompt, json_schema, use_grounding=False, system_prompt=system_prompt)
+        system_prompt: str | None = None,
+    ) -> dict[str, Any] | None:
+        return await self.get_structured_response(
+            prompt, json_schema, use_grounding=False, system_prompt=system_prompt
+        )
 
     async def get_consultant_answer(
         self,
         user_text: str,
-        history: Optional[List[Any]] = None,
+        history: list[Any] | None = None,
         *,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
         use_grounding: bool = False,
-        temperature: Optional[float] = None,
+        temperature: float | None = None,
     ) -> str:
         """Longer RU assistant answer. GPT → (fallback) Gemini."""
         messages = self._format_history(history)
@@ -354,23 +413,44 @@ class AIContentService:
                     system_prompt=system_prompt
                     or "Ты — помощник по криптовалютам и майнингу. Отвечай лаконично и по-русски.",
                     messages=messages,
-                    temperature=temperature if temperature is not None else self.config.default_temperature,
+                    temperature=temperature
+                    if temperature is not None
+                    else self.config.default_temperature,
                 )
             except (APIConnectionError, RateLimitError, APIStatusError, Exception) as e:  # noqa: BLE001
-                logger.warning("OpenAI consultant failed (%s). FALLBACK → Gemini.", e, exc_info=True)
+                logger.warning(
+                    "OpenAI consultant failed (%s). FALLBACK → Gemini.",
+                    e,
+                    exc_info=True,
+                )
 
         if self._gemini_enabled:
             try:
                 model = self.gemini_flash or self.gemini_pro
-                sys_preamble = system_prompt or "Ты — помощник по криптовалютам и майнингу. Отвечай лаконично и по-русски."
-                history_block = "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1]) if messages[:-1] else ""
+                sys_preamble = (
+                    system_prompt
+                    or "Ты — помощник по криптовалютам и майнингу. Отвечай лаконично и по-русски."
+                )
+                history_block = (
+                    "\n".join(f"{m['role']}: {m['content']}" for m in messages[:-1])
+                    if messages[:-1]
+                    else ""
+                )
                 prompt_parts = [sys_preamble]
                 if history_block:
-                    prompt_parts.append("Контекст диалога:\n" + _clip(history_block, 6000))
-                prompt_parts.append("Вопрос пользователя:\n" + _clip(user_text or "", 6000))
+                    prompt_parts.append(
+                        "Контекст диалога:\n" + _clip(history_block, 6000)
+                    )
+                prompt_parts.append(
+                    "Вопрос пользователя:\n" + _clip(user_text or "", 6000)
+                )
                 full_prompt = "\n\n".join(p for p in prompt_parts if p)
 
-                gen_cfg = GenerationConfig(temperature=temperature if temperature is not None else self.config.default_temperature)
+                gen_cfg = GenerationConfig(
+                    temperature=temperature
+                    if temperature is not None
+                    else self.config.default_temperature
+                )
                 resp = await self._gemini_request(
                     model,
                     contents=full_prompt,
@@ -387,7 +467,9 @@ class AIContentService:
     # Vision: Gemini 1.5 (pro/flash)
     # ----------------------------------------------------------------------------------
 
-    def _to_gemini_image_part(self, image: Union[bytes, str, Dict[str, Any]]) -> Dict[str, Any]:
+    def _to_gemini_image_part(
+        self, image: bytes | str | dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Convert input to Gemini image part:
           - bytes -> {"mime_type": "...", "data": bytes}
@@ -402,22 +484,26 @@ class AIContentService:
         if isinstance(image, str):
             # Do not fetch URL here (no requests in event loop).
             # Encourage upstream to provide bytes.
-            logger.warning("Gemini-Vision: URL string provided, but no fetching is performed. Provide bytes instead.")
+            logger.warning(
+                "Gemini-Vision: URL string provided, but no fetching is performed. Provide bytes instead."
+            )
             # Put a tiny placeholder so API doesn't fail hard:
-            b = base64.b64decode(b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAH9gK1zD8tswAAAABJRU5ErkJggg==")
+            b = base64.b64decode(
+                b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAH9gK1zD8tswAAAABJRU5ErkJggg=="
+            )
             return {"mime_type": "image/png", "data": b}
         raise TypeError("Unsupported image type; expected bytes|dict|str(URL)")
 
     async def analyze_image(
         self,
         prompt: str,
-        images: Sequence[Union[bytes, str, Dict[str, Any]]],
+        images: Sequence[bytes | str | dict[str, Any]],
         *,
-        response_json_schema: Optional[Dict[str, Any]] = None,
+        response_json_schema: dict[str, Any] | None = None,
         use_grounding: bool = False,
         temperature: float = 0.2,
         max_output_tokens: int = 2048,
-    ) -> Union[str, Dict[str, Any]]:
+    ) -> str | dict[str, Any]:
         """
         Analyze one or multiple images with Gemini-Vision (1.5). Returns TEXT or JSON.
 
@@ -435,7 +521,7 @@ class AIContentService:
         if not self._gemini_enabled:
             raise RuntimeError("Gemini is not configured — cannot run vision.")
 
-        parts: List[Any] = [prompt]
+        parts: list[Any] = [prompt]
         for img in images:
             parts.append(self._to_gemini_image_part(img))
 
@@ -445,7 +531,9 @@ class AIContentService:
             response_mime_type="application/json" if response_json_schema else None,
         )
         model = self.gemini_flash or self.gemini_pro
-        resp = await self._gemini_request(model, contents=parts, generation_config=gen_cfg, use_search=use_grounding)
+        resp = await self._gemini_request(
+            model, contents=parts, generation_config=gen_cfg, use_search=use_grounding
+        )
         text = self._extract_text(resp)
 
         if response_json_schema:
@@ -474,7 +562,7 @@ class AIContentService:
     # Heuristics / Moderation
     # ----------------------------------------------------------------------------------
 
-    async def moderate_text(self, text: str) -> Dict[str, Any]:
+    async def moderate_text(self, text: str) -> dict[str, Any]:
         """
         Lightweight moderation (heuristic). If OpenAI available, try to use it for a richer signal
         in a budget-friendly manner; otherwise use regex-based flags.
@@ -482,8 +570,20 @@ class AIContentService:
         flags = {
             "links": bool(re.search(r"https?://|t\.me/|@[\w\d_]{3,32}", text, re.I)),
             "mentions": bool(re.search(r"@[\w\d_]{3,32}", text)),
-            "promo": bool(re.search(r"(free|бесплатн|скидк|прибыль|доход|guarantee|x\d+|pump|airdrops?)", text, re.I)),
-            "scam": bool(re.search(r"(giveaway|розыгрыш|раздач|купи|вложи|инвестируй|депозит|капитал|доход\s*\d+%|\d+%\s*в\s*день)", text, re.I)),
+            "promo": bool(
+                re.search(
+                    r"(free|бесплатн|скидк|прибыль|доход|guarantee|x\d+|pump|airdrops?)",
+                    text,
+                    re.I,
+                )
+            ),
+            "scam": bool(
+                re.search(
+                    r"(giveaway|розыгрыш|раздач|купи|вложи|инвестируй|депозит|капитал|доход\s*\d+%|\d+%\s*в\s*день)",
+                    text,
+                    re.I,
+                )
+            ),
         }
         score = sum(0.15 for v in flags.values() if v)
         result = {"score": min(1.0, score), "flags": flags, "provider": "heuristic"}
@@ -493,10 +593,14 @@ class AIContentService:
             try:
                 # Craft tiny prompt to classify risk 0..1 quickly
                 sys = "Return a single JSON with keys {score: float in [0,1], reasons: string[]} based on spam/abuse risk."
-                data = await self._oai_json(system_prompt=sys, user_prompt=f"Text:\n{_clip(text, 4000)}")
+                data = await self._oai_json(
+                    system_prompt=sys, user_prompt=f"Text:\n{_clip(text, 4000)}"
+                )
                 if isinstance(data, dict) and "score" in data:
                     # Blend scores (max to be conservative)
-                    result["score"] = max(float(result["score"]), float(data.get("score", 0)))
+                    result["score"] = max(
+                        float(result["score"]), float(data.get("score", 0))
+                    )
                     result["reasons"] = data.get("reasons", [])
                     result["provider"] = "openai+heuristic"
             except Exception as e:  # noqa: BLE001
@@ -508,8 +612,8 @@ class AIContentService:
         *,
         caption: str = "",
         ocr_hint: str = "",
-        images: Sequence[Union[bytes, Dict[str, Any], str]] = (),
-    ) -> Dict[str, Any]:
+        images: Sequence[bytes | dict[str, Any] | str] = (),
+    ) -> dict[str, Any]:
         """
         Heuristic spam scoring for images using Gemini-Vision (if configured).
         - Extracts brief semantic labels and promo cues (qr codes, urls, big digits).
@@ -517,7 +621,7 @@ class AIContentService:
 
         NOTE: No network fetching; pass image bytes from Telegram.
         """
-        cues: Dict[str, Any] = {
+        cues: dict[str, Any] = {
             "qr": False,
             "urls_on_image": False,
             "huge_digits": False,
@@ -525,7 +629,9 @@ class AIContentService:
             "caption_links": bool(re.search(r"https?://|t\.me/", caption, re.I)),
         }
 
-        text_score = (await self.moderate_text(caption)).get("score", 0.0) if caption else 0.0
+        text_score = (
+            (await self.moderate_text(caption)).get("score", 0.0) if caption else 0.0
+        )
 
         if not self._gemini_enabled or not images:
             # fall back to text-only
@@ -542,7 +648,12 @@ class AIContentService:
                     "has_promo_words": {"type": "boolean"},
                     "short_labels": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["has_qr", "has_urls", "has_huge_digits", "has_promo_words"],
+                "required": [
+                    "has_qr",
+                    "has_urls",
+                    "has_huge_digits",
+                    "has_promo_words",
+                ],
             }
             prompt = (
                 "Проанализируй изображение(я) на предмет спама в Telegram.\n"
@@ -550,7 +661,9 @@ class AIContentService:
                 "- встречаются ли слова 'акция', 'бесплатно', 'инвестируй', 'доход', 'гарантия', 'x10', 'заработок' и т.п.\n"
                 "Верни краткий JSON."
             )
-            data = await self.analyze_image(prompt, images, response_json_schema=schema, temperature=0.0)
+            data = await self.analyze_image(
+                prompt, images, response_json_schema=schema, temperature=0.0
+            )
             if isinstance(data, dict):
                 cues["qr"] = bool(data.get("has_qr", False))
                 cues["urls_on_image"] = bool(data.get("has_urls", False))

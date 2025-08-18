@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------- helpers ------------------------------------
+
 
 async def _call_if_exists(obj: object, *names: str, **extra_kwargs: Any) -> bool:
     """
@@ -43,7 +44,13 @@ async def _call_if_exists(obj: object, *names: str, **extra_kwargs: Any) -> bool
                 logger.info("Выполнено: %s.%s()", obj.__class__.__name__, name)
                 return True
             except Exception as e:  # noqa: BLE001
-                logger.warning("Ошибка при вызове %s.%s(): %s", obj.__class__.__name__, name, e, exc_info=True)
+                logger.warning(
+                    "Ошибка при вызове %s.%s(): %s",
+                    obj.__class__.__name__,
+                    name,
+                    e,
+                    exc_info=True,
+                )
                 return False
     return False
 
@@ -59,6 +66,7 @@ def _get_tz() -> str:
     try:
         # Пытаемся взять из настроек, если доступны через импорт
         from bot.config.settings import settings  # type: ignore
+
         # Возможные варианты хранения TZ в Settings
         for attr in ("TZ", "tz", "time_zone", "timezone"):
             val = getattr(settings, attr, None)
@@ -70,6 +78,7 @@ def _get_tz() -> str:
 
 
 # --------------------------------- jobs ---------------------------------------
+
 
 async def update_coin_list_job(deps: "Deps") -> None:
     """
@@ -94,7 +103,9 @@ async def update_coin_list_job(deps: "Deps") -> None:
         # Пробуем «грубую» перезагрузку: fetch + cache (если есть пара методов)
         ok_fetch = await _call_if_exists(svc, "fetch", "load", "reload")
         ok_cache = await _call_if_exists(svc, "cache", "reindex", "rebuild_index")
-        logger.info("CoinListService: fetch=%s cache=%s (fallback).", ok_fetch, ok_cache)
+        logger.info(
+            "CoinListService: fetch=%s cache=%s (fallback).", ok_fetch, ok_cache
+        )
 
 
 async def warm_price_cache_job(deps: "Deps") -> None:
@@ -107,7 +118,9 @@ async def warm_price_cache_job(deps: "Deps") -> None:
         return
 
     # Частые контракты:
-    if not await _call_if_exists(svc, "warmup_cache", "warmup", "prefetch_top", "prefetch"):
+    if not await _call_if_exists(
+        svc, "warmup_cache", "warmup", "prefetch_top", "prefetch"
+    ):
         logger.info("PriceService не поддерживает прогрев кэша — пропуск.")
 
 
@@ -134,6 +147,7 @@ async def prefetch_news_job(deps: "Deps") -> None:
 
 # --------------------------- scheduler bootstrap -------------------------------
 
+
 async def setup_scheduler(deps: "Deps", dp: "Dispatcher") -> None:
     """
     Регистрирует и запускает планировщик. Вызывается из main.py во время старта бота.
@@ -141,17 +155,23 @@ async def setup_scheduler(deps: "Deps", dp: "Dispatcher") -> None:
     """
     # Извлекаем интервалы из настроек с безопасными дефолтами
     try:
-        coin_hours: int = int(getattr(deps.settings.coin_list_service, "update_interval_hours", 12))
+        coin_hours: int = int(
+            getattr(deps.settings.coin_list_service, "update_interval_hours", 12)
+        )
     except Exception:
         coin_hours = 12
 
     try:
-        price_minutes: int = int(getattr(deps.settings.price_service, "refresh_interval_minutes", 5))
+        price_minutes: int = int(
+            getattr(deps.settings.price_service, "refresh_interval_minutes", 5)
+        )
     except Exception:
         price_minutes = 5
 
     try:
-        news_minutes: int = int(getattr(deps.settings.news_service, "refresh_interval_minutes", 180))
+        news_minutes: int = int(
+            getattr(deps.settings.news_service, "refresh_interval_minutes", 180)
+        )
     except Exception:
         news_minutes = 180
 
@@ -166,11 +186,34 @@ async def setup_scheduler(deps: "Deps", dp: "Dispatcher") -> None:
 
     # Планируем задачи
     try:
-        scheduler.add_job(update_coin_list_job, "interval", hours=max(1, coin_hours), args=[deps], id="coin_list_update", replace_existing=True)
-        scheduler.add_job(warm_price_cache_job, "interval", minutes=max(1, price_minutes), args=[deps], id="price_cache_warmup", replace_existing=True)
-        scheduler.add_job(prefetch_news_job, "interval", minutes=max(10, news_minutes), args=[deps], id="news_prefetch", replace_existing=True)
+        scheduler.add_job(
+            update_coin_list_job,
+            "interval",
+            hours=max(1, coin_hours),
+            args=[deps],
+            id="coin_list_update",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            warm_price_cache_job,
+            "interval",
+            minutes=max(1, price_minutes),
+            args=[deps],
+            id="price_cache_warmup",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            prefetch_news_job,
+            "interval",
+            minutes=max(10, news_minutes),
+            args=[deps],
+            id="news_prefetch",
+            replace_existing=True,
+        )
     except Exception as e:  # noqa: BLE001
-        logger.critical("Ошибка при создании задач в планировщике: %s", e, exc_info=True)
+        logger.critical(
+            "Ошибка при создании задач в планировщике: %s", e, exc_info=True
+        )
         return
 
     try:
@@ -181,4 +224,6 @@ async def setup_scheduler(deps: "Deps", dp: "Dispatcher") -> None:
             [job.id for job in scheduler.get_jobs()],
         )
     except Exception as e:  # noqa: BLE001
-        logger.critical("Не удалось запустить планировщик APScheduler: %s", e, exc_info=True)
+        logger.critical(
+            "Не удалось запустить планировщик APScheduler: %s", e, exc_info=True
+        )

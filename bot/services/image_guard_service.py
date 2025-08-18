@@ -9,7 +9,7 @@ import contextlib
 import io
 import re
 from dataclasses import dataclass
-from typing import Optional, Tuple, Iterable, Any
+from collections.abc import Iterable
 
 from PIL import Image
 import numpy as np
@@ -34,7 +34,7 @@ _SPAM_RX = re.compile("|".join(_SPAM_PATTERNS), re.IGNORECASE)
 
 @dataclass
 class ImageVerdict:
-    action: str     # "allow" | "delete" | "ban"
+    action: str  # "allow" | "delete" | "ban"
     reason: str = ""
 
 
@@ -52,12 +52,14 @@ class ImageGuardService:
         self.redis = deps.redis
         self.settings = deps.settings
         # Redis keys
-        self._k_hashes = "security:spam_image_hashes"    # set of hex64
+        self._k_hashes = "security:spam_image_hashes"  # set of hex64
         self._k_seen_cnt = "security:user_spam_img_cnt"  # hash: user_id -> count
 
     # -------------------- public API --------------------
 
-    async def check_message_with_photo(self, bot: Bot, message: Message) -> ImageVerdict:
+    async def check_message_with_photo(
+        self, bot: Bot, message: Message
+    ) -> ImageVerdict:
         photo = self._pick_best_photo(message.photo or [])
         if not photo:
             return ImageVerdict("allow")
@@ -71,7 +73,9 @@ class ImageGuardService:
         if h is not None:
             is_known, dist = await self._is_known_spam_hash(h, max_distance=5)
             if is_known:
-                return await self._punish(message, f"Известная спам-картинка (dist={dist}).")
+                return await self._punish(
+                    message, f"Известная спам-картинка (dist={dist})."
+                )
 
         # 2) подпись + OCR текст
         full_text = (message.caption or "").strip()
@@ -80,7 +84,9 @@ class ImageGuardService:
             full_text = f"{full_text}\n{ocr_text}".strip()
 
         if self._looks_spam(full_text):
-            return await self._punish(message, "Подозрительный текст на изображении/в подписи.")
+            return await self._punish(
+                message, "Подозрительный текст на изображении/в подписи."
+            )
 
         return ImageVerdict("allow")
 
@@ -100,7 +106,7 @@ class ImageGuardService:
 
     # -------------------- internals --------------------
 
-    def _pick_best_photo(self, photos: Iterable[PhotoSize]) -> Optional[PhotoSize]:
+    def _pick_best_photo(self, photos: Iterable[PhotoSize]) -> PhotoSize | None:
         best = None
         max_area = -1
         for ph in photos:
@@ -112,7 +118,7 @@ class ImageGuardService:
                 best = ph
         return best
 
-    async def _download_photo(self, bot: Bot, photo: PhotoSize) -> Optional[bytes]:
+    async def _download_photo(self, bot: Bot, photo: PhotoSize) -> bytes | None:
         buff = io.BytesIO()
         try:
             await bot.download(photo, destination=buff)  # aiogram v3
@@ -127,9 +133,13 @@ class ImageGuardService:
         except Exception:
             return None
 
-    def _ahash(self, image_bytes: bytes, size: int = 8) -> Optional[int]:
+    def _ahash(self, image_bytes: bytes, size: int = 8) -> int | None:
         try:
-            img = Image.open(io.BytesIO(image_bytes)).convert("L").resize((size, size), Image.LANCZOS)
+            img = (
+                Image.open(io.BytesIO(image_bytes))
+                .convert("L")
+                .resize((size, size), Image.LANCZOS)
+            )
             arr = np.asarray(img, dtype=np.float32)
             avg = arr.mean()
             bits = (arr >= avg).astype(np.uint8)
@@ -140,7 +150,9 @@ class ImageGuardService:
         except Exception:
             return None
 
-    async def _is_known_spam_hash(self, h: int, max_distance: int = 5) -> Tuple[bool, int]:
+    async def _is_known_spam_hash(
+        self, h: int, max_distance: int = 5
+    ) -> tuple[bool, int]:
         try:
             members = await self.redis.smembers(self._k_hashes)
         except Exception:
@@ -165,7 +177,7 @@ class ImageGuardService:
     def _hamming(self, a: int, b: int) -> int:
         return (a ^ b).bit_count()
 
-    async def _ocr_with_gemini(self, img_bytes: bytes) -> Optional[str]:
+    async def _ocr_with_gemini(self, img_bytes: bytes) -> str | None:
         svc = getattr(self.deps, "ai_content_service", None)
         if svc is None:
             return None
@@ -178,7 +190,9 @@ class ImageGuardService:
             "Верни только текст без лишних комментариев."
         )
         try:
-            result = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": img_bytes}])
+            result = model.generate_content(
+                [prompt, {"mime_type": "image/jpeg", "data": img_bytes}]
+            )
             text = getattr(result, "text", None)
             if not text and getattr(result, "candidates", None):
                 parts = result.candidates[0].content.parts
@@ -225,15 +239,21 @@ class ImageGuardService:
         should_ban = cnt >= threshold and chat_type in ("group", "supergroup")
 
         if should_ban:
-            banned = await self._ban_user(message, reason=f"Автобан (спам-картинки), count={cnt}. {reason}")
+            banned = await self._ban_user(
+                message, reason=f"Автобан (спам-картинки), count={cnt}. {reason}"
+            )
             if banned:
                 with contextlib.suppress(Exception):
-                    await message.answer(f"🚫 Пользователь заблокирован (антиспам: изображение). Причина: {reason}")
+                    await message.answer(
+                        f"🚫 Пользователь заблокирован (антиспам: изображение). Причина: {reason}"
+                    )
                 return ImageVerdict("ban", f"{reason} (count={cnt})")
 
         # 5) мягкое уведомление
         with contextlib.suppress(Exception):
-            await message.answer(f"🚫 Сообщение удалено (антиспам: изображение). Причина: {reason} (повторов: {cnt})")
+            await message.answer(
+                f"🚫 Сообщение удалено (антиспам: изображение). Причина: {reason} (повторов: {cnt})"
+            )
 
         return ImageVerdict("delete", reason)
 
@@ -251,7 +271,11 @@ class ImageGuardService:
                 admin_id = 0
                 with contextlib.suppress(Exception):
                     # у некоторых ботов есть bot.id / bot.me.id
-                    admin_id = getattr(message.bot, "id", 0) or getattr(getattr(message.bot, "me", None), "id", 0) or 0
+                    admin_id = (
+                        getattr(message.bot, "id", 0)
+                        or getattr(getattr(message.bot, "me", None), "id", 0)
+                        or 0
+                    )
                 await mod.ban_user(
                     admin_id=admin_id,
                     target_user_id=user_id,

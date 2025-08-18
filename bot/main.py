@@ -17,7 +17,7 @@ import inspect
 import logging
 import signal
 from importlib import import_module
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -32,7 +32,9 @@ from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.middlewares.activity_middleware import ActivityMiddleware
 
 try:
-    from bot.middlewares.security_middleware import SecurityMiddleware  # антиспам/фильтры
+    from bot.middlewares.security_middleware import (
+        SecurityMiddleware,
+    )  # антиспам/фильтры
 except Exception:  # noqa: BLE001
     SecurityMiddleware = None  # type: ignore
 
@@ -41,8 +43,11 @@ logger = logging.getLogger(__name__)
 
 # -------------------------------- Логирование ---------------------------------
 
+
 def setup_logging() -> None:
-    level = getattr(logging, getattr(settings, "log_level", "INFO").upper(), logging.INFO)
+    level = getattr(
+        logging, getattr(settings, "log_level", "INFO").upper(), logging.INFO
+    )
     logging.basicConfig(
         level=level,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -54,8 +59,9 @@ def setup_logging() -> None:
 
 # ----------------------------- Команды бота -----------------------------------
 
+
 async def setup_commands(bot: Bot) -> None:
-    commands: List[BotCommand] = [
+    commands: list[BotCommand] = [
         BotCommand(command="start", description="Запуск"),
         BotCommand(command="help", description="Справка"),
         BotCommand(command="menu", description="Главное меню"),
@@ -71,16 +77,17 @@ async def setup_commands(bot: Bot) -> None:
 
 # ------------------------ Регистрация роутеров --------------------------------
 
-def _collect_routers(module) -> List[Router]:
+
+def _collect_routers(module) -> list[Router]:
     """Ищет все объекты Router в модуле (router, *_router и т.п.)."""
-    routers: List[Router] = []
+    routers: list[Router] = []
     for _, obj in vars(module).items():
         if isinstance(obj, Router):
             routers.append(obj)
     return routers
 
 
-def _import_optional(module_path: str) -> Optional[object]:
+def _import_optional(module_path: str) -> object | None:
     try:
         return import_module(module_path)
     except Exception as e:  # noqa: BLE001
@@ -93,7 +100,7 @@ def register_routers(dp: Dispatcher) -> None:
     Импортирует и регистрирует все известные роутеры проекта.
     Если какой-то модуль отсутствует — просто пропускаем (без заглушек).
     """
-    module_paths: List[str] = [
+    module_paths: list[str] = [
         # --- public ---
         "bot.handlers.public.start_handler",
         "bot.handlers.public.help_handler",
@@ -102,16 +109,12 @@ def register_routers(dp: Dispatcher) -> None:
         "bot.handlers.public.price_handler",
         "bot.handlers.public.news_handler",
         "bot.handlers.public.onboarding_handler",
-
         # --- tools ---
         "bot.handlers.tools.calculator_handler",
-
         # --- game ---
         "bot.handlers.game.mining_game_handler",
-
         # --- threats ---
         "bot.handlers.threats",
-
         # --- admin ---
         "bot.handlers.admin.admin_handler",
         "bot.handlers.admin.moderation_handler",
@@ -136,6 +139,7 @@ def register_routers(dp: Dispatcher) -> None:
 
 # ------------------------ Плановые задачи (jobs) -------------------------------
 
+
 async def setup_scheduler(deps: Deps, dp: Dispatcher) -> None:
     """
     Подключает плановые задачи, если модуль есть в проекте.
@@ -143,7 +147,9 @@ async def setup_scheduler(deps: Deps, dp: Dispatcher) -> None:
     """
     mod = _import_optional("bot.jobs.scheduled_tasks")
     if not mod:
-        logger.info("Модуль планировщика не найден: bot.jobs.scheduled_tasks — пропускаю.")
+        logger.info(
+            "Модуль планировщика не найден: bot.jobs.scheduled_tasks — пропускаю."
+        )
         return
     setup = getattr(mod, "setup_scheduler", None)
     if callable(setup):
@@ -157,6 +163,7 @@ async def setup_scheduler(deps: Deps, dp: Dispatcher) -> None:
 
 
 # ------------------------ Сигналы и остановка ---------------------------------
+
 
 def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
     def _handler(*_: object) -> None:
@@ -174,7 +181,8 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
 
 # --------- Вспомогательная фабрика (безопасное создание по сигнатуре) ---------
 
-def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, Any]:
+
+def _filter_kwargs(callable_obj: Any, candidates: dict[str, Any]) -> dict[str, Any]:
     try:
         sig = inspect.signature(callable_obj)
     except (TypeError, ValueError):
@@ -187,7 +195,7 @@ def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, A
     return {k: v for k, v in candidates.items() if k in supported}
 
 
-async def _safe_make_instance_async(cls: Type, candidates: Dict[str, Any]) -> Any:
+async def _safe_make_instance_async(cls: type, candidates: dict[str, Any]) -> Any:
     """
     Универсальная безопасная фабрика:
       • если есть create(...): вызываем, await если нужно
@@ -207,6 +215,7 @@ async def _safe_make_instance_async(cls: Type, candidates: Dict[str, Any]) -> An
 
 # -------------------- Создание модерации/безопасности -------------------------
 
+
 async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     """
     Создаёт ModerationService и SecurityService и сохраняет в deps.
@@ -214,10 +223,10 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     Полностью асинхронно и безопасно.
     """
     # Сбор общих кандидатов для конструкторов
-    base_kwargs: Dict[str, Any] = {
+    base_kwargs: dict[str, Any] = {
         "bot": bot,
         "settings": settings,
-        "config": settings,         # если сервис ждёт параметр 'config'
+        "config": settings,  # если сервис ждёт параметр 'config'
         "redis": deps.redis,
         "http_session": deps.http_session,
         "user_service": deps.user_service,
@@ -230,6 +239,7 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     # Необязательный StopWordService
     try:
         from bot.services.stop_word_service import StopWordService  # type: ignore
+
         try:
             sws = await _safe_make_instance_async(StopWordService, base_kwargs)
             base_kwargs["stop_word_service"] = sws
@@ -242,7 +252,10 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     # ModerationService
     try:
         from bot.services.moderation_service import ModerationService  # type: ignore
-        deps.moderation_service = await _safe_make_instance_async(ModerationService, base_kwargs)
+
+        deps.moderation_service = await _safe_make_instance_async(
+            ModerationService, base_kwargs
+        )
         base_kwargs["moderation_service"] = deps.moderation_service
         logger.info("ModerationService инициализирован.")
     except Exception as e:
@@ -252,7 +265,10 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     # SecurityService (если есть)
     try:
         from bot.services.security_service import SecurityService  # type: ignore
-        deps.security_service = await _safe_make_instance_async(SecurityService, base_kwargs)
+
+        deps.security_service = await _safe_make_instance_async(
+            SecurityService, base_kwargs
+        )
         logger.info("SecurityService инициализирован.")
     except Exception as e:
         deps.security_service = None
@@ -260,6 +276,7 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
 
 
 # --------------------------------- main() -------------------------------------
+
 
 async def main() -> None:
     setup_logging()
@@ -278,6 +295,7 @@ async def main() -> None:
     # --- AdminService зависит от bot, поэтому создаём его здесь и кладём в deps ---
     try:
         from bot.services.admin_service import AdminService
+
         deps.admin_service = AdminService(redis=deps.redis, settings=settings, bot=bot)  # type: ignore[arg-type]
         logger.info("AdminService инициализирован.")
     except Exception as e:  # noqa: BLE001

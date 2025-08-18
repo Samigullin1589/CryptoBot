@@ -9,7 +9,7 @@ import json
 import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from redis.asyncio import Redis
 
@@ -34,9 +34,9 @@ def _prefix(settings: Settings) -> str:
 class BanRecord:
     user_id: int
     by_id: int
-    reason: Optional[str]
+    reason: str | None
     created_at: str  # iso
-    until: Optional[str]  # iso or None (permanent)
+    until: str | None  # iso or None (permanent)
 
     @property
     def is_permanent(self) -> bool:
@@ -47,9 +47,9 @@ class BanRecord:
 class MuteRecord:
     user_id: int
     by_id: int
-    reason: Optional[str]
+    reason: str | None
     created_at: str
-    until: Optional[str]
+    until: str | None
 
 
 class ModerationService:
@@ -84,8 +84,8 @@ class ModerationService:
         user_id: int,
         *,
         by_id: int,
-        reason: Optional[str] = None,
-        duration: Optional[timedelta] = None,
+        reason: str | None = None,
+        duration: timedelta | None = None,
     ) -> BanRecord:
         created = _utc_now()
         until = None if duration is None else (created + duration)
@@ -107,7 +107,13 @@ class ModerationService:
             ttl = max(ttl, 1)
             await self.redis.setex(key, ttl, data)
 
-        logger.info("BAN set user_id=%s by=%s duration=%s reason=%r", user_id, by_id, duration, reason)
+        logger.info(
+            "BAN set user_id=%s by=%s duration=%s reason=%r",
+            user_id,
+            by_id,
+            duration,
+            reason,
+        )
         return rec
 
     async def unban(self, user_id: int) -> bool:
@@ -118,7 +124,7 @@ class ModerationService:
     async def is_banned(self, user_id: int) -> bool:
         return await self.redis.exists(self._ban_key(user_id)) == 1
 
-    async def get_ban(self, user_id: int) -> Optional[BanRecord]:
+    async def get_ban(self, user_id: int) -> BanRecord | None:
         raw = await self.redis.get(self._ban_key(user_id))
         if not raw:
             return None
@@ -139,8 +145,8 @@ class ModerationService:
         user_id: int,
         *,
         by_id: int,
-        reason: Optional[str] = None,
-        duration: Optional[timedelta] = None,
+        reason: str | None = None,
+        duration: timedelta | None = None,
     ) -> MuteRecord:
         created = _utc_now()
         until = None if duration is None else (created + duration)
@@ -162,7 +168,13 @@ class ModerationService:
             ttl = max(ttl, 1)
             await self.redis.setex(key, ttl, data)
 
-        logger.info("MUTE set user_id=%s by=%s duration=%s reason=%r", user_id, by_id, duration, reason)
+        logger.info(
+            "MUTE set user_id=%s by=%s duration=%s reason=%r",
+            user_id,
+            by_id,
+            duration,
+            reason,
+        )
         return rec
 
     async def unmute(self, user_id: int) -> bool:
@@ -173,7 +185,7 @@ class ModerationService:
     async def is_muted(self, user_id: int) -> bool:
         return await self.redis.exists(self._mute_key(user_id)) == 1
 
-    async def get_mute(self, user_id: int) -> Optional[MuteRecord]:
+    async def get_mute(self, user_id: int) -> MuteRecord | None:
         raw = await self.redis.get(self._mute_key(user_id))
         if not raw:
             return None

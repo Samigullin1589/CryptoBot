@@ -5,7 +5,7 @@
 #              через DI-контейнер deps.
 # ===============================================================
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery
@@ -25,9 +25,11 @@ class ThreatFilter(BaseFilter):
         # если Router неожиданно попытается передать параметры в конструктор.
         self.min_score = float(min_score)
 
-    async def __call__(self, event: Union[Message, CallbackQuery], **data: Any) -> Union[bool, Dict[str, Any]]:
+    async def __call__(
+        self, event: Message | CallbackQuery, **data: Any
+    ) -> bool | dict[str, Any]:
         # aiogram может передать либо Message, либо CallbackQuery
-        message: Optional[Message] = None
+        message: Message | None = None
         if isinstance(event, Message):
             message = event
         elif isinstance(event, CallbackQuery):
@@ -39,9 +41,9 @@ class ThreatFilter(BaseFilter):
         if not text:
             return False
 
-        deps: Optional[Deps] = data.get("deps")
+        deps: Deps | None = data.get("deps")
         total_score: float = 0.0
-        reasons: List[str] = []
+        reasons: list[str] = []
 
         # 1) Попытка использовать полноценный SecurityService (если он есть в DI)
         if deps and getattr(deps, "security_service", None):
@@ -57,7 +59,15 @@ class ThreatFilter(BaseFilter):
         # 2) Легкие эвристики на случай недоступности сервисов
         if total_score == 0.0:
             lowered = text.lower()
-            bad_kw = ["http://", "https://", "casino", "airdrop", "giveaway", "usdt", "бинанс промокод"]
+            bad_kw = [
+                "http://",
+                "https://",
+                "casino",
+                "airdrop",
+                "giveaway",
+                "usdt",
+                "бинанс промокод",
+            ]
             hits = [kw for kw in bad_kw if kw in lowered]
             if hits:
                 total_score += 1.0
@@ -68,4 +78,8 @@ class ThreatFilter(BaseFilter):
             total_score += 0.5
             reasons.append("Пересланное сообщение")
 
-        return {"threat_score": total_score, "reasons": reasons} if total_score >= self.min_score else False
+        return (
+            {"threat_score": total_score, "reasons": reasons}
+            if total_score >= self.min_score
+            else False
+        )

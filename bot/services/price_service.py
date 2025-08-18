@@ -9,12 +9,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
 import time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
+from collections.abc import Iterable
 
 import aiohttp
 
@@ -40,8 +40,8 @@ class PriceService:
         *,
         settings: Any,
         http_session: aiohttp.ClientSession,
-        redis: Optional[Redis] = None,
-        coin_list_service: Optional[Any] = None,
+        redis: Redis | None = None,
+        coin_list_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.http = http_session
@@ -56,7 +56,7 @@ class PriceService:
 
     # ------------------------------ public API --------------------------------
 
-    async def get_price(self, symbol: str, quote: Optional[str] = None) -> Optional[float]:
+    async def get_price(self, symbol: str, quote: str | None = None) -> float | None:
         symbol_u = symbol.upper()
         quote_u = (quote or self.default_quote).upper()
         # 1) try cache
@@ -69,8 +69,10 @@ class PriceService:
             await self._cache_put(symbol_u, quote_u, price)
         return price
 
-    async def get_prices(self, symbols: Iterable[str], quote: Optional[str] = None) -> Dict[str, Optional[float]]:
-        out: Dict[str, Optional[float]] = {}
+    async def get_prices(
+        self, symbols: Iterable[str], quote: str | None = None
+    ) -> dict[str, float | None]:
+        out: dict[str, float | None] = {}
         for s in symbols:
             out[s.upper()] = await self.get_price(s, quote)
         return out
@@ -90,14 +92,14 @@ class PriceService:
             return
         await self._batch_fetch(top, self.default_quote)
 
-    async def prefetch(self, symbols: List[str], quote: Optional[str] = None) -> None:
+    async def prefetch(self, symbols: list[str], quote: str | None = None) -> None:
         if not symbols:
             return
         await self._batch_fetch(symbols, (quote or self.default_quote).upper())
 
     # ------------------------------ fetching ----------------------------------
 
-    async def _fetch_price(self, symbol: str, quote: str) -> Optional[float]:
+    async def _fetch_price(self, symbol: str, quote: str) -> float | None:
         # Try Binance first
         p = await self._fetch_binance(symbol, quote)
         if p is not None:
@@ -106,12 +108,14 @@ class PriceService:
         p = await self._fetch_coingecko(symbol, quote)
         return p
 
-    async def _fetch_binance(self, symbol: str, quote: str) -> Optional[float]:
+    async def _fetch_binance(self, symbol: str, quote: str) -> float | None:
         base = getattr(self.endpoints, "binance_base", "https://api.binance.com")
         pair = f"{symbol}{quote}"
         url = f"{base}/api/v3/ticker/price?symbol={pair}"
         try:
-            async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with self.http.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
@@ -122,8 +126,10 @@ class PriceService:
         except Exception:
             return None
 
-    async def _fetch_coingecko(self, symbol: str, quote: str) -> Optional[float]:
-        base = getattr(self.endpoints, "coingecko_base", "https://api.coingecko.com/api/v3")
+    async def _fetch_coingecko(self, symbol: str, quote: str) -> float | None:
+        base = getattr(
+            self.endpoints, "coingecko_base", "https://api.coingecko.com/api/v3"
+        )
         # Need CoinGecko coin id; try via coin_list_service index in Redis
         coin_id = None
         try:
@@ -133,13 +139,21 @@ class PriceService:
             coin_id = None
         if not coin_id:
             # as a blunt fallback — try mapping BTC->bitcoin, ETH->ethereum for majors
-            mapping = {"BTC": "bitcoin", "ETH": "ethereum", "BNB": "binancecoin", "SOL": "solana", "XRP": "ripple"}
+            mapping = {
+                "BTC": "bitcoin",
+                "ETH": "ethereum",
+                "BNB": "binancecoin",
+                "SOL": "solana",
+                "XRP": "ripple",
+            }
             coin_id = mapping.get(symbol)
             if not coin_id:
                 return None
         url = f"{base}/simple/price?ids={coin_id}&vs_currencies={quote.lower()}"
         try:
-            async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with self.http.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 if resp.status != 200:
                     return None
                 data = await resp.json()
@@ -148,13 +162,13 @@ class PriceService:
         except Exception:
             return None
 
-    async def _batch_fetch(self, symbols: List[str], quote: str) -> None:
+    async def _batch_fetch(self, symbols: list[str], quote: str) -> None:
         for s in symbols:
             p = await self._fetch_price(s, quote)
             if p is not None:
                 await self._cache_put(s, quote, p)
 
-    async def _get_top_symbols(self) -> List[str]:
+    async def _get_top_symbols(self) -> list[str]:
         # From settings first
         try:
             top = list(getattr(self.settings.price_service, "top_symbols", []))
@@ -175,7 +189,7 @@ class PriceService:
 
     # ------------------------------- cache ------------------------------------
 
-    async def _cache_get(self, symbol: str, quote: str) -> Optional[float]:
+    async def _cache_get(self, symbol: str, quote: str) -> float | None:
         if not self.redis:
             return None
         try:
@@ -195,7 +209,9 @@ class PriceService:
         if not self.redis:
             return
         try:
-            val = json.dumps({"price": float(price), "ts": int(time.time())}, ensure_ascii=False)
+            val = json.dumps(
+                {"price": float(price), "ts": int(time.time())}, ensure_ascii=False
+            )
             await self.redis.setex(f"price:{symbol}:{quote}", self.cache_ttl, val)
         except Exception as e:  # noqa: BLE001
             logger.debug("price cache put error: %s", e)

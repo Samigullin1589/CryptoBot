@@ -1,12 +1,9 @@
 # bot/services/advanced_security_service.py
 from __future__ import annotations
 
-import asyncio
-import ipaddress
 import re
-import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 try:
@@ -15,11 +12,14 @@ except Exception:  # pragma: no cover
     Redis = object  # type: ignore
 
 URL_RE = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
-INVITE_RE = re.compile(r"(t\.me/joinchat/|t\.me/\+|discord\.gg/|wa\.me/)", re.IGNORECASE)
+INVITE_RE = re.compile(
+    r"(t\.me/joinchat/|t\.me/\+|discord\.gg/|wa\.me/)", re.IGNORECASE
+)
+
 
 @dataclass
 class Verdict:
-    action: Optional[str] = None  # None|delete|warn|mute|ban
+    action: str | None = None  # None|delete|warn|mute|ban
     reason: str = ""
     minutes: int = 60
 
@@ -36,7 +36,7 @@ class AdvancedSecurityService:
 
     def __init__(
         self,
-        redis: "Redis",
+        redis: Redis,
         learning,
         image_vision=None,
         settings=None,
@@ -49,7 +49,8 @@ class AdvancedSecurityService:
         self.ns = ns
 
     # Redis keys
-    def k_user_strikes(self, chat_id: int, user_id: int) -> str: return f"{self.ns}:strikes:{chat_id}:{user_id}"
+    def k_user_strikes(self, chat_id: int, user_id: int) -> str:
+        return f"{self.ns}:strikes:{chat_id}:{user_id}"
 
     def _cfg(self, name: str, default: Any) -> Any:
         tf = getattr(getattr(self.settings, "threat_filter", None), name, None)
@@ -71,7 +72,18 @@ class AdvancedSecurityService:
     def _text_suspicions(self, text: str) -> int:
         score = 0
         t = (text or "").lower()
-        if any(x in t for x in ("быстрый заработок", "доход", "ставки", "казино", "подписывайся", "заработай", "успей")):
+        if any(
+            x in t
+            for x in (
+                "быстрый заработок",
+                "доход",
+                "ставки",
+                "казино",
+                "подписывайся",
+                "заработай",
+                "успей",
+            )
+        ):
             score += 60
         if INVITE_RE.search(t):
             score += 30
@@ -79,7 +91,7 @@ class AdvancedSecurityService:
             score += 10
         return score
 
-    async def _image_verdict(self, message) -> Optional[Tuple[bool, str]]:
+    async def _image_verdict(self, message) -> tuple[bool, str] | None:
         if not self.vision:
             return None
         try:
@@ -90,12 +102,14 @@ class AdvancedSecurityService:
             data = buf.read()
             ok, details = await self.vision.analyze(data)
             if ok:
-                return True, details.get("explanation") or "Image marked as advertising/spam"
+                return True, details.get(
+                    "explanation"
+                ) or "Image marked as advertising/spam"
         except Exception:
             return None
         return None
 
-    async def inspect_message(self, message) -> Dict[str, Any]:
+    async def inspect_message(self, message) -> dict[str, Any]:
         """
         Returns dict with optional 'action' and more fields.
         """
@@ -140,11 +154,15 @@ class AdvancedSecurityService:
                 score += 60
 
         # 6) Decide action
-        threshold = getattr(getattr(self.settings, "threat_filter", object()), "toxicity_threshold", 0.75)
+        _ = getattr(
+            getattr(self.settings, "threat_filter", object()),
+            "toxicity_threshold",
+            0.75,
+        )
         # convert to 0..1 scale roughly
         prob = min(1.0, max(0.0, score / 100.0))
 
-        action: Optional[str] = None
+        action: str | None = None
         reason = ""
 
         # progressive actions
@@ -159,8 +177,20 @@ class AdvancedSecurityService:
 
         # 7) Strikes escalation on repeat
         if action in ("delete", "warn", "mute"):
-            strikes_window = int(getattr(getattr(self.settings, "threat_filter", object()), "repeat_window_seconds", 3600))
-            strikes_for_ban = int(getattr(getattr(self.settings, "threat_filter", object()), "strikes_for_autoban", 2))
+            strikes_window = int(
+                getattr(
+                    getattr(self.settings, "threat_filter", object()),
+                    "repeat_window_seconds",
+                    3600,
+                )
+            )
+            strikes_for_ban = int(
+                getattr(
+                    getattr(self.settings, "threat_filter", object()),
+                    "strikes_for_autoban",
+                    2,
+                )
+            )
             key = self.k_user_strikes(chat_id, user.id)
             try:
                 # increment with TTL window
@@ -175,4 +205,10 @@ class AdvancedSecurityService:
             if strikes >= strikes_for_ban:
                 action, reason = "ban", "Autoban on repeated offenses"
 
-        return {"action": action, "reason": reason, "score": score, "domains": domains, "best_phrase": getattr(best_phrase, "phrase", None)}
+        return {
+            "action": action,
+            "reason": reason,
+            "score": score,
+            "domains": domains,
+            "best_phrase": getattr(best_phrase, "phrase", None),
+        }

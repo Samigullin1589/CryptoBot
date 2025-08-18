@@ -4,35 +4,38 @@
 # ИСПРАВЛЕНИЕ: Полностью переписан без заглушек. Обновлены все функции
 #              для работы с новыми структурами данных.
 # =================================================================================
-from typing import List, Dict, Any, Optional
+from typing import Any
 from datetime import datetime, timezone
 
 from bot.utils.models import AsicMiner, NewsArticle, Coin, CalculationResult
 
+
 # --- Форматтеры для раздела ASIC ---
-def format_asic_list(asics: List[AsicMiner], page: int, total_pages: int) -> str:
+def format_asic_list(asics: list[AsicMiner], page: int, total_pages: int) -> str:
     if not asics:
         return "Нет доступных ASIC для отображения."
 
     header = "⚙️ <b>Топ ASIC по чистой прибыли (Net Profit)</b>\n\n"
     body = []
     for asic in asics:
-        profit_str = f"{asic.net_profit:+.2f}$/день" if hasattr(asic, 'net_profit') and asic.net_profit is not None else "N/A"
+        profit_str = (
+            f"{asic.net_profit:+.2f}$/день"
+            if hasattr(asic, "net_profit") and asic.net_profit is not None
+            else "N/A"
+        )
         power_str = f"{asic.power}W" if asic.power else "N/A"
         body.append(
             f"🔹 <b>{asic.name}</b>\n"
             f"   - Прибыль: <b>{profit_str}</b>\n"
             f"   - Потребление: {power_str}"
         )
-    
+
     footer = f"\n\n📄 Страница {page + 1} из {total_pages}"
     return header + "\n".join(body) + footer
 
+
 def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
-    specs_map = {
-        "algorithm": "Алгоритм", "hashrate": "Хешрейт",
-        "power": "Потребление"
-    }
+    specs_map = {"algorithm": "Алгоритм", "hashrate": "Хешрейт", "power": "Потребление"}
     specs_list = []
     for key, rus_name in specs_map.items():
         value = getattr(asic, key, None)
@@ -54,8 +57,9 @@ def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
         f"<b><u>Тех. характеристики:</u></b>\n{specs_text}\n"
     )
 
+
 # --- Форматтеры для раздела новостей ---
-def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -> str:
+def format_news_list(articles: list[NewsArticle], page: int, total_pages: int) -> str:
     if not articles:
         return "Нет доступных новостей."
 
@@ -63,31 +67,33 @@ def format_news_list(articles: List[NewsArticle], page: int, total_pages: int) -
     body = []
     for article in articles:
         dt_object = datetime.fromtimestamp(article.timestamp, tz=timezone.utc)
-        time_str = dt_object.strftime('%d.%m.%Y %H:%M')
+        time_str = dt_object.strftime("%d.%m.%Y %H:%M")
         body.append(
             f"▪️ <a href='{article.url}'>{article.title}</a>\n"
             f"  <I>({article.source} - {time_str})</I>"
         )
-    
+
     footer = f"\n\n📄 Страница {page + 1} из {total_pages}"
     return header + "\n".join(body) + footer
 
+
 # --- Форматтеры для раздела курсов ---
-def format_price_info(coin: Coin, price_data: Dict[str, Any]) -> str:
-    price = price_data.get('price')
-    price_str = f"{price:,.4f}".rstrip('0').rstrip('.') if price else "N/A"
+def format_price_info(coin: Coin, price_data: dict[str, Any]) -> str:
+    price = price_data.get("price")
+    price_str = f"{price:,.4f}".rstrip("0").rstrip(".") if price else "N/A"
     return (
         f"💹 <b>Курс {coin.name} ({coin.symbol.upper()})</b>\n\n"
         f"<b>Цена:</b> ${price_str}"
     )
 
+
 # --- Форматтеры для рыночных данных ---
-def format_halving_info(halving_data: Dict[str, Any]) -> str:
+def format_halving_info(halving_data: dict[str, Any]) -> str:
     """Форматирует информацию о халвинге Bitcoin."""
-    progress = halving_data.get('progressPercent', 0)
-    remaining_blocks = halving_data.get('remainingBlocks', 0)
-    estimated_date = halving_data.get('estimated_date', 'неизвестно')
-    
+    progress = halving_data.get("progressPercent", 0)
+    remaining_blocks = halving_data.get("remainingBlocks", 0)
+    estimated_date = halving_data.get("estimated_date", "неизвестно")
+
     return (
         f"⏳ <b>Халвинг Bitcoin</b>\n\n"
         f"Прогресс до следующего халвинга: <b>{progress:.2f}%</b>\n"
@@ -95,20 +101,22 @@ def format_halving_info(halving_data: Dict[str, Any]) -> str:
         f"Ориентировочная дата халвинга: <b>{estimated_date}</b>"
     )
 
-def format_network_status(network_data: Dict[str, Any]) -> str:
+
+def format_network_status(network_data: dict[str, Any]) -> str:
     """Форматирует информацию о состоянии сети Bitcoin."""
-    hashrate_ehs = network_data.get('hashrate_ehs', 0.0)
-    difficulty_change = network_data.get('difficulty_change', 0.0)
-    estimated_retarget_date = network_data.get('estimated_retarget_date', 'N/A')
-    
+    hashrate_ehs = network_data.get("hashrate_ehs", 0.0)
+    difficulty_change = network_data.get("difficulty_change", 0.0)
+    estimated_retarget_date = network_data.get("estimated_retarget_date", "N/A")
+
     change_sign = "+" if difficulty_change > 0 else ""
-    
+
     return (
         f"📡 <b>Статус сети Bitcoin</b>\n\n"
         f"Хешрейт: <b>{hashrate_ehs:.2f} EH/s</b>\n"
         f"След. изменение сложности: <b>~{change_sign}{difficulty_change:.2f}%</b>\n"
         f"<i>(Ориентировочно {estimated_retarget_date})</i>"
     )
+
 
 # --- Форматтер для калькулятора ---
 def format_calculation_result(result: CalculationResult) -> str:

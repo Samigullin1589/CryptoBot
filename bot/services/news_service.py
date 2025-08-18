@@ -14,7 +14,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -39,7 +39,7 @@ class NewsService:
         *,
         settings: Any,
         http_session: aiohttp.ClientSession,
-        redis: Optional[Redis] = None,
+        redis: Redis | None = None,
     ) -> None:
         self.settings = settings
         self.http = http_session
@@ -51,21 +51,27 @@ class NewsService:
         self.lang = getattr(ns, "language", "en")
         self.allowed_domains = set(getattr(ns, "allowed_domains", []) or [])
 
-        self.cp_token = getattr(settings, "CRYPTOPANIC_TOKEN", None) or getattr(settings, "CRYPTO_PANIC_TOKEN", None)
-        self.newsapi_key = getattr(settings, "NEWSAPI_KEY", None) or getattr(settings, "NEWS_API_KEY", None)
+        self.cp_token = getattr(settings, "CRYPTOPANIC_TOKEN", None) or getattr(
+            settings, "CRYPTO_PANIC_TOKEN", None
+        )
+        self.newsapi_key = getattr(settings, "NEWSAPI_KEY", None) or getattr(
+            settings, "NEWS_API_KEY", None
+        )
 
         self.endpoints = getattr(settings, "endpoints", object())
-        self.cp_base = getattr(self.endpoints, "cryptopanic_base", "https://cryptopanic.com")
+        self.cp_base = getattr(
+            self.endpoints, "cryptopanic_base", "https://cryptopanic.com"
+        )
         self.na_base = getattr(self.endpoints, "newsapi_base", "https://newsapi.org")
 
     # ------------------------------ public API --------------------------------
 
-    async def get_all_latest_news(self) -> List[Dict[str, Any]]:
+    async def get_all_latest_news(self) -> list[dict[str, Any]]:
         """
         Fetches fresh news from providers, deduplicates and caches.
         Returns the merged list.
         """
-        merged: List[Dict[str, Any]] = []
+        merged: list[dict[str, Any]] = []
         try:
             cp = await self._fetch_cryptopanic()
             merged.extend(cp)
@@ -93,7 +99,7 @@ class NewsService:
     async def refresh(self) -> None:
         await self.get_all_latest_news()
 
-    async def get_cached(self) -> Optional[List[Dict[str, Any]]]:
+    async def get_cached(self) -> list[dict[str, Any]] | None:
         if not self.redis:
             return None
         try:
@@ -106,7 +112,7 @@ class NewsService:
 
     # ------------------------------ providers ---------------------------------
 
-    async def _fetch_cryptopanic(self) -> List[Dict[str, Any]]:
+    async def _fetch_cryptopanic(self) -> list[dict[str, Any]]:
         if not self.cp_token:
             return []
         url = f"{self.cp_base}/api/v1/posts/"
@@ -117,11 +123,13 @@ class NewsService:
             "public": "true",
             "page_size": str(self.page_size),
         }
-        async with self.http.get(url, params=params, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+        async with self.http.get(
+            url, params=params, timeout=aiohttp.ClientTimeout(total=12)
+        ) as resp:
             if resp.status != 200:
                 return []
             data = await resp.json()
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for it in data.get("results", []):
             title = (it.get("title") or "").strip()
             url = (it.get("url") or "").strip()
@@ -135,7 +143,7 @@ class NewsService:
             except Exception:
                 pass
             if not url and it.get("source") and it["source"].get("domain"):
-                url = f'https://{it["source"]["domain"]}'
+                url = f"https://{it['source']['domain']}"
             if not title or not url:
                 continue
             if self.allowed_domains and not any(d in url for d in self.allowed_domains):
@@ -150,7 +158,7 @@ class NewsService:
             )
         return out
 
-    async def _fetch_newsapi(self) -> List[Dict[str, Any]]:
+    async def _fetch_newsapi(self) -> list[dict[str, Any]]:
         if not self.newsapi_key:
             return []
         url = f"{self.na_base}/v2/everything"
@@ -161,11 +169,13 @@ class NewsService:
             "pageSize": str(self.page_size),
             "apiKey": self.newsapi_key,
         }
-        async with self.http.get(url, params=params, timeout=aiohttp.ClientTimeout(total=12)) as resp:
+        async with self.http.get(
+            url, params=params, timeout=aiohttp.ClientTimeout(total=12)
+        ) as resp:
             if resp.status != 200:
                 return []
             data = await resp.json()
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for a in data.get("articles", []):
             title = (a.get("title") or "").strip()
             url = (a.get("url") or "").strip()
@@ -179,17 +189,19 @@ class NewsService:
 
     # ------------------------------ cache & utils ------------------------------
 
-    async def _cache_put(self, items: List[Dict[str, Any]]) -> None:
+    async def _cache_put(self, items: list[dict[str, Any]]) -> None:
         if not self.redis:
             return
         try:
-            await self.redis.setex("news:latest", self.cache_ttl, json.dumps(items, ensure_ascii=False))
+            await self.redis.setex(
+                "news:latest", self.cache_ttl, json.dumps(items, ensure_ascii=False)
+            )
         except Exception as e:  # noqa: BLE001
             logger.debug("news cache put error: %s", e)
 
-    def _dedup(self, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _dedup(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen = set()
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for it in items:
             key = self._fingerprint(it.get("title"), it.get("url"))
             if key in seen:
@@ -199,6 +211,6 @@ class NewsService:
         return out
 
     @staticmethod
-    def _fingerprint(title: Optional[str], url: Optional[str]) -> str:
+    def _fingerprint(title: str | None, url: str | None) -> str:
         base = f"{title or ''}|{url or ''}".encode("utf-8", "ignore")
         return hashlib.sha1(base).hexdigest()

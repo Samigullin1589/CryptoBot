@@ -1,12 +1,13 @@
 # bot/middlewares/threat_protection_middleware.py
 from __future__ import annotations
 
-import asyncio
 import contextlib
-from typing import Any, Callable, Dict
+from typing import Any
+from collections.abc import Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, ContentType
+from aiogram.types import Message
+
 
 class ThreatProtectionMiddleware(BaseMiddleware):
     """
@@ -20,7 +21,12 @@ class ThreatProtectionMiddleware(BaseMiddleware):
         self.mod = moderation_service
         self.settings = settings
 
-    async def __call__(self, handler: Callable[[Message, Dict[str, Any]], Any], event: Message, data: Dict[str, Any]) -> Any:  # type: ignore[override]
+    async def __call__(
+        self,
+        handler: Callable[[Message, dict[str, Any]], Any],
+        event: Message,
+        data: dict[str, Any],
+    ) -> Any:  # type: ignore[override]
         message: Message = event
 
         # Fast skip channels/bots if wanted
@@ -49,21 +55,33 @@ class ThreatProtectionMiddleware(BaseMiddleware):
 
         if action == "warn" and user_id:
             with contextlib.suppress(Exception):
-                await message.reply(verdict.get("reason", "Нарушение правил. Будьте внимательнее."))
+                await message.reply(
+                    verdict.get("reason", "Нарушение правил. Будьте внимательнее.")
+                )
             with contextlib.suppress(Exception):
                 await message.delete()
             return
 
         if action == "mute" and user_id:
             with contextlib.suppress(Exception):
-                await self.mod.mute_user(chat_id, user_id, minutes=verdict.get("minutes", 60), reason=verdict.get("reason", "Mute by anti-spam"))
+                await self.mod.mute_user(
+                    chat_id,
+                    user_id,
+                    minutes=verdict.get("minutes", 60),
+                    reason=verdict.get("reason", "Mute by anti-spam"),
+                )
             with contextlib.suppress(Exception):
                 await message.delete()
             return
 
         if action == "ban" and user_id:
             with contextlib.suppress(Exception):
-                await self.mod.ban_user(admin_id=user_id, target_user_id=user_id, target_chat_id=chat_id, reason=verdict.get("reason", "Autoban by anti-spam"))
+                await self.mod.ban_user(
+                    admin_id=user_id,
+                    target_user_id=user_id,
+                    target_chat_id=chat_id,
+                    reason=verdict.get("reason", "Autoban by anti-spam"),
+                )
             with contextlib.suppress(Exception):
                 await message.delete()
             return

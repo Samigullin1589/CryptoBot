@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import Optional
 
 from aiogram import Router, types as tg
 from aiogram.filters import Command
@@ -13,7 +12,8 @@ log = logging.getLogger(__name__)
 
 # ---------- utils ----------
 
-async def _resolve_target_id(bot, message: tg.Message) -> Optional[int]:
+
+async def _resolve_target_id(bot, message: tg.Message) -> int | None:
     """
     Пытается получить целевой user_id:
       1) reply_to_message.from_user.id
@@ -37,7 +37,9 @@ async def _resolve_target_id(bot, message: tg.Message) -> Optional[int]:
     parts = text.split()
     if len(parts) >= 2:
         candidate = parts[1].strip()
-        if candidate.isdigit() or (candidate.startswith("-") and candidate[1:].isdigit()):
+        if candidate.isdigit() or (
+            candidate.startswith("-") and candidate[1:].isdigit()
+        ):
             try:
                 return int(candidate)
             except Exception:
@@ -59,6 +61,7 @@ def _is_admin(user_id: int, chat_member: tg.ChatMember) -> bool:
 
 # ---------- commands ----------
 
+
 @router.message(Command("ban"))
 async def cmd_ban(m: tg.Message, **data) -> None:
     bot = m.bot
@@ -75,7 +78,9 @@ async def cmd_ban(m: tg.Message, **data) -> None:
 
     target_id = await _resolve_target_id(bot, m)
     if target_id is None:
-        await m.reply("⚠️ Эту команду лучше использовать в ответ на сообщение пользователя или укажите @username/ID.")
+        await m.reply(
+            "⚠️ Эту команду лучше использовать в ответ на сообщение пользователя или укажите @username/ID."
+        )
         return
 
     with contextlib.suppress(Exception):
@@ -132,7 +137,9 @@ async def cmd_mute(m: tg.Message) -> None:
         await m.reply("Укажите @username/ID или ответьте на сообщение.")
         return
 
-    until_date = tg.utils.datetime.datetime.now(tg.utils.datetime.timezone.utc) + tg.utils.timedelta(minutes=minutes)
+    until_date = tg.utils.datetime.datetime.now(
+        tg.utils.datetime.timezone.utc
+    ) + tg.utils.timedelta(minutes=minutes)
     with contextlib.suppress(Exception):
         await bot.restrict_chat_member(
             chat_id=chat.id,
@@ -140,7 +147,9 @@ async def cmd_mute(m: tg.Message) -> None:
             permissions=tg.ChatPermissions(can_send_messages=False),
             until_date=until_date,
         )
-    await m.reply(f"🔇 Пользователь <code>{target_id}</code> заглушен на {minutes} мин.")
+    await m.reply(
+        f"🔇 Пользователь <code>{target_id}</code> заглушен на {minutes} мин."
+    )
 
 
 @router.message(Command("warn"))
@@ -160,7 +169,9 @@ async def cmd_warn(m: tg.Message, **data) -> None:
         return
     if getattr(deps, "security_service", None):
         with contextlib.suppress(Exception):
-            await deps.security_service.register_violation(target_id, chat.id, reason="manual_warn", weight=1)
+            await deps.security_service.register_violation(
+                target_id, chat.id, reason="manual_warn", weight=1
+            )
     await m.reply(f"⚠️ Вынесено предупреждение <code>{target_id}</code>.")
 
 

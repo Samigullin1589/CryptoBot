@@ -6,15 +6,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import html
 import io
 import math
 import re
 import time
+import contextlib
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from aiogram import Bot
 from aiogram.types import Message, PhotoSize
@@ -24,20 +24,39 @@ from PIL import Image, ImageOps  # pillow
 
 ZERO_WIDTH_RE = re.compile(r"[\u200B-\u200F\uFEFF]", re.UNICODE)
 URL_RE = re.compile(r"(https?://|www\.)\S+", re.IGNORECASE)
-CONTACT_RE = re.compile(r"(?:t\.me/|@[\w\d_]{4,}|wa\.me/\d+|https?://\S*telegram\.me/\S+)", re.IGNORECASE)
+CONTACT_RE = re.compile(
+    r"(?:t\.me/|@[\w\d_]{4,}|wa\.me/\d+|https?://\S*telegram\.me/\S+)", re.IGNORECASE
+)
 MASS_REPEAT_RE = re.compile(r"(.)\1{6,}")  # 7+ одинаковых символов подряд
 EMOJI_SPAM_RE = re.compile(r"(?:[\U0001F300-\U0001FAFF]\uFE0F?){8,}")
 
 # Латиница↔кириллица часто обфусцируют одинаково выглядящими символами.
 CONFUSABLES = str.maketrans(
     {
-        "о": "o", "О": "O", "а": "a", "А": "A", "е": "e", "Е": "E",
-        "р": "p", "Р": "P", "с": "c", "С": "C", "х": "x", "Х": "X",
-        "у": "y", "У": "Y", "к": "k", "К": "K", "В": "B", "Т": "T",
-        "М": "M", "Н": "H",
+        "о": "o",
+        "О": "O",
+        "а": "a",
+        "А": "A",
+        "е": "e",
+        "Е": "E",
+        "р": "p",
+        "Р": "P",
+        "с": "c",
+        "С": "C",
+        "х": "x",
+        "Х": "X",
+        "у": "y",
+        "У": "Y",
+        "к": "k",
+        "К": "K",
+        "В": "B",
+        "Т": "T",
+        "М": "M",
+        "Н": "H",
     }
 )
 LEET = str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t"})
+
 
 def normalize_text(text: str) -> str:
     txt = text or ""
@@ -51,24 +70,32 @@ def normalize_text(text: str) -> str:
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
 
+
 def sha1_short(data: bytes, nbits: int = 64) -> int:
     h = hashlib.sha1(data).digest()
     # первые 8 байт -> 64 бита
-    return int.from_bytes(h[:8], "big") if nbits == 64 else int.from_bytes(h, "big") >> (len(h) * 8 - nbits)
+    return (
+        int.from_bytes(h[:8], "big")
+        if nbits == 64
+        else int.from_bytes(h, "big") >> (len(h) * 8 - nbits)
+    )
+
 
 # --- Hashing trick vectorizer (feature hashing) ------------------------------
 
-def hashed_features(tokens: list[str], n_bits: int = 20) -> Dict[int, int]:
+
+def hashed_features(tokens: list[str], n_bits: int = 20) -> dict[int, int]:
     """
     Простейший «feature hashing»: хэшируем токены в 2^n_bits корзин.
     Возвращает {index: count}.
     """
     size = 1 << n_bits
-    feats: Dict[int, int] = {}
+    feats: dict[int, int] = {}
     for tok in tokens:
         idx = sha1_short(tok.encode("utf-8"), nbits=64) % size
         feats[idx] = feats.get(idx, 0) + 1
     return feats
+
 
 def tokenize(txt: str) -> list[str]:
     # токены + шинглы 3-символьные (для устойчивости к обфускации)
@@ -77,7 +104,9 @@ def tokenize(txt: str) -> list[str]:
     shingles = [chars[i : i + 3] for i in range(max(0, len(chars) - 2))]
     return parts + shingles
 
+
 # --- Online Multinomial Naive Bayes ------------------------------------------
+
 
 @dataclass
 class NBModel:
@@ -93,6 +122,7 @@ class NBModel:
     def vocab_size(self) -> int:
         return 1 << self.n_bits
 
+
 class AntiSpamService:
     """
     Самодостаточный антиспам:
@@ -101,29 +131,33 @@ class AntiSpamService:
       - эскалация по Redis-счётчикам.
     """
 
-    def __init__(self, redis, bot: Bot, settings: Optional[Any] = None):
+    def __init__(self, redis, bot: Bot, settings: Any | None = None):
         self.r = redis
         self.bot = bot
         self.settings = settings
 
         # thresholds / конфиг с безопасными дефолтами
         sec = getattr(settings, "security", None)
-        self.warn_threshold = getattr(sec, "warn_threshold", 1)           # 1 нарушение → предупреждение/удаление
-        self.mute_threshold = getattr(sec, "mute_threshold", 2)           # 2 → мут
-        self.ban_threshold = getattr(sec, "ban_threshold", 3)             # 3 → бан
-        self.window_sec = getattr(sec, "window_sec", 6 * 60 * 60)         # окно повторов (6ч)
-        self.mute_minutes = getattr(sec, "mute_minutes", 60)              # длительность мута
+        self.warn_threshold = getattr(
+            sec, "warn_threshold", 1
+        )  # 1 нарушение → предупреждение/удаление
+        self.mute_threshold = getattr(sec, "mute_threshold", 2)  # 2 → мут
+        self.ban_threshold = getattr(sec, "ban_threshold", 3)  # 3 → бан
+        self.window_sec = getattr(sec, "window_sec", 6 * 60 * 60)  # окно повторов (6ч)
+        self.mute_minutes = getattr(sec, "mute_minutes", 60)  # длительность мута
 
         # image hashing
         self.phash_prefix_bits = getattr(sec, "phash_prefix_bits", 16)
-        self.phash_distance = getattr(sec, "phash_distance", 10)          # 64-битный dHash; 8–12 обычно разумно
+        self.phash_distance = getattr(
+            sec, "phash_distance", 10
+        )  # 64-битный dHash; 8–12 обычно разумно
 
         # NB model
         self.nb = NBModel(n_bits=getattr(sec, "nb_bits", 20), alpha=1.0)
 
     # ---------- public API ----------------------------------------------------
 
-    async def analyze_and_act(self, message: Message) -> Optional[str]:
+    async def analyze_and_act(self, message: Message) -> str | None:
         """
         Возвращает строку с действием для логов (или None), применяет меры:
         delete / warn / mute / ban (эскалация).
@@ -160,7 +194,9 @@ class AntiSpamService:
 
         return f"{action}:{reason}"
 
-    async def learn_from_admin_action(self, *, is_spam: bool, text: Optional[str] = None) -> None:
+    async def learn_from_admin_action(
+        self, *, is_spam: bool, text: str | None = None
+    ) -> None:
         """Вызывайте из модерации: ban → is_spam=True, pardon → False."""
         if not text:
             return
@@ -168,7 +204,7 @@ class AntiSpamService:
 
     # ---------- core classification ------------------------------------------
 
-    async def _classify_message(self, m: Message) -> Tuple[str, str]:
+    async def _classify_message(self, m: Message) -> tuple[str, str]:
         # 1) быстрые правила
         raw_txt = (m.text or m.caption or "")[:4096]
         txt = normalize_text(raw_txt)
@@ -189,7 +225,7 @@ class AntiSpamService:
 
         return "ok", "clean"
 
-    def _heuristics(self, txt: str, m: Message) -> Optional[str]:
+    def _heuristics(self, txt: str, m: Message) -> str | None:
         if URL_RE.search(txt):
             return "url"
         if CONTACT_RE.search(txt):
@@ -225,7 +261,9 @@ class AntiSpamService:
         with contextlib.suppress(Exception):
             await self.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
         # след для аудита — отпечаток причины
-        await self.r.setex(f"antispam:banreason:{chat_id}:{user_id}", 3 * 24 * 3600, reason)
+        await self.r.setex(
+            f"antispam:banreason:{chat_id}:{user_id}", 3 * 24 * 3600, reason
+        )
 
     # ---------- Image hashing (dHash 64-bit) ---------------------------------
 
@@ -238,7 +276,7 @@ class AntiSpamService:
             return False
         # префикс-бакет по старшим self.phash_prefix_bits
         pref = ph >> (64 - self.phash_prefix_bits)
-        key = f"antispam:phash:{pref:0{self.phash_prefix_bits//4}x}"
+        key = f"antispam:phash:{pref:0{self.phash_prefix_bits // 4}x}"
 
         # проверяем соседей
         candidates = await self.r.smembers(key)
@@ -252,8 +290,8 @@ class AntiSpamService:
         await self.r.expire(key, 14 * 24 * 3600)
         return False
 
-    async def _message_dhash(self, m: Message) -> Optional[int]:
-        file_id: Optional[str] = None
+    async def _message_dhash(self, m: Message) -> int | None:
+        file_id: str | None = None
         # возьмём самое крупное фото
         if m.photo:
             p: PhotoSize = max(m.photo, key=lambda x: x.file_size or 0)
@@ -307,8 +345,12 @@ class AntiSpamService:
             s = int(sval or 0)
             h = int(hval or 0)
             # частоты с Лапласовым сглаживанием
-            s_prob = (s + self.nb.alpha) / (spam_docs + self.nb.alpha * self.nb.vocab_size + 1e-9)
-            h_prob = (h + self.nb.alpha) / (ham_docs + self.nb.alpha * self.nb.vocab_size + 1e-9)
+            s_prob = (s + self.nb.alpha) / (
+                spam_docs + self.nb.alpha * self.nb.vocab_size + 1e-9
+            )
+            h_prob = (h + self.nb.alpha) / (
+                ham_docs + self.nb.alpha * self.nb.vocab_size + 1e-9
+            )
             # умножение вероятностей -> сложение логов
             spam_loglik += cnt * math.log(s_prob + 1e-12)
             ham_loglik += cnt * math.log(h_prob + 1e-12)
@@ -344,9 +386,9 @@ class AntiSpamService:
         pipe.expire(self.nb.ham_counts_key, 30 * 24 * 3600)
         await pipe.execute()
 
+
 # --- helpers -----------------------------------------------------------------
 
-import contextlib  # keep at end to avoid circular import in some setups
 
 def hamming64(a: int, b: int) -> int:
     return (a ^ b).bit_count()

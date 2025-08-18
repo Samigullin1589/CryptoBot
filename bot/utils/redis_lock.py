@@ -7,26 +7,35 @@
 import asyncio
 import logging
 import uuid
-from typing import Optional
 
 import redis.asyncio as redis
 
 logger = logging.getLogger(__name__)
 
+
 class LockAcquisitionError(Exception):
     """Исключение, возникающее, если блокировка не может быть получена."""
+
     pass
+
 
 class RedisLock:
     """
     Асинхронный менеджер контекста для распределенной блокировки Redis.
-    
+
     Использование:
     async with RedisLock(redis_client, "my_resource", timeout=300, wait_timeout=60):
         # Критическая секция
         ...
     """
-    def __init__(self, redis_client: redis.Redis, key: str, timeout: int = 60, wait_timeout: Optional[int] = None):
+
+    def __init__(
+        self,
+        redis_client: redis.Redis,
+        key: str,
+        timeout: int = 60,
+        wait_timeout: int | None = None,
+    ):
         """
         :param redis_client: Экземпляр клиента Redis.
         :param key: Ключ ресурса для блокировки.
@@ -48,7 +57,9 @@ class RedisLock:
         Использует SET NX PX для установки ключа, только если он не существует, с таймаутом.
         """
         # Атомарная операция SET NX PX (таймаут в миллисекундах)
-        result = await self.redis.set(self.key, self.token, nx=True, px=self.timeout * 1000)
+        result = await self.redis.set(
+            self.key, self.token, nx=True, px=self.timeout * 1000
+        )
         self.is_acquired = bool(result)
         return self.is_acquired
 
@@ -72,7 +83,9 @@ class RedisLock:
             # Выполняем скрипт
             result = await self.redis.eval(script, 1, self.key, self.token)
             if result == 0:
-                logger.warning(f"Не удалось освободить блокировку {self.key}. Возможно, она истекла и была получена кем-то другим.")
+                logger.warning(
+                    f"Не удалось освободить блокировку {self.key}. Возможно, она истекла и была получена кем-то другим."
+                )
             else:
                 logger.debug(f"Блокировка {self.key} освобождена.")
         except Exception as e:
@@ -83,21 +96,25 @@ class RedisLock:
     async def __aenter__(self):
         """Вход в асинхронный контекстный менеджер."""
         start_time = asyncio.get_running_loop().time()
-        
+
         while True:
             if await self.acquire():
                 logger.debug(f"Блокировка {self.key} успешно получена.")
                 return self
-            
+
             # Проверка таймаута ожидания
             if self.wait_timeout is not None:
                 elapsed_time = asyncio.get_running_loop().time() - start_time
                 if elapsed_time >= self.wait_timeout:
-                    logger.error(f"Таймаут ожидания ({self.wait_timeout}s) для получения блокировки {self.key}.")
-                    raise LockAcquisitionError(f"Не удалось получить блокировку {self.key} за {self.wait_timeout} секунд.")
-            
+                    logger.error(
+                        f"Таймаут ожидания ({self.wait_timeout}s) для получения блокировки {self.key}."
+                    )
+                    raise LockAcquisitionError(
+                        f"Не удалось получить блокировку {self.key} за {self.wait_timeout} секунд."
+                    )
+
             # Фиксированный интервал перед повторной попыткой
-            await asyncio.sleep(0.1) 
+            await asyncio.sleep(0.1)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Выход из асинхронного контекстного менеджера."""

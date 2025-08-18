@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
@@ -66,21 +66,25 @@ class ThrottlingMiddleware(BaseMiddleware):
         self,
         deps: Deps,
         *,
-        user_rate: Optional[float] = None,
-        chat_rate: Optional[float] = None,
-        key_prefix: Optional[str] = None,
+        user_rate: float | None = None,
+        chat_rate: float | None = None,
+        key_prefix: str | None = None,
         exempt_admins: bool = True,
         feedback: bool = True,
     ) -> None:
         super().__init__()
         self.deps = deps
         cfg = settings.throttling
-        self.user_interval_ms = _compute_interval_ms(user_rate if user_rate is not None else cfg.user_rate_limit)
-        self.chat_interval_ms = _compute_interval_ms(chat_rate if chat_rate is not None else cfg.chat_rate_limit)
+        self.user_interval_ms = _compute_interval_ms(
+            user_rate if user_rate is not None else cfg.user_rate_limit
+        )
+        self.chat_interval_ms = _compute_interval_ms(
+            chat_rate if chat_rate is not None else cfg.chat_rate_limit
+        )
         self.key_prefix = (key_prefix or cfg.key_prefix or "throttling").strip(":")
         self.exempt_admins = exempt_admins
         self.feedback = feedback
-        self._lua_sha: Optional[str] = None
+        self._lua_sha: str | None = None
 
     async def _ensure_lua(self) -> None:
         if self._lua_sha:
@@ -88,10 +92,13 @@ class ThrottlingMiddleware(BaseMiddleware):
         try:
             self._lua_sha = await self.deps.redis.script_load(THROTTLE_LUA)  # type: ignore[arg-type]
         except Exception as e:
-            logger.warning("Failed to load throttling Lua script: %s. Falling back to Python time.", e)
+            logger.warning(
+                "Failed to load throttling Lua script: %s. Falling back to Python time.",
+                e,
+            )
             self._lua_sha = None
 
-    async def _throttle(self, key: str, interval_ms: int) -> Tuple[bool, int]:
+    async def _throttle(self, key: str, interval_ms: int) -> tuple[bool, int]:
         """
         Returns (allowed, retry_after_ms)
         """
@@ -102,7 +109,9 @@ class ThrottlingMiddleware(BaseMiddleware):
         await self._ensure_lua()
         try:
             if self._lua_sha:
-                allowed, retry_after = await r.evalsha(self._lua_sha, 1, key, interval_ms)  # type: ignore[misc]
+                allowed, retry_after = await r.evalsha(
+                    self._lua_sha, 1, key, interval_ms
+                )  # type: ignore[misc]
             else:
                 # Fallback: naive throttle using SETNX+PTTL (slightly less precise)
                 ok = await r.set(key, "1", nx=True, px=interval_ms)
@@ -116,14 +125,16 @@ class ThrottlingMiddleware(BaseMiddleware):
 
         return bool(allowed), int(retry_after)
 
-    async def __call__(self, handler, event: Union[Message, CallbackQuery], data: Dict[str, Any]):
+    async def __call__(
+        self, handler, event: Message | CallbackQuery, data: dict[str, Any]
+    ):
         # Only Message & CallbackQuery are throttled (others pass)
         if not isinstance(event, (Message, CallbackQuery)):
             return await handler(event, data)
 
         # Admins can be exempted
         try:
-            uid = (event.from_user.id if event.from_user else None)
+            uid = event.from_user.id if event.from_user else None
             if self.exempt_admins and uid and uid in (settings.admin_ids or []):
                 return await handler(event, data)
         except Exception:
@@ -135,7 +146,9 @@ class ThrottlingMiddleware(BaseMiddleware):
             chat_id = event.chat.id if event.chat else None
             uid = event.from_user.id if event.from_user else None
         else:
-            chat_id = event.message.chat.id if event.message and event.message.chat else None
+            chat_id = (
+                event.message.chat.id if event.message and event.message.chat else None
+            )
             uid = event.from_user.id if event.from_user else None
 
         # Apply user-level throttle
@@ -157,7 +170,9 @@ class ThrottlingMiddleware(BaseMiddleware):
         # Pass to next
         return await handler(event, data)
 
-    async def _on_throttled(self, event: Union[Message, CallbackQuery], retry_ms: int) -> None:
+    async def _on_throttled(
+        self, event: Message | CallbackQuery, retry_ms: int
+    ) -> None:
         if not self.feedback:
             return
         retry_s = max(1, int(round(retry_ms / 1000.0)))

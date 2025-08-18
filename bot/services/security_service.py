@@ -35,13 +35,14 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
+from collections.abc import Sequence
 
 import redis.asyncio as redis
 from aiogram import Bot
 from aiogram import types as tg
 
-from bot.config.settings import settings, Settings
+from bot.config.settings import Settings
 from bot.services.ai_content_service import AIContentService
 
 try:
@@ -58,7 +59,9 @@ URL_RE = re.compile(
 )
 REPEAT_CHUNK_RE = re.compile(r"(.)\1{6,}")  # 7+ same chars подряд
 CAPS_HEAVY_RE = re.compile(r"[A-ZА-ЯЁ]{8,}")
-INVITE_RE = re.compile(r"(joinchat|invite|airdrop|free\s+crypto|bonus|giveaway)", re.IGNORECASE)
+INVITE_RE = re.compile(
+    r"(joinchat|invite|airdrop|free\s+crypto|bonus|giveaway)", re.IGNORECASE
+)
 
 # ---------- defaults (overridden by settings.threat_filter if present) ----------
 DEF_ENABLED = True
@@ -71,23 +74,40 @@ DEF_MUTE_SECONDS = 3600  # 1 hour
 
 # Allow/Deny lists
 DEF_DOMAIN_ALLOW: Sequence[str] = (
-    "t.me", "telegram.me",
-    "coingecko.com", "cointelegraph.com", "forklog.com", "beincrypto.com", "beincrypto.ru",
-    "mempool.space", "blockchain.info",
+    "t.me",
+    "telegram.me",
+    "coingecko.com",
+    "cointelegraph.com",
+    "forklog.com",
+    "beincrypto.com",
+    "beincrypto.ru",
+    "mempool.space",
+    "blockchain.info",
 )
 DEF_DOMAIN_DENY: Sequence[str] = (
-    "bit-ly", "bitly.", "goo.gl", "cutt.ly", "tinyurl", "ow.ly",
-    "grabfree", "free-crypto", "bonus-crypto", "giveaway-crypto", "aird0p", "xn--",
+    "bit-ly",
+    "bitly.",
+    "goo.gl",
+    "cutt.ly",
+    "tinyurl",
+    "ow.ly",
+    "grabfree",
+    "free-crypto",
+    "bonus-crypto",
+    "giveaway-crypto",
+    "aird0p",
+    "xn--",
 )
+
 
 # ---------- data models ----------
 @dataclass
 class Verdict:
     ok: bool
-    reasons: List[str]
+    reasons: list[str]
     action: str  # "allow" | "delete" | "restrict" | "ban"
     score: float = 0.0
-    labels: List[str] = None  # type: ignore[assignment]
+    labels: list[str] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.labels is None:
@@ -106,9 +126,9 @@ class SecurityService:
         self,
         *,
         redis: redis.Redis,
-        settings: Optional[Settings] = None,
-        ai_content_service: Optional[AIContentService] = None,
-        moderation_service: Optional[Any] = None,
+        settings: Settings | None = None,
+        ai_content_service: AIContentService | None = None,
+        moderation_service: Any | None = None,
         **_: Any,
     ) -> None:
         """
@@ -117,19 +137,43 @@ class SecurityService:
         self.redis = redis
         self.settings: Settings = settings or globals().get("settings")  # type: ignore[assignment]
         self.ai = ai_content_service
-        self.moderation: Optional[ModerationService] = moderation_service  # type: ignore[assignment]
+        self.moderation: ModerationService | None = moderation_service  # type: ignore[assignment]
 
         tf = getattr(self.settings, "threat_filter", None)
         self.enabled: bool = getattr(tf, "enabled", DEF_ENABLED) if tf else DEF_ENABLED
-        self.toxicity_thr: float = getattr(tf, "toxicity_threshold", DEF_TOXICITY_THRESHOLD) if tf else DEF_TOXICITY_THRESHOLD
+        self.toxicity_thr: float = (
+            getattr(tf, "toxicity_threshold", DEF_TOXICITY_THRESHOLD)
+            if tf
+            else DEF_TOXICITY_THRESHOLD
+        )
 
-        self.window_sec: int = getattr(tf, "offense_window_seconds", DEF_OFFENSE_WINDOW_SEC) if tf else DEF_OFFENSE_WINDOW_SEC
-        self.warn_thr: int = getattr(tf, "warn_threshold", DEF_WARN_THRESHOLD) if tf else DEF_WARN_THRESHOLD
-        self.mute_thr: int = getattr(tf, "mute_threshold", DEF_MUTE_THRESHOLD) if tf else DEF_MUTE_THRESHOLD
-        self.ban_thr: int = getattr(tf, "ban_threshold", DEF_BAN_THRESHOLD) if tf else DEF_BAN_THRESHOLD
-        self.mute_seconds: int = getattr(tf, "mute_seconds", DEF_MUTE_SECONDS) if tf else DEF_MUTE_SECONDS
-        self.allow_domains: Sequence[str] = tuple(getattr(tf, "allow_domains", DEF_DOMAIN_ALLOW) or DEF_DOMAIN_ALLOW)
-        self.deny_domains: Sequence[str] = tuple(getattr(tf, "deny_domains", DEF_DOMAIN_DENY) or DEF_DOMAIN_DENY)
+        self.window_sec: int = (
+            getattr(tf, "offense_window_seconds", DEF_OFFENSE_WINDOW_SEC)
+            if tf
+            else DEF_OFFENSE_WINDOW_SEC
+        )
+        self.warn_thr: int = (
+            getattr(tf, "warn_threshold", DEF_WARN_THRESHOLD)
+            if tf
+            else DEF_WARN_THRESHOLD
+        )
+        self.mute_thr: int = (
+            getattr(tf, "mute_threshold", DEF_MUTE_THRESHOLD)
+            if tf
+            else DEF_MUTE_THRESHOLD
+        )
+        self.ban_thr: int = (
+            getattr(tf, "ban_threshold", DEF_BAN_THRESHOLD) if tf else DEF_BAN_THRESHOLD
+        )
+        self.mute_seconds: int = (
+            getattr(tf, "mute_seconds", DEF_MUTE_SECONDS) if tf else DEF_MUTE_SECONDS
+        )
+        self.allow_domains: Sequence[str] = tuple(
+            getattr(tf, "allow_domains", DEF_DOMAIN_ALLOW) or DEF_DOMAIN_ALLOW
+        )
+        self.deny_domains: Sequence[str] = tuple(
+            getattr(tf, "deny_domains", DEF_DOMAIN_DENY) or DEF_DOMAIN_DENY
+        )
 
         # Project-wide Redis prefix (isolation across envs)
         self._pfx: str = (
@@ -140,13 +184,17 @@ class SecurityService:
 
         logger.info(
             "SecurityService initialized: enabled=%s, window=%ss, thresholds(warn/mute/ban)=%s/%s/%s.",
-            self.enabled, self.window_sec, self.warn_thr, self.mute_thr, self.ban_thr
+            self.enabled,
+            self.window_sec,
+            self.warn_thr,
+            self.mute_thr,
+            self.ban_thr,
         )
 
     # -------- lifecycle --------
 
     @classmethod
-    async def create(cls, **kwargs: Any) -> "SecurityService":
+    async def create(cls, **kwargs: Any) -> SecurityService:
         inst = cls(**kwargs)
         return inst
 
@@ -183,8 +231,8 @@ class SecurityService:
         if not self.enabled:
             return Verdict(ok=True, reasons=["disabled"], action="allow")
 
-        reasons: List[str] = []
-        labels: List[str] = []
+        reasons: list[str] = []
+        labels: list[str] = []
         score = 0.0
 
         text = (message.text or message.caption or "") or ""
@@ -217,7 +265,9 @@ class SecurityService:
 
         # 3) Media vision (if present)
         if media_types:
-            v_ok, v_labels, v_score = await self._vision_media_gate(message, media_types)
+            v_ok, v_labels, v_score = await self._vision_media_gate(
+                message, media_types
+            )
             if not v_ok:
                 reasons.append("vision_block")
             labels.extend(v_labels)
@@ -230,11 +280,21 @@ class SecurityService:
                 action = "delete"
             if "phishing" in labels or "suspicious_link" in labels:
                 action = "delete"
-            return Verdict(ok=False, reasons=sorted(set(reasons)), action=action, score=score, labels=sorted(set(labels)))
+            return Verdict(
+                ok=False,
+                reasons=sorted(set(reasons)),
+                action=action,
+                score=score,
+                labels=sorted(set(labels)),
+            )
 
-        return Verdict(ok=True, reasons=[], action="allow", score=score, labels=sorted(set(labels)))
+        return Verdict(
+            ok=True, reasons=[], action="allow", score=score, labels=sorted(set(labels))
+        )
 
-    async def decide_and_enforce(self, bot: Bot, message: tg.Message, verdict: Verdict) -> Optional[Escalation]:
+    async def decide_and_enforce(
+        self, bot: Bot, message: tg.Message, verdict: Verdict
+    ) -> Escalation | None:
         """
         Applies the verdict and updates offense counters with escalation.
         - In private chats: only delete & warn.
@@ -255,15 +315,23 @@ class SecurityService:
             await message.delete()
 
         # 2) register offense & escalate
-        esc = await self.register_violation(user_id, chat_id, reason=";".join(verdict.reasons))
+        esc = await self.register_violation(
+            user_id, chat_id, reason=";".join(verdict.reasons)
+        )
 
         is_group = chat_type in ("group", "supergroup")
 
         # 3) enforce escalation
         if esc.decision == "warn":
-            await self._send_ephemeral(bot, chat_id, f"⚠️ {self._u_mention(message)}: предупреждение за спам/нарушение.")
+            await self._send_ephemeral(
+                bot,
+                chat_id,
+                f"⚠️ {self._u_mention(message)}: предупреждение за спам/нарушение.",
+            )
         elif esc.decision == "mute" and is_group:
-            until = datetime.now(timezone.utc) + timedelta(seconds=esc.mute_seconds or self.mute_seconds)
+            until = datetime.now(timezone.utc) + timedelta(
+                seconds=esc.mute_seconds or self.mute_seconds
+            )
             with contextlib.suppress(Exception):
                 await bot.restrict_chat_member(
                     chat_id=chat_id,
@@ -271,21 +339,36 @@ class SecurityService:
                     permissions=tg.ChatPermissions(can_send_messages=False),
                     until_date=until,
                 )
-            await self._send_ephemeral(bot, chat_id, f"🔇 {self._u_mention(message)} заглушен на {(esc.mute_seconds or self.mute_seconds) // 60} мин.")
+            await self._send_ephemeral(
+                bot,
+                chat_id,
+                f"🔇 {self._u_mention(message)} заглушен на {(esc.mute_seconds or self.mute_seconds) // 60} мин.",
+            )
         elif esc.decision == "ban" and is_group:
             # Баним в чате
             with contextlib.suppress(Exception):
                 await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-            await self._send_ephemeral(bot, chat_id, f"⛔ {self._u_mention(message)} заблокирован за повторные нарушения.")
+            await self._send_ephemeral(
+                bot,
+                chat_id,
+                f"⛔ {self._u_mention(message)} заблокирован за повторные нарушения.",
+            )
 
             # При наличии ModerationService — фиксируем глобальный бан (опционально)
             if self.moderation and hasattr(self.moderation, "ban"):
                 with contextlib.suppress(Exception):
-                    await self.moderation.ban(user_id=user_id, by_id=0, reason="auto-ban by security", duration=None)  # type: ignore[misc]
+                    await self.moderation.ban(
+                        user_id=user_id,
+                        by_id=0,
+                        reason="auto-ban by security",
+                        duration=None,
+                    )  # type: ignore[misc]
 
         return esc
 
-    async def register_violation(self, user_id: int, chat_id: int, *, reason: str, weight: int = 1) -> Escalation:
+    async def register_violation(
+        self, user_id: int, chat_id: int, *, reason: str, weight: int = 1
+    ) -> Escalation:
         """
         Increments offense counter within window. Decides escalation stage.
         """
@@ -306,12 +389,16 @@ class SecurityService:
         if count >= self.ban_thr:
             return Escalation(count=count, decision="ban")
         if count >= self.mute_thr:
-            return Escalation(count=count, decision="mute", mute_seconds=self.mute_seconds)
+            return Escalation(
+                count=count, decision="mute", mute_seconds=self.mute_seconds
+            )
         if count >= self.warn_thr:
             return Escalation(count=count, decision="warn")
         return Escalation(count=count, decision="none")
 
-    async def ban_user(self, admin_id: int, target_user_id: int, target_chat_id: int, reason: str = "") -> str:
+    async def ban_user(
+        self, admin_id: int, target_user_id: int, target_chat_id: int, reason: str = ""
+    ) -> str:
         """
         Helper for handlers (admin panels). Does not perform Telegram API calls here.
         """
@@ -321,21 +408,27 @@ class SecurityService:
         logger.info("SecurityService: %s", txt)
         return txt
 
-    async def pardon_user(self, admin_id: int, target_user_id: int, target_chat_id: int) -> str:
+    async def pardon_user(
+        self, admin_id: int, target_user_id: int, target_chat_id: int
+    ) -> str:
         """
         Clears counters and returns text for UI.
         """
         with contextlib.suppress(Exception):
-            await self.redis.delete(f"{self._pfx}:sec:off:u:{target_user_id}:c:{target_chat_id}")
-            await self.redis.delete(f"{self._pfx}:sec:last:u:{target_user_id}:c:{target_chat_id}")
+            await self.redis.delete(
+                f"{self._pfx}:sec:off:u:{target_user_id}:c:{target_chat_id}"
+            )
+            await self.redis.delete(
+                f"{self._pfx}:sec:last:u:{target_user_id}:c:{target_chat_id}"
+            )
         txt = f"Администратор {admin_id} помиловал {target_user_id} в чате {target_chat_id}."
         logger.info("SecurityService: %s", txt)
         return txt
 
     # -------- internals --------
 
-    def _detect_media(self, m: tg.Message) -> List[str]:
-        types: List[str] = []
+    def _detect_media(self, m: tg.Message) -> list[str]:
+        types: list[str] = []
         if m.photo:
             types.append("photo")
         if m.document:
@@ -350,8 +443,8 @@ class SecurityService:
             types.append("gif")
         return types
 
-    def _heuristics_text(self, text: str) -> Tuple[bool, List[str], float]:
-        labels: List[str] = []
+    def _heuristics_text(self, text: str) -> tuple[bool, list[str], float]:
+        labels: list[str] = []
         score = 0.0
         ok = True
 
@@ -381,7 +474,7 @@ class SecurityService:
 
         return ok, labels, score
 
-    def _check_links(self, text: str) -> Tuple[bool, bool]:
+    def _check_links(self, text: str) -> tuple[bool, bool]:
         """
         Returns (penalty, hard_block_by_blacklist)
         """
@@ -398,26 +491,32 @@ class SecurityService:
         return penalty, hard
 
     @staticmethod
-    def _extract_host(url: str) -> Optional[str]:
+    def _extract_host(url: str) -> str | None:
         u = url.lower()
         u = u.replace("https://", "").replace("http://", "")
         if u.startswith("www."):
             u = u[4:]
         return u.split("/")[0] if "/" in u else u
 
-    async def _vision_media_gate(self, message: tg.Message, media_types: List[str]) -> Tuple[bool, List[str], float]:
+    async def _vision_media_gate(
+        self, message: tg.Message, media_types: list[str]
+    ) -> tuple[bool, list[str], float]:
         """
         If AI vision available, analyze images/photos. Otherwise, pass-through.
         """
         if not self.ai:
             return True, [], 0.0
 
-        labels: List[str] = []
+        labels: list[str] = []
         score = 0.0
 
         # Try various method names for best compatibility
         method = None
-        for name in ("analyze_vision_content", "analyze_image_content", "vision_moderate"):
+        for name in (
+            "analyze_vision_content",
+            "analyze_image_content",
+            "vision_moderate",
+        ):
             if hasattr(self.ai, name):
                 method = getattr(self.ai, name)
                 break
@@ -428,7 +527,7 @@ class SecurityService:
         # Invoke with flexible signature
         try:
             # Preferred signature: (message=..., bot=...) so service can fetch bytes by itself
-            res: Dict[str, Any]
+            res: dict[str, Any]
             try:
                 res = await method(message=message, bot=getattr(message, "bot", None))  # type: ignore[misc]
             except TypeError:
@@ -483,7 +582,7 @@ class SecurityService:
         if not u:
             return "user"
         name = (u.full_name or u.username or str(u.id)).strip()
-        return f"<a href=\"tg://user?id={u.id}\">{html.escape(name)}</a>"
+        return f'<a href="tg://user?id={u.id}">{html.escape(name)}</a>'
 
 
 __all__ = ["SecurityService", "Verdict", "Escalation"]

@@ -19,7 +19,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 from redis.asyncio import Redis
@@ -31,17 +31,18 @@ logger = logging.getLogger(__name__)
 
 # ------------------------------- Модель события --------------------------------
 
+
 @dataclass
 class EventItem:
     id: str
     name: str
-    domain: str           # "mining" | "market" | "quiz" | "all" ...
-    multiplier: float     # например 1.10 = +10%
-    starts_at: Optional[datetime] = None
-    ends_at: Optional[datetime] = None
-    meta: Optional[Dict[str, Any]] = None
+    domain: str  # "mining" | "market" | "quiz" | "all" ...
+    multiplier: float  # например 1.10 = +10%
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    meta: dict[str, Any] | None = None
 
-    def is_active(self, now: Optional[datetime] = None) -> bool:
+    def is_active(self, now: datetime | None = None) -> bool:
         _now = now or datetime.now(timezone.utc)
         if self.starts_at and _now < self.starts_at:
             return False
@@ -52,11 +53,12 @@ class EventItem:
 
 # ------------------------------ Вспомогательные --------------------------------
 
+
 def _to_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def _parse_dt(val: Any) -> Optional[datetime]:
+def _parse_dt(val: Any) -> datetime | None:
     """
     Поддерживаем:
       - ISO 8601 строки ( '2025-08-16T12:00:00Z', '2025-08-16 12:00:00' )
@@ -93,7 +95,7 @@ def _parse_dt(val: Any) -> Optional[datetime]:
     return None
 
 
-def _coerce_event(d: Dict[str, Any]) -> Optional[EventItem]:
+def _coerce_event(d: dict[str, Any]) -> EventItem | None:
     try:
         return EventItem(
             id=str(d.get("id") or d["name"]).strip(),
@@ -111,6 +113,7 @@ def _coerce_event(d: Dict[str, Any]) -> Optional[EventItem]:
 
 # --------------------------------- Сервис --------------------------------------
 
+
 class EventService:
     """
     Сервис событий.
@@ -124,14 +127,14 @@ class EventService:
         self,
         settings: Settings,
         redis: Redis,
-        http_session: Optional[aiohttp.ClientSession] = None,
+        http_session: aiohttp.ClientSession | None = None,
     ) -> None:
         self.settings = settings
         self.redis = redis
         self.session = http_session  # на будущее (вебхуки/загрузки по URL)
-        self._static_events_cache: List[EventItem] = []
-        self._static_loaded_from: Optional[str] = None  # путь файла, из которого грузили
-        self._static_mtime: Optional[float] = None
+        self._static_events_cache: list[EventItem] = []
+        self._static_loaded_from: str | None = None  # путь файла, из которого грузили
+        self._static_mtime: float | None = None
         self._cache_key_custom = "events:custom"
         self._cache_key_snapshot = "events:snapshot"  # аггрегированный снапшот (опц.)
 
@@ -145,7 +148,9 @@ class EventService:
 
     def _static_config_path(self) -> str:
         # settings.events.config_path ожидается как относительный путь внутри проекта
-        return str(getattr(self.settings.events, "config_path", "data/events_config.json"))
+        return str(
+            getattr(self.settings.events, "config_path", "data/events_config.json")
+        )
 
     def _need_reload_static(self) -> bool:
         path = self._static_config_path()
@@ -157,13 +162,16 @@ class EventService:
         mtime = st.st_mtime
         return (self._static_loaded_from != path) or (self._static_mtime != mtime)
 
-    def _load_static_sync(self) -> List[EventItem]:
+    def _load_static_sync(self) -> list[EventItem]:
         path = self._static_config_path()
         if not os.path.exists(path):
-            logger.info("EventService: статический файл %s не найден — базовых событий нет.", path)
+            logger.info(
+                "EventService: статический файл %s не найден — базовых событий нет.",
+                path,
+            )
             return []
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
             if isinstance(raw, dict):
                 items = raw.get("events") or raw.get("items") or []
@@ -171,7 +179,7 @@ class EventService:
                 items = raw
             else:
                 items = []
-            result: List[EventItem] = []
+            result: list[EventItem] = []
             for it in items:
                 if not isinstance(it, dict):
                     continue
@@ -184,7 +192,9 @@ class EventService:
             self._static_mtime = st.st_mtime
             return result
         except Exception as e:
-            logger.error("EventService: не удалось прочитать %s: %s", path, e, exc_info=True)
+            logger.error(
+                "EventService: не удалось прочитать %s: %s", path, e, exc_info=True
+            )
             return []
 
     async def _ensure_static_loaded(self) -> None:
@@ -195,7 +205,7 @@ class EventService:
 
     # ------------------------------ Динамика (Redis) ---------------------------
 
-    async def _read_custom_events(self) -> List[EventItem]:
+    async def _read_custom_events(self) -> list[EventItem]:
         """
         Читает динамические события из Redis HASH events:custom (field=id -> json).
         """
@@ -203,7 +213,7 @@ class EventService:
             raw = await self.redis.hgetall(self._cache_key_custom)
             if not raw:
                 return []
-            out: List[EventItem] = []
+            out: list[EventItem] = []
             for _id, s in raw.items():
                 try:
                     d = json.loads(s)
@@ -214,10 +224,14 @@ class EventService:
                     continue
             return out
         except Exception as e:
-            logger.warning("EventService: не удалось прочитать кастомные события: %s", e)
+            logger.warning(
+                "EventService: не удалось прочитать кастомные события: %s", e
+            )
             return []
 
-    async def list_events(self, include_inactive: bool = True, now: Optional[datetime] = None) -> List[EventItem]:
+    async def list_events(
+        self, include_inactive: bool = True, now: datetime | None = None
+    ) -> list[EventItem]:
         """
         Возвращает объединённый список (static + custom).
         """
@@ -236,9 +250,9 @@ class EventService:
         name: str,
         domain: str,
         multiplier: float,
-        starts_at: Optional[Any] = None,
-        ends_at: Optional[Any] = None,
-        meta: Optional[Dict[str, Any]] = None,
+        starts_at: Any | None = None,
+        ends_at: Any | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> EventItem:
         """
         Создаёт или обновляет кастомное событие (в Redis).
@@ -262,9 +276,13 @@ class EventService:
             "meta": e.meta or {},
         }
         try:
-            await self.redis.hset(self._cache_key_custom, e.id, json.dumps(d, ensure_ascii=False))
+            await self.redis.hset(
+                self._cache_key_custom, e.id, json.dumps(d, ensure_ascii=False)
+            )
         except Exception as ex:
-            logger.error("EventService: upsert_event(%s) failed: %s", e.id, ex, exc_info=True)
+            logger.error(
+                "EventService: upsert_event(%s) failed: %s", e.id, ex, exc_info=True
+            )
         return e
 
     async def cancel_event(self, event_id: str) -> bool:
@@ -278,22 +296,24 @@ class EventService:
 
     # ------------------------------ Агрегация ----------------------------------
 
-    def _merge_events(self, a: List[EventItem], b: List[EventItem]) -> List[EventItem]:
+    def _merge_events(self, a: list[EventItem], b: list[EventItem]) -> list[EventItem]:
         """
         Сливает два списка с приоритетом B (custom) по id.
         """
-        by_id: Dict[str, EventItem] = {e.id: e for e in a}
+        by_id: dict[str, EventItem] = {e.id: e for e in a}
         for e in b:
             by_id[e.id] = e
         return list(by_id.values())
 
-    async def get_active_events(self, now: Optional[datetime] = None) -> List[EventItem]:
+    async def get_active_events(self, now: datetime | None = None) -> list[EventItem]:
         """Активные на текущий момент события (static+custom)."""
         _now = now or datetime.now(timezone.utc)
         all_events = await self.list_events(include_inactive=False, now=_now)
         return [e for e in all_events if e.is_active(_now)]
 
-    async def get_multiplier(self, domain: str = "mining", now: Optional[datetime] = None) -> float:
+    async def get_multiplier(
+        self, domain: str = "mining", now: datetime | None = None
+    ) -> float:
         """
         Эффективный множитель для домена.
         Стартовое значение — settings.events.default_multiplier (по умолчанию 1.0).
@@ -317,7 +337,7 @@ class EventService:
 
     # ------------------------------ Снапшот (опц.) -----------------------------
 
-    async def build_snapshot(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+    async def build_snapshot(self, now: datetime | None = None) -> dict[str, Any]:
         """
         Полезно для /admin:compact dump.
         """
@@ -326,17 +346,27 @@ class EventService:
         all_events = await self.list_events(include_inactive=True)
         data = {
             "now": _now.isoformat(),
-            "active": [e.__dict__ | {
-                "starts_at": e.starts_at.isoformat() if e.starts_at else None,
-                "ends_at": e.ends_at.isoformat() if e.ends_at else None,
-            } for e in active],
-            "all": [e.__dict__ | {
-                "starts_at": e.starts_at.isoformat() if e.starts_at else None,
-                "ends_at": e.ends_at.isoformat() if e.ends_at else None,
-            } for e in all_events],
+            "active": [
+                e.__dict__
+                | {
+                    "starts_at": e.starts_at.isoformat() if e.starts_at else None,
+                    "ends_at": e.ends_at.isoformat() if e.ends_at else None,
+                }
+                for e in active
+            ],
+            "all": [
+                e.__dict__
+                | {
+                    "starts_at": e.starts_at.isoformat() if e.starts_at else None,
+                    "ends_at": e.ends_at.isoformat() if e.ends_at else None,
+                }
+                for e in all_events
+            ],
         }
         try:
-            await self.redis.set(self._cache_key_snapshot, json.dumps(data, ensure_ascii=False), ex=300)
+            await self.redis.set(
+                self._cache_key_snapshot, json.dumps(data, ensure_ascii=False), ex=300
+            )
         except Exception:
             pass
         return data

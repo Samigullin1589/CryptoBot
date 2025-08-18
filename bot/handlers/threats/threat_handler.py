@@ -22,7 +22,6 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from typing import Optional, Tuple
 
 from aiogram import F, Router, types
 from aiogram.exceptions import (
@@ -38,6 +37,7 @@ from bot.utils.dependencies import Deps
 # --- необязательная поддержка новой фабрики (если вы её используете где-то ещё) ---
 try:
     from bot.keyboards.callback_factories import ThreatCallback  # noqa: F401
+
     _HAS_THREAT_FACTORY = True
 except Exception:  # фабрики может не быть — это ок
     _HAS_THREAT_FACTORY = False
@@ -51,7 +51,8 @@ logger = logging.getLogger(__name__)
 
 # ------------------------------- ВСПОМОГАТЕЛЬНЫЕ -------------------------------
 
-def _parse_ids_from_callback_data(data: Optional[str]) -> Tuple[Optional[int], Optional[int]]:
+
+def _parse_ids_from_callback_data(data: str | None) -> tuple[int | None, int | None]:
     """
     Поддерживаем форматы:
       - "threat_action:pardon:<user_id>:<chat_id>"
@@ -82,7 +83,7 @@ _ID_RE = re.compile(r"\bID:\s*(\d+)")
 _CHAT_ID_RE = re.compile(r"Чат\s+ID:\s*([\-]?\d+)", re.IGNORECASE)
 
 
-def _parse_ids_from_card_text(text: str) -> Tuple[Optional[int], Optional[int]]:
+def _parse_ids_from_card_text(text: str) -> tuple[int | None, int | None]:
     """
     Парсинг из текста карточки (пример):
       ID: 161465196
@@ -114,10 +115,14 @@ async def _safe_edit_append_html(cb: types.CallbackQuery, append_html: str) -> N
     msg = getattr(cb, "message", None)
     if msg is None:
         with contextlib.suppress(Exception):
-            await cb.answer(append_html.replace("<b>", "").replace("</b>", ""), show_alert=False)
+            await cb.answer(
+                append_html.replace("<b>", "").replace("</b>", ""), show_alert=False
+            )
         return
 
-    base_html = (getattr(msg, "html_text", None) or getattr(msg, "text", None) or "").strip()
+    base_html = (
+        getattr(msg, "html_text", None) or getattr(msg, "text", None) or ""
+    ).strip()
     new_html = f"{base_html}\n\n— — —\n{append_html}".strip()
 
     try:
@@ -125,18 +130,22 @@ async def _safe_edit_append_html(cb: types.CallbackQuery, append_html: str) -> N
     except TelegramBadRequest as e:
         logger.warning("Edit threat card failed: %s", e)
         with contextlib.suppress(Exception):
-            await cb.answer(append_html.replace("<b>", "").replace("</b>", ""), show_alert=False)
+            await cb.answer(
+                append_html.replace("<b>", "").replace("</b>", ""), show_alert=False
+            )
     except Exception as e:
         logger.error("Unexpected error while editing threat card: %s", e, exc_info=True)
         with contextlib.suppress(Exception):
-            await cb.answer(append_html.replace("<b>", "").replace("</b>", ""), show_alert=False)
+            await cb.answer(
+                append_html.replace("<b>", "").replace("</b>", ""), show_alert=False
+            )
 
 
 def _choose_ids_for_action(
     cq: types.CallbackQuery,
     need_user: bool = True,
     need_chat: bool = True,
-) -> Tuple[Optional[int], Optional[int]]:
+) -> tuple[int | None, int | None]:
     """
     Выбирает user_id и chat_id:
     1) из callback_data,
@@ -148,7 +157,11 @@ def _choose_ids_for_action(
     user_id = from_cb_user
     chat_id = from_cb_chat
 
-    card_text = (getattr(cq.message, "html_text", None) or getattr(cq.message, "text", None) or "")
+    card_text = (
+        getattr(cq.message, "html_text", None)
+        or getattr(cq.message, "text", None)
+        or ""
+    )
 
     if need_user and user_id is None:
         user_id, _ = _parse_ids_from_card_text(card_text)
@@ -169,6 +182,7 @@ def _fmt_done(text: str) -> str:
 
 # ------------------------ ОБРАБОТЧИКИ КОЛЛБЭКОВ (СТАРЫЕ) ------------------------
 
+
 @threats_router.callback_query(F.data.startswith("pardon"))
 async def cb_pardon(cq: types.CallbackQuery, deps: Deps) -> None:
     """
@@ -185,7 +199,9 @@ async def cb_pardon(cq: types.CallbackQuery, deps: Deps) -> None:
     try:
         if chat_id is not None and user_id is not None:
             # Попытка разбанить (будет исключение, если это не супер-группа/канал)
-            await cq.bot.unban_chat_member(chat_id=chat_id, user_id=user_id, only_if_banned=True)
+            await cq.bot.unban_chat_member(
+                chat_id=chat_id, user_id=user_id, only_if_banned=True
+            )
     except TelegramBadRequest as e:
         # Например: "method is available for supergroup and channel chats only"
         logger.info("pardon_user bad request: %s", e)
@@ -210,7 +226,9 @@ async def cb_ban(cq: types.CallbackQuery, deps: Deps) -> None:
     user_id, chat_id = _choose_ids_for_action(cq, need_user=True, need_chat=True)
 
     if user_id is None or chat_id is None:
-        await _safe_edit_append_html(cq, "Не удалось определить пользователя или чат для бана.")
+        await _safe_edit_append_html(
+            cq, "Не удалось определить пользователя или чат для бана."
+        )
         return
 
     try:
@@ -229,6 +247,7 @@ async def cb_ban(cq: types.CallbackQuery, deps: Deps) -> None:
 
 
 # -------------------- МОСТ ДЛЯ НОВЫХ ПРЕФИКСОВ threat_action:/threat: --------------------
+
 
 @threats_router.callback_query(F.data.startswith("threat_action:"))
 async def cb_threat_action_bridge(cq: types.CallbackQuery, deps: Deps) -> None:
@@ -263,6 +282,7 @@ async def cb_threat_prefix_bridge(cq: types.CallbackQuery, deps: Deps) -> None:
 
 
 # ----------------- (ОПЦИОНАЛЬНО) КОМАНДЫ-ЗАГЛУШКИ ДЛЯ РУЧНОЙ МОДЕРАЦИИ -----------------
+
 
 @threats_router.message(Command("pardon"))
 async def cmd_pardon_stub(message: Message) -> None:

@@ -5,12 +5,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Awaitable
+from typing import Any
+from collections.abc import Callable, Awaitable
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message, TelegramObject
 
 from bot.services.anti_spam_service import AntiSpamService
+
 
 class SpamGuardMiddleware(BaseMiddleware):
     def __init__(self, anti_spam: AntiSpamService):
@@ -19,12 +21,16 @@ class SpamGuardMiddleware(BaseMiddleware):
 
     async def __call__(
         self,
-        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
-        data: Dict[str, Any],
+        data: dict[str, Any],
     ) -> Any:
         # Пускаем только входящие сообщения
-        if isinstance(event, Message) and event.from_user and not event.from_user.is_bot:
+        if (
+            isinstance(event, Message)
+            and event.from_user
+            and not event.from_user.is_bot
+        ):
             verdict = await self.anti_spam.analyze_and_act(event)
             if verdict:  # уже что-то сделали (удалили/замьютили/забанили)
                 return  # не пробрасываем дальше хендлерам

@@ -6,7 +6,7 @@
 # ===============================================================
 import logging
 from datetime import datetime
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Any
 
 import redis.asyncio as redis
 from aiogram import Bot
@@ -15,22 +15,25 @@ from aiogram.types import InlineKeyboardMarkup
 from bot.config.settings import Settings
 from bot.utils.models import UserRole
 from bot.keyboards.admin_keyboards import (
-    get_admin_menu_keyboard, get_stats_menu_keyboard,
-    get_system_actions_keyboard, get_back_to_admin_menu_keyboard
+    get_admin_menu_keyboard,
+    get_stats_menu_keyboard,
+    get_back_to_admin_menu_keyboard,
 )
 from bot.utils.keys import KeyFactory
 
 logger = logging.getLogger(__name__)
 
+
 class AdminService:
     """
     Сервис для сбора статистики и выполнения административных задач.
     """
+
     def __init__(self, redis: redis.Redis, settings: Settings, bot: Bot):
         self.redis = redis
         self.settings = settings
         self.bot = bot
-        self.admin_ids: List[int] = settings.admin_ids
+        self.admin_ids: list[int] = settings.admin_ids
         self.keys = KeyFactory
 
     # --- Методы для отслеживания статистики ---
@@ -45,10 +48,14 @@ class AdminService:
             try:
                 await self.bot.send_message(admin_id, message, **kwargs)
             except Exception as e:
-                logger.error(f"Не удалось отправить уведомление администратору {admin_id}: {e}")
+                logger.error(
+                    f"Не удалось отправить уведомление администратору {admin_id}: {e}"
+                )
 
     # --- Методы для получения и форматирования страниц статистики ---
-    async def get_stats_page_content(self, stats_type: str) -> Tuple[str, InlineKeyboardMarkup]:
+    async def get_stats_page_content(
+        self, stats_type: str
+    ) -> tuple[str, InlineKeyboardMarkup]:
         """
         Возвращает контент для страницы статистики в зависимости от типа.
         """
@@ -74,12 +81,15 @@ class AdminService:
             if not top_actions:
                 text = header + "<i>Нет данных о действиях.</i>"
             else:
-                actions_list = [f"<code>{action}</code> - {count} раз" for action, count in top_actions]
+                actions_list = [
+                    f"<code>{action}</code> - {count} раз"
+                    for action, count in top_actions
+                ]
                 text = header + "\n".join(actions_list)
         else:
             logger.warning(f"Запрошен неизвестный тип статистики: {stats_type}")
             return "Выберите категорию для просмотра:", get_stats_menu_keyboard()
-        
+
         return text, get_back_to_admin_menu_keyboard()
 
     # --- Приватные методы сбора данных ---
@@ -87,8 +97,8 @@ class AdminService:
         """Собирает глобальную статистику по пользователям."""
         users_total = await self.redis.scard(self.keys.all_users_set())
         now = datetime.utcnow()
-        today_str = now.strftime('%Y-%m-%d')
-        week_str = now.strftime('%Y-%U')
+        today_str = now.strftime("%Y-%m-%d")
+        week_str = now.strftime("%Y-%U")
         day_key = f"users:active:day:{today_str}"
         week_key = f"users:active:week:{week_str}"
         users_active_day = await self.redis.scard(day_key)
@@ -99,44 +109,58 @@ class AdminService:
             "users_active_week": users_active_week,
         }
 
-    async def get_game_stats(self) -> Dict[str, Any]:
+    async def get_game_stats(self) -> dict[str, Any]:
         """Собирает статистику по игровому модулю."""
         stats_key = self.keys.game_stats()
         game_stats_raw = await self.redis.hgetall(stats_key)
-        
+
         # Суммируем балансы всех игроков (если лидерборд большой, это может быть неэффективно)
         # Для больших проектов лучше хранить отдельный счетчик.
-        leaderboard = await self.redis.zrange(self.keys.game_leaderboard(), 0, -1, withscores=True)
+        leaderboard = await self.redis.zrange(
+            self.keys.game_leaderboard(), 0, -1, withscores=True
+        )
         total_balance = sum(score for _, score in leaderboard)
 
         return {
             "active_sessions": int(game_stats_raw.get("active_sessions", 0)),
             "pending_withdrawals": int(game_stats_raw.get("pending_withdrawals", 0)),
-            "total_balance": float(total_balance)
+            "total_balance": float(total_balance),
         }
 
-    async def get_action_stats(self, top_n: int = 10) -> List[Tuple[str, int]]:
+    async def get_action_stats(self, top_n: int = 10) -> list[tuple[str, int]]:
         """Получает топ-N самых частых действий пользователей."""
-        actions_raw = await self.redis.zrevrange("stats:actions", 0, top_n - 1, withscores=True)
+        actions_raw = await self.redis.zrevrange(
+            "stats:actions", 0, top_n - 1, withscores=True
+        )
         return [(action, int(score)) for action, score in actions_raw]
 
     # --- Навигация в админ-панели ---
-    async def get_main_menu_content(self, user_id: int) -> Tuple[str, InlineKeyboardMarkup]:
+    async def get_main_menu_content(
+        self, user_id: int
+    ) -> tuple[str, InlineKeyboardMarkup]:
         """Возвращает контент для главного меню админ-панели."""
-        user_role = UserRole.SUPER_ADMIN if user_id in self.settings.admin_ids else UserRole.ADMIN
+        user_role = (
+            UserRole.SUPER_ADMIN
+            if user_id in self.settings.admin_ids
+            else UserRole.ADMIN
+        )
         text = "<b>Панель администратора</b>\n\nВыберите раздел:"
         keyboard = get_admin_menu_keyboard(user_role)
         return text, keyboard
-        
+
     # --- РЕАЛИЗОВАННЫЙ МЕТОД: Изменение баланса ---
-    async def change_user_game_balance(self, user_id: int, amount: float) -> Optional[float]:
+    async def change_user_game_balance(
+        self, user_id: int, amount: float
+    ) -> float | None:
         """
         Атомарно изменяет игровой баланс пользователя и возвращает новый баланс.
         Возвращает None, если профиль пользователя не найден.
         """
         profile_key = self.keys.user_game_profile(user_id)
         if not await self.redis.exists(profile_key):
-            logger.warning(f"Попытка изменить баланс для несуществующего игрового профиля: user_id={user_id}")
+            logger.warning(
+                f"Попытка изменить баланс для несуществующего игрового профиля: user_id={user_id}"
+            )
             return None
 
         async with self.redis.pipeline(transaction=True) as pipe:
@@ -144,23 +168,27 @@ class AdminService:
             # Также обновляем значение в таблице лидеров
             pipe.zincrby(self.keys.game_leaderboard(), amount, str(user_id))
             results = await pipe.execute()
-        
+
         new_balance = results[0]
-        logger.info(f"Администратор изменил баланс user_id={user_id} на {amount}. Новый баланс: {new_balance}")
+        logger.info(
+            f"Администратор изменил баланс user_id={user_id} на {amount}. Новый баланс: {new_balance}"
+        )
         return new_balance
 
     # --- Системные действия ---
     async def clear_asic_cache(self) -> int:
         """Очищает кэш ASIC-майнеров."""
-        cursor = '0'
+        cursor = "0"
         deleted_count = 0
         while cursor != 0:
-            cursor, keys = await self.redis.scan(cursor, match=f"asic:*", count=1000)
+            cursor, keys = await self.redis.scan(cursor, match="asic:*", count=1000)
             if keys:
                 deleted_count += await self.redis.delete(*keys)
-        
+
         # Также удаляем сортированный сет и ключ последнего обновления
-        deleted_count += await self.redis.delete(self.keys.asics_sorted_set(), self.keys.asics_last_update())
-        
+        deleted_count += await self.redis.delete(
+            self.keys.asics_sorted_set(), self.keys.asics_last_update()
+        )
+
         logger.info(f"ASIC cache cleared. Deleted {deleted_count} keys.")
         return deleted_count

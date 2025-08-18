@@ -20,7 +20,8 @@ import json
 import logging
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any
+from collections.abc import Iterable, Mapping
 
 import redis.asyncio as redis
 from aiogram.types import User as TgUser
@@ -34,8 +35,10 @@ logger = logging.getLogger(__name__)
 
 # ------------------------------ Keyspace ----------------------------------------
 
+
 class _Keys:
     """Centralized Redis key builder to avoid typos."""
+
     def __init__(self, prefix: str = "game") -> None:
         self.px = prefix
 
@@ -46,27 +49,32 @@ class _Keys:
         return f"{self.px}:user:{user_id}:tariffs:owned"  # SET of tariff names
 
     def active_session(self, user_id: int) -> str:
-        return f"{self.px}:user:{user_id}:session"  # HSET: asic_json, started_at, ends_at
+        return (
+            f"{self.px}:user:{user_id}:session"  # HSET: asic_json, started_at, ends_at
+        )
 
     def session_lock(self, user_id: int) -> str:
-        return f"{self.px}:user:{user_id}:session:lock"  # simple lock for race-protection
+        return (
+            f"{self.px}:user:{user_id}:session:lock"  # simple lock for race-protection
+        )
 
     def stats(self, user_id: int) -> str:
         return f"{self.px}:user:{user_id}:stats"  # HSET: sessions, lifetime_earned, lifetime_spent
 
-    def wallet_candidates(self, user_id: int) -> Tuple[str, ...]:
+    def wallet_candidates(self, user_id: int) -> tuple[str, ...]:
         # Try multiple schemas to be compatible with existing projects
         return (
-            f"user:{user_id}:wallet",        # HASH coins|balance
-            f"economy:user:{user_id}",       # HASH coins|balance
-            f"user:{user_id}:profile",       # HASH coins
+            f"user:{user_id}:wallet",  # HASH coins|balance
+            f"economy:user:{user_id}",  # HASH coins|balance
+            f"user:{user_id}:profile",  # HASH coins
             f"{self.px}:user:{user_id}:profile",  # HASH coins (same as profile())
-            f"user:{user_id}:coins",         # STRING
-            f"{self.px}:user:{user_id}:coins",    # STRING
+            f"user:{user_id}:coins",  # STRING
+            f"{self.px}:user:{user_id}:coins",  # STRING
         )
 
 
 # ------------------------------ Service -----------------------------------------
+
 
 class MiningGameService:
     """
@@ -74,15 +82,16 @@ class MiningGameService:
     Designed to be initialized via DI container with:
         MiningGameService(settings=..., redis=..., user_service=..., asic_service=..., ...)
     """
+
     def __init__(
         self,
         settings: Settings,
         redis: redis.Redis,
-        user_service: Optional[Any] = None,
-        asic_service: Optional[Any] = None,
-        market_service: Optional[Any] = None,
-        mining_service: Optional[Any] = None,
-        achievement_service: Optional[Any] = None,
+        user_service: Any | None = None,
+        asic_service: Any | None = None,
+        market_service: Any | None = None,
+        mining_service: Any | None = None,
+        achievement_service: Any | None = None,
     ) -> None:
         self.settings = settings
         self.redis: redis.Redis = redis
@@ -108,7 +117,7 @@ class MiningGameService:
     # Public API used by handlers
     # -------------------------------------------------------------------------
 
-    async def get_farm_and_stats_info(self, user_id: int) -> Tuple[str, str]:
+    async def get_farm_and_stats_info(self, user_id: int) -> tuple[str, str]:
         """
         Returns (farm_info_html, stats_info_html).
         """
@@ -141,7 +150,9 @@ class MiningGameService:
         sessions = int(stats.get("sessions", 0) or 0)
         earned = float(stats.get("lifetime_earned", 0) or 0.0)
         spent = float(stats.get("lifetime_spent", 0) or 0.0)
-        current_tariff = (await self.redis.hget(prof_key, "current_tariff")) or self.settings.game.default_electricity_tariff
+        current_tariff = (
+            await self.redis.hget(prof_key, "current_tariff")
+        ) or self.settings.game.default_electricity_tariff
 
         stats_info = (
             "📊 <b>Статистика</b>\n"
@@ -153,7 +164,9 @@ class MiningGameService:
 
         return farm_info, stats_info
 
-    async def purchase_and_start_session(self, user_id: int, selected_asic: AsicMiner) -> Tuple[str, bool]:
+    async def purchase_and_start_session(
+        self, user_id: int, selected_asic: AsicMiner
+    ) -> tuple[str, bool]:
         """
         Atomically:
           1) Ensure no active session exists.
@@ -190,12 +203,21 @@ class MiningGameService:
 
             # 3) Debit (UserService -> Redis candidates)
             if price > 0:
-                debited = await self._debit(user_id, price, reason=f"Покупка {selected_asic.name} для майнинга")
+                debited = await self._debit(
+                    user_id, price, reason=f"Покупка {selected_asic.name} для майнинга"
+                )
                 if not debited:
-                    return f"Недостаточно средств для покупки <b>{selected_asic.name}</b> (нужно {price:,.2f}).".replace(",", " "), False
+                    return (
+                        f"Недостаточно средств для покупки <b>{selected_asic.name}</b> (нужно {price:,.2f}).".replace(
+                            ",", " "
+                        ),
+                        False,
+                    )
 
                 # Account spent
-                await self.redis.hincrbyfloat(self.keys.stats(user_id), "lifetime_spent", price)
+                await self.redis.hincrbyfloat(
+                    self.keys.stats(user_id), "lifetime_spent", price
+                )
 
             # 4) Create session atomically (WATCH/MULTI)
             pipe = self.redis.pipeline()
@@ -209,7 +231,11 @@ class MiningGameService:
                     pipe.hset(
                         session_key,
                         mapping={
-                            "asic_json": json.dumps(selected_asic.model_dump() if hasattr(selected_asic, "model_dump") else selected_asic.__dict__),
+                            "asic_json": json.dumps(
+                                selected_asic.model_dump()
+                                if hasattr(selected_asic, "model_dump")
+                                else selected_asic.__dict__
+                            ),
                             "started_at": str(now),
                             "ends_at": str(ends_at),
                             "tariff": await self._get_current_tariff(user_id),
@@ -240,12 +266,16 @@ class MiningGameService:
             except Exception:
                 pass
 
-    async def process_withdrawal(self, user: TgUser | Any) -> Tuple[str, bool]:
+    async def process_withdrawal(self, user: TgUser | Any) -> tuple[str, bool]:
         """
         Simple withdrawal stub that uses lifetime_earned as available amount.
         Adapt to your economy as needed. Keeps old interface (text, can_withdraw).
         """
-        uid = getattr(user, "id", None) if hasattr(user, "id") else (getattr(user, "user_id", None) or user)
+        uid = (
+            getattr(user, "id", None)
+            if hasattr(user, "id")
+            else (getattr(user, "user_id", None) or user)
+        )
         if not uid:
             return "Ошибка идентификации пользователя.", False
 
@@ -254,7 +284,12 @@ class MiningGameService:
         min_sum = float(self.settings.game.min_withdrawal_amount)
 
         if earned < min_sum:
-            return f"Минимальная сумма для вывода: <b>{min_sum:,.2f}</b>. Ваш доступный баланс: <b>{earned:,.2f}</b>.".replace(",", " "), False
+            return (
+                f"Минимальная сумма для вывода: <b>{min_sum:,.2f}</b>. Ваш доступный баланс: <b>{earned:,.2f}</b>.".replace(
+                    ",", " "
+                ),
+                False,
+            )
 
         # Mark as paid out (for demo: zero earned)
         await self.redis.hset(stats_key, mapping={"lifetime_earned": 0.0})
@@ -266,7 +301,7 @@ class MiningGameService:
 
     # -------------------- Electricity tariffs (menu + actions) --------------------
 
-    def _iter_tariffs(self) -> Iterable[Tuple[str, Any]]:
+    def _iter_tariffs(self) -> Iterable[tuple[str, Any]]:
         """
         Returns list of (name, obj) from settings.game.electricity_tariffs keeping stable order.
         Supports dict[str, dict|model] or dict-like Pydantic mapping.
@@ -290,7 +325,7 @@ class MiningGameService:
         st = await self.redis.smembers(self.keys.owned_tariffs(user_id))
         return sorted(st) if st else []
 
-    async def get_electricity_menu(self, user_id: int) -> Tuple[str, Any]:
+    async def get_electricity_menu(self, user_id: int) -> tuple[str, Any]:
         """
         Returns (html_text, InlineKeyboardMarkup).
         """
@@ -315,11 +350,17 @@ class MiningGameService:
             if name in owned:
                 status.append("куплен")
             stxt = f" ({', '.join(status)})" if status else ""
-            price_txt = "бесплатно" if not unlock_price else f"{float(unlock_price):,.0f} монет".replace(",", " ")
+            price_txt = (
+                "бесплатно"
+                if not unlock_price
+                else f"{float(unlock_price):,.0f} монет".replace(",", " ")
+            )
             lines.append(f"• {name}: {cost} $/кВт⋅ч — {price_txt}{stxt}")
 
         text = "\n".join(lines)
-        kb = get_electricity_menu_keyboard(self.settings.game.electricity_tariffs, owned, current)
+        kb = get_electricity_menu_keyboard(
+            self.settings.game.electricity_tariffs, owned, current
+        )
         return text, kb
 
     async def select_tariff(self, user_id: int, tariff_name: str) -> str:
@@ -333,7 +374,9 @@ class MiningGameService:
         if tariff_name not in owned:
             return "Сначала купите этот тариф."
 
-        await self.redis.hset(self.keys.profile(user_id), mapping={"current_tariff": tariff_name})
+        await self.redis.hset(
+            self.keys.profile(user_id), mapping={"current_tariff": tariff_name}
+        )
         return f"🔌 Тариф <b>{tariff_name}</b> выбран!"
 
     async def buy_tariff(self, user_id: int, tariff_name: str) -> str:
@@ -352,11 +395,17 @@ class MiningGameService:
         price = float(_get(obj, "unlock_price", 0) or 0.0)
 
         if price > 0:
-            debited = await self._debit(user_id, price, reason=f"Покупка тарифа {tariff_name}")
+            debited = await self._debit(
+                user_id, price, reason=f"Покупка тарифа {tariff_name}"
+            )
             if not debited:
-                return f"Недостаточно средств для покупки тарифа <b>{tariff_name}</b> ({price:,.0f}).".replace(",", " ")
+                return f"Недостаточно средств для покупки тарифа <b>{tariff_name}</b> ({price:,.0f}).".replace(
+                    ",", " "
+                )
 
-            await self.redis.hincrbyfloat(self.keys.stats(user_id), "lifetime_spent", price)
+            await self.redis.hincrbyfloat(
+                self.keys.stats(user_id), "lifetime_spent", price
+            )
 
         await self.redis.sadd(owned_key, tariff_name)
         # If no current tariff set — set newly bought as current
@@ -466,6 +515,7 @@ class MiningGameService:
 
 
 # ------------------------------ Utilities ---------------------------------------
+
 
 def _get(obj: Any, key: str, default: Any = None) -> Any:
     """Get attribute from object or key from dict/dataclass."""

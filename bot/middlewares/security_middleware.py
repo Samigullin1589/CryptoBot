@@ -11,9 +11,9 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from typing import Any, Dict, Optional
+import contextlib
+from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
@@ -51,7 +51,7 @@ class SecurityMiddleware(BaseMiddleware):
         self.window = repeat_window_seconds
         self.repeat_ban = repeat_ban_count
 
-    async def __call__(self, handler, event: Message, data: Dict[str, Any]):
+    async def __call__(self, handler, event: Message, data: dict[str, Any]):
         # allow other updates (callbacks etc.)
         if not isinstance(event, Message):
             return await handler(event, data)
@@ -82,7 +82,9 @@ class SecurityMiddleware(BaseMiddleware):
                     logger.debug("moderate_text() error: %s", e)
 
             # Vision for images/stickers/documents (images)
-            if event.photo or (event.sticker and getattr(event.sticker, "is_video", False) is False):
+            if event.photo or (
+                event.sticker and getattr(event.sticker, "is_video", False) is False
+            ):
                 # Get best resolution photo bytes
                 images = []
                 try:
@@ -91,7 +93,11 @@ class SecurityMiddleware(BaseMiddleware):
                         file = await event.bot.get_file(photo.file_id)
                         b = await event.bot.download_file(file.file_path)
                         images.append(b.read())
-                    elif event.sticker and event.sticker.is_animated is False and event.sticker.file_id:
+                    elif (
+                        event.sticker
+                        and event.sticker.is_animated is False
+                        and event.sticker.file_id
+                    ):
                         file = await event.bot.get_file(event.sticker.file_id)
                         b = await event.bot.download_file(file.file_path)
                         images.append(b.read())
@@ -151,7 +157,9 @@ class SecurityMiddleware(BaseMiddleware):
                 try:
                     await event.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
                     try:
-                        await event.answer("🚫 Пользователь автоматически заблокирован системой защиты.")
+                        await event.answer(
+                            "🚫 Пользователь автоматически заблокирован системой защиты."
+                        )
                     except Exception:
                         pass
                     return
@@ -167,7 +175,9 @@ class SecurityMiddleware(BaseMiddleware):
                             until_date=until,
                         )
                         try:
-                            await event.answer("⛔ Включено временное ограничение отправки сообщений (24ч).")
+                            await event.answer(
+                                "⛔ Включено временное ограничение отправки сообщений (24ч)."
+                            )
                         except Exception:
                             pass
                         return

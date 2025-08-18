@@ -1,11 +1,11 @@
 # bot/services/image_vision_service.py
 from __future__ import annotations
 
-import base64
 from io import BytesIO
-from typing import Optional, Tuple, Dict, Any
+from typing import Any
 
 from PIL import Image
+
 
 class ImageVisionService:
     """
@@ -21,6 +21,7 @@ class ImageVisionService:
         # optional local OCR
         try:  # lazy optional dependency
             import pytesseract  # noqa: F401
+
             self._has_tesseract = True
         except Exception:
             self._has_tesseract = False
@@ -34,11 +35,12 @@ class ImageVisionService:
             return ""
         try:
             import pytesseract
+
             return pytesseract.image_to_string(img, lang="eng+rus")
         except Exception:
             return ""
 
-    async def analyze(self, photo_bytes: bytes) -> Tuple[bool, Dict[str, Any]]:
+    async def analyze(self, photo_bytes: bytes) -> tuple[bool, dict[str, Any]]:
         """
         Returns tuple (is_spam, details)
         details includes { 'extracted_text': str, 'model': 'gemini'|'tesseract'|None, 'explanation': str }
@@ -63,10 +65,24 @@ class ImageVisionService:
         exp = ""
 
         text_l = (text or "").lower()
-        for kw in ("успей", "бонус", "подписывайся", "промокод", "зарегистрируйся", "выплаты", "онлайн", "ставки", "казино"):
+        for kw in (
+            "успей",
+            "бонус",
+            "подписывайся",
+            "промокод",
+            "зарегистрируйся",
+            "выплаты",
+            "онлайн",
+            "ставки",
+            "казино",
+        ):
             if kw in text_l:
                 is_spam = True
                 exp = f"Keyword '{kw}' found in OCR"
                 break
 
-        return is_spam, {"extracted_text": text or "", "model": "tesseract" if self._has_tesseract else None, "explanation": exp}
+        return is_spam, {
+            "extracted_text": text or "",
+            "model": "tesseract" if self._has_tesseract else None,
+            "explanation": exp,
+        }

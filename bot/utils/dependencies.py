@@ -11,7 +11,7 @@ import inspect
 import logging
 from importlib import import_module
 from types import SimpleNamespace
-from typing import Any, Dict, Optional, Type
+from typing import Any
 
 import aiohttp
 import redis.asyncio as redis
@@ -57,8 +57,9 @@ logger = logging.getLogger(__name__)
 
 # =============================== Middleware (deps) ===============================
 
+
 class DependenciesMiddleware(BaseMiddleware):
-    def __init__(self, deps: "Deps") -> None:
+    def __init__(self, deps: Deps) -> None:
         super().__init__()
         self.deps = deps
 
@@ -67,11 +68,12 @@ class DependenciesMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-def dependencies_middleware(deps: "Deps") -> DependenciesMiddleware:
+def dependencies_middleware(deps: Deps) -> DependenciesMiddleware:
     return DependenciesMiddleware(deps)
 
 
 # ================================ DI-контейнер ==================================
+
 
 class Deps:
     """
@@ -82,35 +84,35 @@ class Deps:
         self.settings: Settings = cfg
 
         # низкоуровневые ресурсы
-        self.redis_pool: Optional[redis.Redis] = None
-        self.redis: Optional[redis.Redis] = None
-        self.http_session: Optional[aiohttp.ClientSession] = None
+        self.redis_pool: redis.Redis | None = None
+        self.redis: redis.Redis | None = None
+        self.http_session: aiohttp.ClientSession | None = None
 
         # доменные сервисы
-        self.ai_content_service: Optional[AIContentService] = None
-        self.ai_service: Optional[AIContentService] = None  # alias
-        self.price_service: Optional[PriceService] = None
-        self.coin_list_service: Optional[CoinListService] = None
-        self.news_service: Optional[NewsService] = None
-        self.market_data_service: Optional[MarketDataService] = None
-        self.asic_service: Optional[AsicService] = None
-        self.market_service: Optional[MarketService] = None
-        self.mining_service: Optional[MiningService] = None
-        self.mining_game_service: Optional[MiningGameService] = None
-        self.achievement_service: Optional[AchievementService] = None
-        self.event_service: Optional[EventService] = None
-        self.quiz_service: Optional[QuizService] = None
-        self.user_service: Optional[UserService] = None
+        self.ai_content_service: AIContentService | None = None
+        self.ai_service: AIContentService | None = None  # alias
+        self.price_service: PriceService | None = None
+        self.coin_list_service: CoinListService | None = None
+        self.news_service: NewsService | None = None
+        self.market_data_service: MarketDataService | None = None
+        self.asic_service: AsicService | None = None
+        self.market_service: MarketService | None = None
+        self.mining_service: MiningService | None = None
+        self.mining_game_service: MiningGameService | None = None
+        self.achievement_service: AchievementService | None = None
+        self.event_service: EventService | None = None
+        self.quiz_service: QuizService | None = None
+        self.user_service: UserService | None = None
 
         # Опциональные (создаём позже в main.py)
-        self.moderation_service: Optional[Any] = None
-        self.security_service: Optional[Any] = None
-        self.admin_service: Optional[AdminService] = None
+        self.moderation_service: Any | None = None
+        self.security_service: Any | None = None
+        self.admin_service: AdminService | None = None
 
     # --- поддержка обоих вариантов запуска ---
 
     @classmethod
-    async def create(cls, cfg: Settings | None = None) -> "Deps":
+    async def create(cls, cfg: Settings | None = None) -> Deps:
         cfg = cfg or settings
         self = cls(cfg)
         try:
@@ -156,7 +158,9 @@ class Deps:
                         if asyncio.iscoroutine(res):
                             await res
                     except Exception as e:
-                        logger.warning("Ошибка при закрытии %s.%s(): %s", svc_name, meth, e)
+                        logger.warning(
+                            "Ошибка при закрытии %s.%s(): %s", svc_name, meth, e
+                        )
                     break
 
         # http session
@@ -193,7 +197,9 @@ class Deps:
 
         # HTTP-сессия
         timeout = aiohttp.ClientTimeout(total=30)
-        self.http_session = aiohttp.ClientSession(timeout=timeout, raise_for_status=False, trust_env=True)
+        self.http_session = aiohttp.ClientSession(
+            timeout=timeout, raise_for_status=False, trust_env=True
+        )
 
         # AI / LLM (лог)
         logger.info(
@@ -207,7 +213,7 @@ class Deps:
 
     async def _init_services(self) -> None:
         # общий пул
-        base_kwargs: Dict[str, Any] = {
+        base_kwargs: dict[str, Any] = {
             "settings": self.settings,
             "cfg": self.settings,
             "config": self.settings,  # иногда ждут имя параметра 'config'
@@ -222,20 +228,21 @@ class Deps:
 
         # Базовые
         self.user_service = await self._make_instance(UserService, base_kwargs)
-        self.ai_content_service = await self._make_instance(AIContentService, base_kwargs)
+        self.ai_content_service = await self._make_instance(
+            AIContentService, base_kwargs
+        )
         self.ai_service = self.ai_content_service  # alias
 
         # Список монет и маркет-данные
         self.coin_list_service = await self._make_instance(CoinListService, base_kwargs)
         self.market_data_service = await self._make_instance(
             MarketDataService,
-            base_kwargs | {"coin_list_service": self.coin_list_service}
+            base_kwargs | {"coin_list_service": self.coin_list_service},
         )
 
         # Цены/новости
         self.price_service = await self._make_instance(
-            PriceService,
-            base_kwargs | {"coin_list_service": self.coin_list_service}
+            PriceService, base_kwargs | {"coin_list_service": self.coin_list_service}
         )
         self.news_service = await self._make_instance(NewsService, base_kwargs)
 
@@ -248,7 +255,7 @@ class Deps:
         ]:
             try:
                 mod = import_module(module_path)
-                cls: Optional[Type[Any]] = getattr(mod, class_name, None)  # type: ignore[assignment]
+                cls: type[Any] | None = getattr(mod, class_name, None)  # type: ignore[assignment]
                 if cls:
                     parser_service = await self._make_instance(cls, base_kwargs)
                     break
@@ -257,24 +264,24 @@ class Deps:
 
         # Майнинг/рынок/ASIC
         self.asic_service = await self._make_instance(
-            AsicService,
-            base_kwargs | {"parser_service": parser_service}
+            AsicService, base_kwargs | {"parser_service": parser_service}
         )
         self.market_service = await self._make_instance(
-            MarketService,
-            base_kwargs | {"asic_service": self.asic_service}
+            MarketService, base_kwargs | {"asic_service": self.asic_service}
         )
 
         self.mining_service = await self._make_instance(
             MiningService,
-            base_kwargs | {"market_data_service": self.market_data_service}
+            base_kwargs | {"market_data_service": self.market_data_service},
         )
 
         # AchievementService: поддержка разных сигнатур и config_path
         achievements_cfg_path = (
             getattr(self.settings, "ACHIEVEMENTS_CONFIG_PATH", None)
             or getattr(self.settings, "achievements_config_path", None)
-            or getattr(getattr(self.settings, "paths", None) or object(), "achievements", None)
+            or getattr(
+                getattr(self.settings, "paths", None) or object(), "achievements", None
+            )
             or "bot/config/achievements.yaml"
         )
 
@@ -304,11 +311,17 @@ class Deps:
 
         ach_kwargs = base_kwargs | {"market_data_service": self.market_data_service}
         if "config" in ach_param_names:
-            ach_kwargs = ach_kwargs | {"config": SimpleNamespace(config_path=str(achievements_cfg_path))}
+            ach_kwargs = ach_kwargs | {
+                "config": SimpleNamespace(config_path=str(achievements_cfg_path))
+            }
         elif "settings" in ach_param_names:
-            ach_kwargs = ach_kwargs | {"settings": _SettingsProxy(self.settings, str(achievements_cfg_path))}
+            ach_kwargs = ach_kwargs | {
+                "settings": _SettingsProxy(self.settings, str(achievements_cfg_path))
+            }
 
-        self.achievement_service = await self._make_instance(AchievementService, ach_kwargs)
+        self.achievement_service = await self._make_instance(
+            AchievementService, ach_kwargs
+        )
 
         # Игровые
         game_extra = base_kwargs | {
@@ -318,14 +331,15 @@ class Deps:
             "mining_service": self.mining_service,
             "achievement_service": self.achievement_service,
         }
-        self.mining_game_service = await self._make_instance(MiningGameService, game_extra)
+        self.mining_game_service = await self._make_instance(
+            MiningGameService, game_extra
+        )
 
         self.event_service = await self._make_instance(EventService, base_kwargs)
 
         # ВАЖНО: QuizService иногда требует ai_content_service
         self.quiz_service = await self._make_instance(
-            QuizService,
-            base_kwargs | {"ai_content_service": self.ai_content_service}
+            QuizService, base_kwargs | {"ai_content_service": self.ai_content_service}
         )
 
         # Доп. этапы
@@ -336,7 +350,9 @@ class Deps:
             except Exception as e:
                 logger.warning("Не удалось загрузить LUA для MarketService: %s", e)
 
-        if self.mining_game_service and hasattr(self.mining_game_service, "load_lua_scripts"):
+        if self.mining_game_service and hasattr(
+            self.mining_game_service, "load_lua_scripts"
+        ):
             try:
                 await self.mining_game_service.load_lua_scripts()  # type: ignore[attr-defined]
                 logger.info("LUA-скрипты для MiningGameService успешно загружены.")
@@ -345,10 +361,13 @@ class Deps:
 
     # --------- фабрики / рефлексия ---------
 
-    async def _make_instance(self, cls: type, candidates: Dict[str, Any]) -> Any:
+    async def _make_instance(self, cls: type, candidates: dict[str, Any]) -> Any:
         name = cls.__name__
         create = getattr(cls, "create", None)
-        if create and (inspect.iscoroutinefunction(create) or inspect.iscoroutinefunction(getattr(create, "__func__", create))):
+        if create and (
+            inspect.iscoroutinefunction(create)
+            or inspect.iscoroutinefunction(getattr(create, "__func__", create))
+        ):
             kwargs = self._filter_kwargs(create, candidates)
             inst = await create(**kwargs)  # type: ignore[misc]
             logger.debug("Создан сервис %s через async create(**kwargs).", name)
@@ -360,7 +379,7 @@ class Deps:
         return inst
 
     @staticmethod
-    def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, Any]:
+    def _filter_kwargs(callable_obj: Any, candidates: dict[str, Any]) -> dict[str, Any]:
         try:
             sig = inspect.signature(callable_obj)
         except (TypeError, ValueError):

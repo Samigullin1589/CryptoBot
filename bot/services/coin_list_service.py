@@ -11,12 +11,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 
@@ -49,29 +47,41 @@ class CoinListService:
         *,
         settings: Any,
         http_session: aiohttp.ClientSession,
-        redis: Optional[Redis] = None,
-        endpoints: Optional[Any] = None,
+        redis: Redis | None = None,
+        endpoints: Any | None = None,
     ) -> None:
         self.settings = settings
         self.http = http_session
         self.redis = redis
-        self.ttl_seconds = getattr(getattr(settings, "coin_list_service", object()), "ttl_seconds", 24 * 3600)
-        self.max_items = getattr(getattr(settings, "coin_list_service", object()), "max_items", 5000)
+        self.ttl_seconds = getattr(
+            getattr(settings, "coin_list_service", object()), "ttl_seconds", 24 * 3600
+        )
+        self.max_items = getattr(
+            getattr(settings, "coin_list_service", object()), "max_items", 5000
+        )
         self.endpoints = _Endpoints(
-            binance_base=getattr(getattr(settings, "endpoints", object()), "binance_base", _Endpoints.binance_base),
-            coingecko_base=getattr(getattr(settings, "endpoints", object()), "coingecko_base", _Endpoints.coingecko_base),
+            binance_base=getattr(
+                getattr(settings, "endpoints", object()),
+                "binance_base",
+                _Endpoints.binance_base,
+            ),
+            coingecko_base=getattr(
+                getattr(settings, "endpoints", object()),
+                "coingecko_base",
+                _Endpoints.coingecko_base,
+            ),
         )
 
     # ----------------------------- public API ---------------------------------
 
-    async def update_and_index(self) -> List[Dict[str, Any]]:
+    async def update_and_index(self) -> list[dict[str, Any]]:
         coins = await self.fetch()
         coins = self._normalize_and_dedup(coins)
         await self.cache(coins)
         await self.reindex(coins)
         return coins
 
-    async def refresh_and_index(self) -> List[Dict[str, Any]]:
+    async def refresh_and_index(self) -> list[dict[str, Any]]:
         return await self.update_and_index()
 
     async def refresh_cache(self) -> None:
@@ -82,11 +92,11 @@ class CoinListService:
     async def warmup(self) -> None:
         await self.refresh_cache()
 
-    async def fetch(self) -> List[Dict[str, Any]]:
+    async def fetch(self) -> list[dict[str, Any]]:
         """
         Try Binance first (fast), then fall back to CoinGecko.
         """
-        coins: List[Dict[str, Any]] = []
+        coins: list[dict[str, Any]] = []
         try:
             b = await self._fetch_from_binance()
             if b:
@@ -104,17 +114,19 @@ class CoinListService:
 
         return coins[: self.max_items]
 
-    async def cache(self, coins: List[Dict[str, Any]]) -> None:
+    async def cache(self, coins: list[dict[str, Any]]) -> None:
         if not self.redis:
             return
         try:
             pipe = self.redis.pipeline()
-            pipe.setex("coin:list", self.ttl_seconds, json.dumps(coins, ensure_ascii=False))
+            pipe.setex(
+                "coin:list", self.ttl_seconds, json.dumps(coins, ensure_ascii=False)
+            )
             await pipe.execute()
         except Exception as e:  # noqa: BLE001
             logger.debug("Failed to cache coin list: %s", e)
 
-    async def reindex(self, coins: Optional[List[Dict[str, Any]]] = None) -> None:
+    async def reindex(self, coins: list[dict[str, Any]] | None = None) -> None:
         if not self.redis:
             return
         if coins is None:
@@ -132,14 +144,16 @@ class CoinListService:
                 cid = str(c.get("id", "")).lower()
                 if not sym:
                     continue
-                pipe.setex(f"coin:index:symbol:{sym}", self.ttl_seconds, cid or sym.lower())
+                pipe.setex(
+                    f"coin:index:symbol:{sym}", self.ttl_seconds, cid or sym.lower()
+                )
                 if cid:
                     pipe.setex(f"coin:index:id:{cid}", self.ttl_seconds, sym)
             await pipe.execute()
         except Exception as e:  # noqa: BLE001
             logger.debug("Failed to build coin indexes: %s", e)
 
-    async def get_all(self) -> Optional[List[Dict[str, Any]]]:
+    async def get_all(self) -> list[dict[str, Any]] | None:
         if not self.redis:
             return None
         try:
@@ -152,7 +166,7 @@ class CoinListService:
 
     # ---------------------------- data sources --------------------------------
 
-    async def _fetch_from_binance(self) -> List[Dict[str, Any]]:
+    async def _fetch_from_binance(self) -> list[dict[str, Any]]:
         url = f"{self.endpoints.binance_base}/api/v3/exchangeInfo"
         async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             if resp.status != 200:
@@ -170,7 +184,7 @@ class CoinListService:
                 uniq[base_u] = {"id": base_u.lower(), "symbol": base_u, "name": base_u}
         return list(uniq.values())
 
-    async def _fetch_from_coingecko(self) -> List[Dict[str, Any]]:
+    async def _fetch_from_coingecko(self) -> list[dict[str, Any]]:
         url = f"{self.endpoints.coingecko_base}/coins/list?include_platform=false"
         async with self.http.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
             if resp.status != 200:
@@ -187,9 +201,9 @@ class CoinListService:
 
     # ------------------------------ helpers -----------------------------------
 
-    def _normalize_and_dedup(self, coins: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _normalize_and_dedup(self, coins: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen = set()
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for c in coins:
             sym = str(c.get("symbol", "")).upper()
             cid = str(c.get("id", "")).lower() or sym.lower()

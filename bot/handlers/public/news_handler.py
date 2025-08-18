@@ -11,11 +11,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 
 router = Router(name="news_public")
 
@@ -23,24 +28,28 @@ PAGE_SIZE = 8
 
 
 def _page_kb(page: int) -> InlineKeyboardMarkup:
-    prev_btn = InlineKeyboardButton(text="⬅️ Назад", callback_data=f"news:page:{max(0, page-1)}")
-    next_btn = InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"news:page:{page+1}")
+    prev_btn = InlineKeyboardButton(
+        text="⬅️ Назад", callback_data=f"news:page:{max(0, page - 1)}"
+    )
+    next_btn = InlineKeyboardButton(
+        text="Вперёд ➡️", callback_data=f"news:page:{page + 1}"
+    )
     refresh_btn = InlineKeyboardButton(text="🔄 Обновить", callback_data="news:refresh")
     return InlineKeyboardMarkup(inline_keyboard=[[prev_btn, next_btn], [refresh_btn]])
 
 
-def _render(items: List[Dict[str, Any]], page: int) -> str:
+def _render(items: list[dict[str, Any]], page: int) -> str:
     start = page * PAGE_SIZE
     chunk = items[start : start + PAGE_SIZE]
     if not chunk:
         return "Пока новостей нет."
-    lines = [f"<b>📰 Крипто-новости — страница {page+1}</b>", ""]
+    lines = [f"<b>📰 Крипто-новости — страница {page + 1}</b>", ""]
     for it in chunk:
         title = (it.get("title") or it.get("headline") or "").strip()
         url = (it.get("url") or it.get("link") or "").strip()
         src = (it.get("src") or it.get("source") or "").strip()
         if url and title:
-            lines.append(f"• <a href=\"{url}\">{title}</a> <i>({src})</i>")
+            lines.append(f'• <a href="{url}">{title}</a> <i>({src})</i>')
         elif title:
             lines.append(f"• {title}")
     lines.append("")
@@ -48,7 +57,7 @@ def _render(items: List[Dict[str, Any]], page: int) -> str:
     return "\n".join(lines)
 
 
-async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
+async def _try_call(obj: Any, method: str, *args, **kwargs) -> Any | None:
     if not obj or not hasattr(obj, method):
         return None
     fn = getattr(obj, method)
@@ -61,7 +70,7 @@ async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
         return None
 
 
-async def _get_items(deps) -> List[Dict[str, Any]]:
+async def _get_items(deps) -> list[dict[str, Any]]:
     svc = getattr(deps, "news_service", None)
     if not svc:
         return []
@@ -77,7 +86,7 @@ async def _get_items(deps) -> List[Dict[str, Any]]:
         data = await _try_call(svc, name, **kw)
         if not data:
             continue
-        items: List[Dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         if isinstance(data, dict):
             data = data.get("items") or data.get("news") or data.get("results") or []
         if isinstance(data, (list, tuple)):

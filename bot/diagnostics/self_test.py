@@ -11,17 +11,20 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import aiohttp
 
 from bot.utils.dependencies import Deps
 
 
-async def _check_redis(deps: Deps) -> Dict[str, Any]:
+async def _check_redis(deps: Deps) -> dict[str, Any]:
     r = getattr(deps, "redis", None)
     if not r:
-        return {"ok": False, "detail": "Redis client is not configured (deps.redis is None)."}
+        return {
+            "ok": False,
+            "detail": "Redis client is not configured (deps.redis is None).",
+        }
     try:
         pong = await r.ping()
         return {"ok": bool(pong), "detail": "PING ok" if pong else "PING failed"}
@@ -29,19 +32,25 @@ async def _check_redis(deps: Deps) -> Dict[str, Any]:
         return {"ok": False, "detail": f"Redis error: {e}"}
 
 
-async def _check_http(deps: Deps) -> Dict[str, Any]:
+async def _check_http(deps: Deps) -> dict[str, Any]:
     sess: aiohttp.ClientSession = getattr(deps, "http_session", None)
     if not sess:
         return {"ok": False, "detail": "HTTP session is not initialized."}
     # Binance ping (fast, anonymous)
     try:
-        async with sess.get("https://api.binance.com/api/v3/ping", timeout=aiohttp.ClientTimeout(total=6)) as resp:
-            return {"ok": resp.status == 200, "detail": f"binance ping status={resp.status}"}
+        async with sess.get(
+            "https://api.binance.com/api/v3/ping",
+            timeout=aiohttp.ClientTimeout(total=6),
+        ) as resp:
+            return {
+                "ok": resp.status == 200,
+                "detail": f"binance ping status={resp.status}",
+            }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "detail": f"HTTP error: {e}"}
 
 
-async def _check_coinlist(deps: Deps) -> Dict[str, Any]:
+async def _check_coinlist(deps: Deps) -> dict[str, Any]:
     svc = getattr(deps, "coin_list_service", None)
     if not svc:
         return {"ok": False, "detail": "CoinListService not available."}
@@ -53,7 +62,7 @@ async def _check_coinlist(deps: Deps) -> Dict[str, Any]:
         return {"ok": False, "detail": f"Coin list error: {e}"}
 
 
-async def _check_price(deps: Deps) -> Dict[str, Any]:
+async def _check_price(deps: Deps) -> dict[str, Any]:
     svc = getattr(deps, "price_service", None)
     if not svc:
         return {"ok": False, "detail": "PriceService not available."}
@@ -64,19 +73,22 @@ async def _check_price(deps: Deps) -> Dict[str, Any]:
         return {"ok": False, "detail": f"Price error: {e}"}
 
 
-async def _check_news(deps: Deps) -> Dict[str, Any]:
+async def _check_news(deps: Deps) -> dict[str, Any]:
     svc = getattr(deps, "news_service", None)
     if not svc:
         return {"ok": False, "detail": "NewsService not available."}
     try:
         items = await svc.get_all_latest_news()
         n = len(items or [])
-        return {"ok": n > 0 or (n == 0), "detail": f"news items={n} (providers may be unauthenticated)"}
+        return {
+            "ok": n > 0 or (n == 0),
+            "detail": f"news items={n} (providers may be unauthenticated)",
+        }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "detail": f"News error: {e}"}
 
 
-async def _check_ai(deps: Deps) -> Dict[str, Any]:
+async def _check_ai(deps: Deps) -> dict[str, Any]:
     svc = getattr(deps, "ai_content_service", None)
     if not svc:
         return {"ok": False, "detail": "AIContentService not available."}
@@ -84,7 +96,10 @@ async def _check_ai(deps: Deps) -> Dict[str, Any]:
         res = await svc.moderate_text("free airdrop 100% profit — join t.me/xxx")
         score = float(res.get("score", 0.0))
         prov = res.get("provider", "unknown")
-        return {"ok": score >= 0.0, "detail": f"moderation score={score:.2f} provider={prov}"}
+        return {
+            "ok": score >= 0.0,
+            "detail": f"moderation score={score:.2f} provider={prov}",
+        }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "detail": f"AI moderation error: {e}"}
 
@@ -94,7 +109,7 @@ def _html_row(name: str, ok: bool, detail: str) -> str:
     return f"<b>{icon} {name}</b> — <code>{detail}</code>"
 
 
-def _aggregate(res: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def _aggregate(res: dict[str, dict[str, Any]]) -> dict[str, Any]:
     all_ok = all(x.get("ok") for x in res.values())
     return {
         "ok": all_ok,
@@ -102,7 +117,7 @@ def _aggregate(res: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-async def run_full(deps: Deps) -> Dict[str, Any]:
+async def run_full(deps: Deps) -> dict[str, Any]:
     """
     Run all checks and return dict with results and ready HTML report.
     """
@@ -122,7 +137,9 @@ async def run_full(deps: Deps) -> Dict[str, Any]:
         f"<i>ts: {int(time.time())}</i>",
         _html_row("Redis", results["redis"]["ok"], results["redis"]["detail"]),
         _html_row("HTTP", results["http"]["ok"], results["http"]["detail"]),
-        _html_row("Coin list", results["coin_list"]["ok"], results["coin_list"]["detail"]),
+        _html_row(
+            "Coin list", results["coin_list"]["ok"], results["coin_list"]["detail"]
+        ),
         _html_row("Price", results["price"]["ok"], results["price"]["detail"]),
         _html_row("News", results["news"]["ok"], results["news"]["detail"]),
         _html_row("AI", results["ai"]["ok"], results["ai"]["detail"]),

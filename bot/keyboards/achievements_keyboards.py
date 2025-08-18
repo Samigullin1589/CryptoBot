@@ -2,11 +2,13 @@
 # Файл: bot/keyboards/achievements_keyboards.py (ВЕРСИЯ "ГЕНИЙ 2.0" - ОКОНЧАТЕЛЬНАЯ)
 # Описание: Клавиатуры для отображения достижений.
 # =================================================================================
-from typing import List
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from bot.utils.models import Achievement
 
-def get_achievements_list_keyboard(all_achievements: List[Achievement], unlocked_ids: set) -> InlineKeyboardMarkup:
+
+def get_achievements_list_keyboard(
+    all_achievements: list[Achievement], unlocked_ids: set
+) -> InlineKeyboardMarkup:
     """Создает клавиатуру со списком всех достижений и отмечает разблокированные."""
     buttons = []
     for ach in sorted(all_achievements, key=lambda x: x.id):

@@ -1,8 +1,7 @@
 # bot/services/antispam_learning.py
 from __future__ import annotations
 
-import asyncio
-from typing import Iterable, List, Tuple, Optional
+from collections.abc import Iterable
 from dataclasses import dataclass
 from rapidfuzz import fuzz
 
@@ -26,14 +25,19 @@ class AntiSpamLearning:
     can score new texts against that memory using RapidFuzz.
     """
 
-    def __init__(self, redis: "Redis", ns: str = "antispam"):
+    def __init__(self, redis: Redis, ns: str = "antispam"):
         self.r = redis
         self.ns = ns
 
     # Redis keys
-    def k_phrases(self) -> str: return f"{self.ns}:phrases"       # ZSET phrase -> weight
-    def k_domains(self) -> str:  return f"{self.ns}:domains"       # ZSET domain -> weight
-    def k_samples(self) -> str:  return f"{self.ns}:samples"       # LIST latest N full texts
+    def k_phrases(self) -> str:
+        return f"{self.ns}:phrases"  # ZSET phrase -> weight
+
+    def k_domains(self) -> str:
+        return f"{self.ns}:domains"  # ZSET domain -> weight
+
+    def k_samples(self) -> str:
+        return f"{self.ns}:samples"  # LIST latest N full texts
 
     async def add_feedback(
         self,
@@ -56,7 +60,7 @@ class AntiSpamLearning:
 
         # Additionally add 2-grams (simple join of adjacent tokens)
         for i in range(len(tokens) - 1):
-            two = f"{tokens[i]} {tokens[i+1]}"
+            two = f"{tokens[i]} {tokens[i + 1]}"
             if 8 <= len(two) <= 64:
                 phrases.add(two)
 
@@ -82,7 +86,7 @@ class AntiSpamLearning:
         text: str,
         min_ratio: int = 85,
         top_k: int = 1000,
-    ) -> Tuple[int, Optional[ScoredPhrase]]:
+    ) -> tuple[int, ScoredPhrase | None]:
         """
         Compare text against memory phrases using rapidfuzz ratio.
         Returns (best_ratio, best_phrase) where best_phrase may be None.
@@ -92,9 +96,11 @@ class AntiSpamLearning:
             return 0, None
 
         # Fetch top phrases from Redis
-        phrases = await self.r.zrevrange(self.k_phrases(), 0, top_k - 1, withscores=False)  # type: ignore[arg-type]
+        phrases = await self.r.zrevrange(
+            self.k_phrases(), 0, top_k - 1, withscores=False
+        )  # type: ignore[arg-type]
         best_ratio = 0
-        best_phrase: Optional[ScoredPhrase] = None
+        best_phrase: ScoredPhrase | None = None
 
         for p in phrases:
             p = p.decode("utf-8") if isinstance(p, (bytes, bytearray)) else str(p)
