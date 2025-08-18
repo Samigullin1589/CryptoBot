@@ -8,14 +8,15 @@
 import json
 import logging
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import redis.asyncio as redis
+import yaml
 
 from bot.config.settings import AchievementServiceConfig
 from bot.services.market_data_service import MarketDataService
-from bot.utils.models import Achievement
 from bot.utils.keys import KeyFactory
+from bot.utils.models import Achievement
 
 logger = logging.getLogger(__name__)
 
@@ -31,24 +32,32 @@ class AchievementService:
         self.dynamic_achievements: Dict[str, Achievement] = {}
         self._load_achievements_from_config(Path(self.config.config_path))
 
-    def _load_achievements_from_config(self, config_path: Path):
+    def _load_achievements_from_config(self, config_path: Path) -> None:
         """Загружает и разделяет достижения на статические и динамические."""
         try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            with open(config_path, "r", encoding="utf-8") as f:
+                if config_path.suffix in {".yaml", ".yml"}:
+                    data = yaml.safe_load(f) or {}
+                else:
+                    data = json.load(f)
+
             for ach_data in data.get("achievements", []):
-                if 'type' not in ach_data:
-                    ach_data['type'] = 'static'
+                ach_data.setdefault("type", "static")
                 achievement = Achievement(**ach_data)
                 if achievement.type == "static":
                     self.static_achievements[achievement.id] = achievement
                 elif achievement.type == "dynamic":
                     self.dynamic_achievements[achievement.id] = achievement
-            logger.info(f"Загружено {len(self.static_achievements)} статических и {len(self.dynamic_achievements)} динамических достижений.")
+
+            logger.info(
+                "Загружено %s статических и %s динамических достижений.",
+                len(self.static_achievements),
+                len(self.dynamic_achievements),
+            )
         except FileNotFoundError:
-            logger.error(f"Файл конфигурации достижений не найден: {config_path}")
+            logger.error("Файл конфигурации достижений не найден: %s", config_path)
         except Exception as e:
-            logger.error(f"Критическая ошибка при загрузке достижений: {e}", exc_info=True)
+            logger.error("Критическая ошибка при загрузке достижений: %s", e, exc_info=True)
 
     async def get_all_achievements(self) -> List[Achievement]:
         """Возвращает полный список всех достижений."""

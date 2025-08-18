@@ -175,10 +175,11 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
 # --------- Вспомогательная фабрика (безопасное создание по сигнатуре) ---------
 
 def _filter_kwargs(callable_obj: Any, candidates: dict[str, Any]) -> dict[str, Any]:
+    target = getattr(callable_obj, "__init__", callable_obj) if inspect.isclass(callable_obj) else callable_obj
     try:
-        sig = inspect.signature(callable_obj)
+        sig = inspect.signature(target)
     except (TypeError, ValueError):
-        sig = inspect.signature(getattr(callable_obj, "__init__", callable_obj))
+        return {}
     supported = {
         p.name
         for p in sig.parameters.values()
@@ -217,8 +218,9 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     base_kwargs: dict[str, Any] = {
         "bot": bot,
         "settings": settings,
-        "config": settings,         # если сервис ждёт параметр 'config'
+        "config": settings,  # если сервис ждёт параметр 'config'
         "redis": deps.redis,
+        "redis_client": deps.redis,
         "http_session": deps.http_session,
         "user_service": deps.user_service,
         "admin_service": deps.admin_service,
