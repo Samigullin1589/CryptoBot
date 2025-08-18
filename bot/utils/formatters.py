@@ -4,7 +4,7 @@
 # ИСПРАВЛЕНИЕ: Полностью переписан без заглушек. Обновлены все функции
 #              для работы с новыми структурами данных.
 # =================================================================================
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime, timezone
 
 from bot.utils.models import AsicMiner, NewsArticle, Coin, CalculationResult

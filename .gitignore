@@ -29,6 +29,7 @@ __pycache__/
 .env
 *.env
 .env.*
+!.env.example
 config.ini
 settings.local.py
 secrets.toml

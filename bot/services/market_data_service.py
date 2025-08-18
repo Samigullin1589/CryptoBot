@@ -8,7 +8,6 @@ import logging
 import json
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict, Any, Literal
-from math import ceil
 
 import aiohttp
 from redis.asyncio import Redis
@@ -101,7 +100,8 @@ class MarketDataService:
                 id_to_symbol_map[symbol] = cid
                 symbols_to_fetch.append(symbol)
         
-        if not symbols_to_fetch: return {cid: None for cid in coin_ids}
+        if not symbols_to_fetch:
+            return {cid: None for cid in coin_ids}
         
         params = {'fsyms': ','.join(symbols_to_fetch), 'tsyms': 'USD'}
         data = await make_request(self.http_session, str(url), params=params, headers=headers)

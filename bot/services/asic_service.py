@@ -71,11 +71,13 @@ class AsicService:
     def _intelligent_merge(self, sources: List[List[AsicMiner]]) -> Dict[str, AsicMiner]:
         master_asics: Dict[str, AsicMiner] = {}
         for source_list in sources:
-            if not source_list: continue
+            if not source_list:
+                continue
             master_keys = list(master_asics.keys())
             for asic_to_merge in source_list:
                 normalized_name = normalize_asic_name(asic_to_merge.name)
-                if not normalized_name: continue
+                if not normalized_name:
+                    continue
                 best_match = process.extractOne(
                     normalized_name, master_keys, scorer=fuzz.WRatio, score_cutoff=self.config.merge_score_cutoff
                 ) if master_keys else None
@@ -94,7 +96,8 @@ class AsicService:
 
     async def _enrich_asics_with_specs(self, asics: List[AsicMiner]) -> List[AsicMiner]:
         specs_db = await self._get_hardware_specs_from_cache()
-        if not specs_db: return asics
+        if not specs_db:
+            return asics
         specs_keys = list(specs_db.keys())
         for asic in asics:
             if not asic.power or not asic.algorithm:
@@ -138,7 +141,8 @@ class AsicService:
             pipe.delete(self.keys.asics_sorted_set())
             sorted_set_data = {}
             for asic in final_asic_list:
-                if asic.profitability is None: continue
+                if asic.profitability is None:
+                    continue
                 asic_key = self.keys.asic_hash(normalize_asic_name(asic.name))
                 pipe.hset(asic_key, mapping=asic.model_dump(mode='json', exclude_none=True, exclude={'net_profit', 'gross_profit', 'electricity_cost_per_day'}))
                 sorted_set_data[asic_key] = asic.profitability
@@ -164,7 +168,8 @@ class AsicService:
                 await asyncio.sleep(5)
 
         asic_keys = await self.redis.zrevrange(self.keys.asics_sorted_set(), 0, count - 1)
-        if not asic_keys: return [], None
+        if not asic_keys:
+            return [], None
 
         async with self.redis.pipeline() as pipe:
             for key in asic_keys:
@@ -173,7 +178,8 @@ class AsicService:
 
         asics_with_profit = []
         for data in results:
-            if not data: continue
+            if not data:
+                continue
             asic = AsicMiner.model_validate(data)
             net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability or 0.0, asic.power or 0, electricity_cost)
             asic.net_profit = net_profit
@@ -191,7 +197,8 @@ class AsicService:
     async def find_asic_by_normalized_name(self, normalized_name: str, electricity_cost: float) -> Optional[AsicMiner]:
         """Находит ASIC по его нормализованному имени и рассчитывает прибыль."""
         asic_data = await self.redis.hgetall(self.keys.asic_hash(normalized_name))
-        if not asic_data: return None
+        if not asic_data:
+            return None
         
         asic = AsicMiner.model_validate(asic_data)
         net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability or 0.0, asic.power or 0, electricity_cost)

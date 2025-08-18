@@ -8,7 +8,7 @@
 import json
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 import redis.asyncio as redis
 from bs4 import BeautifulSoup
@@ -39,11 +39,18 @@ class CryptoCenterService:
         coins_raw = await self.redis.smembers(f"{profile_key}:coins")
         return {"tags": [t for t in tags_raw], "interacted_coins": [c for c in coins_raw]}
 
-    async def update_user_interest(self, user_id: int, tags: List[str] = None, coins: List[str] = None):
+    async def update_user_interest(
+        self,
+        user_id: int,
+        tags: List[str] | None = None,
+        coins: List[str] | None = None,
+    ) -> None:
         profile_key = self.keys.user_interest_profile(user_id)
         async with self.redis.pipeline(transaction=True) as pipe:
-            if tags: pipe.sadd(f"{profile_key}:tags", *tags)
-            if coins: pipe.sadd(f"{profile_key}:coins", *coins)
+            if tags:
+                pipe.sadd(f"{profile_key}:tags", *tags)
+            if coins:
+                pipe.sadd(f"{profile_key}:coins", *coins)
             await pipe.execute()
 
     async def _generate_alpha(self, user_id: int, alpha_type: str, json_schema: Dict) -> List[Dict[str, Any]]:

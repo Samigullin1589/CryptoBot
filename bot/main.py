@@ -17,7 +17,7 @@ import inspect
 import logging
 import signal
 from importlib import import_module
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Type
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -55,7 +55,7 @@ def setup_logging() -> None:
 # ----------------------------- Команды бота -----------------------------------
 
 async def setup_commands(bot: Bot) -> None:
-    commands: List[BotCommand] = [
+    commands: list[BotCommand] = [
         BotCommand(command="start", description="Запуск"),
         BotCommand(command="help", description="Справка"),
         BotCommand(command="menu", description="Главное меню"),
@@ -71,16 +71,16 @@ async def setup_commands(bot: Bot) -> None:
 
 # ------------------------ Регистрация роутеров --------------------------------
 
-def _collect_routers(module) -> List[Router]:
+def _collect_routers(module: Any) -> list[Router]:
     """Ищет все объекты Router в модуле (router, *_router и т.п.)."""
-    routers: List[Router] = []
+    routers: list[Router] = []
     for _, obj in vars(module).items():
         if isinstance(obj, Router):
             routers.append(obj)
     return routers
 
 
-def _import_optional(module_path: str) -> Optional[object]:
+def _import_optional(module_path: str) -> object | None:
     try:
         return import_module(module_path)
     except Exception as e:  # noqa: BLE001
@@ -93,7 +93,7 @@ def register_routers(dp: Dispatcher) -> None:
     Импортирует и регистрирует все известные роутеры проекта.
     Если какой-то модуль отсутствует — просто пропускаем (без заглушек).
     """
-    module_paths: List[str] = [
+    module_paths: list[str] = [
         # --- public ---
         "bot.handlers.public.start_handler",
         "bot.handlers.public.help_handler",
@@ -174,7 +174,7 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
 
 # --------- Вспомогательная фабрика (безопасное создание по сигнатуре) ---------
 
-def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, Any]:
+def _filter_kwargs(callable_obj: Any, candidates: dict[str, Any]) -> dict[str, Any]:
     try:
         sig = inspect.signature(callable_obj)
     except (TypeError, ValueError):
@@ -187,7 +187,7 @@ def _filter_kwargs(callable_obj: Any, candidates: Dict[str, Any]) -> Dict[str, A
     return {k: v for k, v in candidates.items() if k in supported}
 
 
-async def _safe_make_instance_async(cls: Type, candidates: Dict[str, Any]) -> Any:
+async def _safe_make_instance_async(cls: Type, candidates: dict[str, Any]) -> Any:
     """
     Универсальная безопасная фабрика:
       • если есть create(...): вызываем, await если нужно
@@ -214,7 +214,7 @@ async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
     Полностью асинхронно и безопасно.
     """
     # Сбор общих кандидатов для конструкторов
-    base_kwargs: Dict[str, Any] = {
+    base_kwargs: dict[str, Any] = {
         "bot": bot,
         "settings": settings,
         "config": settings,         # если сервис ждёт параметр 'config'

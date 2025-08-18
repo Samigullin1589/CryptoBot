@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import aiohttp
 from redis.asyncio import Redis
@@ -40,13 +40,13 @@ class MarketService:
         self.redis = redis
         self.asic_service = asic_service
         self._lua_loaded: bool = False
-        self._lua_sha_ping: Optional[str] = None
+        self._lua_sha_ping: str | None = None
 
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
 
-    async def get_market_overview(self, *, top_n: int = 10) -> Dict[str, Any]:
+    async def get_market_overview(self, *, top_n: int = 10) -> dict[str, Any]:
         """
         Возвращает обобщённую сводку рынка для UI:
           - btc_price_usd
@@ -71,7 +71,7 @@ class MarketService:
             "halving": halving,
         }
 
-    async def get_top_asics(self, electricity_cost_usd: float, count: int = 20) -> Tuple[List[Dict[str, Any]], int]:
+    async def get_top_asics(self, electricity_cost_usd: float, count: int = 20) -> tuple[list[dict[str, Any]], int]:
         """
         Прокси к AsicService: возвращает топ ASIC по доходности при заданной цене электричества.
         """
@@ -84,7 +84,7 @@ class MarketService:
             logger.error("get_top_asics() failed: %s", e, exc_info=True)
             return [], 0
 
-    async def get_top_coins_by_market_cap(self, *, limit: int = 10) -> Optional[List[Dict[str, Any]]]:
+    async def get_top_coins_by_market_cap(self, *, limit: int = 10) -> list[dict[str, Any]] | None:
         """
         Топ-коины по капе (CoinGecko public или Pro — если дан ключ).
         """
@@ -121,7 +121,7 @@ class MarketService:
             logger.error("get_top_coins_by_market_cap() error: %s", e, exc_info=True)
         return None
 
-    async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
+    async def get_prices(self, coin_ids: list[str]) -> dict[str, float | None]:
         """
         Простая утилита цен через CoinGecko (fallback-friendly).
         Возвращает {id: usd_price|None}
@@ -135,7 +135,7 @@ class MarketService:
         params = {"ids": ",".join(coin_ids), "vs_currencies": "usd"}
         try:
             data = await make_request(self.session, str(url), params=params, headers=headers)
-            res = {cid: None for cid in coin_ids}
+            res: dict[str, float | None] = {cid: None for cid in coin_ids}
             if isinstance(data, dict):
                 for cid in coin_ids:
                     v = data.get(cid) or {}
@@ -145,7 +145,7 @@ class MarketService:
             logger.error("get_prices() error: %s", e, exc_info=True)
             return {cid: None for cid in coin_ids}
 
-    async def get_btc_network_status(self) -> Optional[Dict[str, Any]]:
+    async def get_btc_network_status(self) -> dict[str, Any] | None:
         """
         Хешрейт/ретаргет из публичных эндпоинтов mempool.space и blockchain.info
         """
@@ -179,7 +179,7 @@ class MarketService:
             logger.error("get_btc_network_status() error: %s", e, exc_info=True)
             return None
 
-    async def get_halving_info(self) -> Optional[Dict[str, Any]]:
+    async def get_halving_info(self) -> dict[str, Any] | None:
         """
         Псевдо-дубликация логики MarketDataService, чтобы не плодить хард-зависимость.
         """

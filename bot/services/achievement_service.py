@@ -61,7 +61,8 @@ class AchievementService:
 
     async def _unlock_achievement(self, user_id: int, achievement: Achievement, context: Dict = None) -> Optional[Achievement]:
         """Атомарно выдает достижение, форматируя описание с контекстом, и начисляет награду."""
-        if context is None: context = {}
+        if context is None:
+            context = {}
         
         # ИСПРАВЛЕНО: instance_id теперь включает контекст (ID монеты) для уникальности
         instance_id = f"{achievement.id}:{context.get('coin_id', 'global')}"
@@ -116,7 +117,8 @@ class AchievementService:
 
     async def process_static_event(self, user_id: int, event_name: str, event_data: Dict[str, Any] = None) -> Optional[Achievement]:
         """Обрабатывает статические события, такие как завершение сессии."""
-        if event_data is None: event_data = {}
+        if event_data is None:
+            event_data = {}
         
         counters_key = self.keys.user_event_counters(user_id)
         current_count = await self.redis.hincrby(counters_key, f"{event_name}_count", 1)

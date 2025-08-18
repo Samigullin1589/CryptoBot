@@ -43,12 +43,18 @@ class MiningService:
         value = float(match.group(1))
         unit = match.group(2)
         
-        if unit == 'kh/s': return value / 1_000_000_000
-        if unit == 'mh/s': return value / 1_000_000
-        if unit == 'gh/s': return value / 1_000
-        if unit == 'th/s': return value
-        if unit == 'ph/s': return value * 1_000
-        if unit == 'eh/s': return value * 1_000_000
+        if unit == 'kh/s':
+            return value / 1_000_000_000
+        if unit == 'mh/s':
+            return value / 1_000_000
+        if unit == 'gh/s':
+            return value / 1_000
+        if unit == 'th/s':
+            return value
+        if unit == 'ph/s':
+            return value * 1_000
+        if unit == 'eh/s':
+            return value * 1_000_000
             
         return None
 

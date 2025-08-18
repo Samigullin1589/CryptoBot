@@ -41,7 +41,7 @@ import redis.asyncio as redis
 from aiogram import Bot
 from aiogram import types as tg
 
-from bot.config.settings import settings, Settings
+from bot.config.settings import Settings
 from bot.services.ai_content_service import AIContentService
 
 try:

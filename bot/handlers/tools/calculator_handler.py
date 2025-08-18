@@ -4,7 +4,6 @@
 # ИСПРАВЛЕНИЕ: Устранена жесткая привязка к курсу RUB/USD.
 # ===============================================================
 import logging
-from typing import Union
 from aiogram import F, Router
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -42,7 +41,6 @@ async def cancel_calculator(call: CallbackQuery, state: FSMContext):
     if current_state is None:
         return await call.answer()
     await state.clear()
-    from bot.utils.ui_helpers import show_main_menu_from_callback
     await call.message.edit_text("✅ Расчет отменен.")
     await call.answer()
 
@@ -66,7 +64,8 @@ async def process_currency_selection(call: CallbackQuery, callback_data: Calcula
 async def process_electricity_cost(message: Message, state: FSMContext, deps: Deps):
     try:
         cost = float(message.text.replace(',', '.').strip())
-        if cost < 0: raise ValueError
+        if cost < 0:
+            raise ValueError
     except (ValueError, TypeError):
         await message.answer("Пожалуйста, введите корректное число (например, <b>0.05</b> или <b>4.5</b>).")
         return
@@ -127,7 +126,8 @@ async def process_asic_selection_item(call: CallbackQuery, callback_data: Calcul
 async def process_pool_commission(message: Message, state: FSMContext, deps: Deps):
     try:
         commission_percent = float(message.text.replace(',', '.').strip())
-        if not (0 <= commission_percent < 100): raise ValueError
+        if not (0 <= commission_percent < 100):
+            raise ValueError
     except (ValueError, TypeError):
         await message.answer("❌ Неверный формат комиссии. Введите число (например, <code>1.5</code>).")
         return
@@ -147,9 +147,9 @@ async def process_pool_commission(message: Message, state: FSMContext, deps: Dep
     result = await deps.mining_service.calculate_btc_profitability(calc_input)
     
     if not result:
-         await msg.edit_text("❌ Не удалось получить данные для расчета. Попробуйте позже.")
-         await state.clear()
-         return
+        await msg.edit_text("❌ Не удалось получить данные для расчета. Попробуйте позже.")
+        await state.clear()
+        return
 
     result_text = format_calculation_result(result)
     await msg.edit_text(result_text, reply_markup=get_calculator_result_keyboard(), disable_web_page_preview=True)

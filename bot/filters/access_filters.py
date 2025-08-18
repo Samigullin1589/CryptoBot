@@ -6,7 +6,7 @@
 # =================================================================================
 
 import logging
-from typing import Union, Dict, Any
+from typing import Any, Union
 
 from aiogram.filters import BaseFilter
 from aiogram.types import Message, CallbackQuery

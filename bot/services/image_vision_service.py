@@ -1,9 +1,8 @@
 # bot/services/image_vision_service.py
 from __future__ import annotations
 
-import base64
 from io import BytesIO
-from typing import Optional, Tuple, Dict, Any
+from typing import Tuple, Dict, Any
 
 from PIL import Image
 

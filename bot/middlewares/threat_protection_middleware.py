@@ -1,12 +1,11 @@
 # bot/middlewares/threat_protection_middleware.py
 from __future__ import annotations
 
-import asyncio
 import contextlib
 from typing import Any, Callable, Dict
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, ContentType
+from aiogram.types import Message
 
 class ThreatProtectionMiddleware(BaseMiddleware):
     """

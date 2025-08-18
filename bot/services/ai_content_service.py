@@ -21,7 +21,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 import backoff
 
@@ -138,8 +138,7 @@ class AIContentService:
     def _extract_text(resp: Any) -> str:
         return (getattr(resp, "text", None) or "").strip()
 
-    @staticmethod
-    def _format_history(history: Optional[List[Any]]) -> List[Dict[str, str]]:
+    def _format_history(self, history: Optional[List[Any]]) -> List[Dict[str, str]]:
         """
         Normalize to OpenAI-compatible messages: [{role, content}, ...]
         Supports:

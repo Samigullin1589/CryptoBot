@@ -1,8 +1,7 @@
 # bot/services/antispam_learning.py
 from __future__ import annotations
 
-import asyncio
-from typing import Iterable, List, Tuple, Optional
+from typing import Iterable, Optional, Tuple
 from dataclasses import dataclass
 from rapidfuzz import fuzz
 

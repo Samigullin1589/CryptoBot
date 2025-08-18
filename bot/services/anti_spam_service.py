@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import hashlib
 import html
 import io
@@ -346,7 +346,6 @@ class AntiSpamService:
 
 # --- helpers -----------------------------------------------------------------
 
-import contextlib  # keep at end to avoid circular import in some setups
 
 def hamming64(a: int, b: int) -> int:
     return (a ^ b).bit_count()

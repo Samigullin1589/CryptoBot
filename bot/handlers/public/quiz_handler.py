@@ -6,8 +6,6 @@
 import logging
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-
 from bot.utils.dependencies import Deps
 from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
 from bot.keyboards.callback_factories import MenuCallback, QuizCallback

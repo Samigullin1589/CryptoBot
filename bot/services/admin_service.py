@@ -16,7 +16,7 @@ from bot.config.settings import Settings
 from bot.utils.models import UserRole
 from bot.keyboards.admin_keyboards import (
     get_admin_menu_keyboard, get_stats_menu_keyboard,
-    get_system_actions_keyboard, get_back_to_admin_menu_keyboard
+    get_back_to_admin_menu_keyboard
 )
 from bot.utils.keys import KeyFactory
 
@@ -155,7 +155,7 @@ class AdminService:
         cursor = '0'
         deleted_count = 0
         while cursor != 0:
-            cursor, keys = await self.redis.scan(cursor, match=f"asic:*", count=1000)
+            cursor, keys = await self.redis.scan(cursor, match="asic:*", count=1000)
             if keys:
                 deleted_count += await self.redis.delete(*keys)
         

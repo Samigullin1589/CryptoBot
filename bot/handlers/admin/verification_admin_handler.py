@@ -62,7 +62,8 @@ async def handle_deposit_command(message: Message, deps: Deps):
 
     try:
         amount = float(amount_arg)
-        if amount < 0: raise ValueError
+        if amount < 0:
+            raise ValueError
     except (ValueError, TypeError):
         await message.reply("❌ Сумма депозита должна быть положительным числом.")
         return

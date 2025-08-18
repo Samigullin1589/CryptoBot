@@ -36,9 +36,12 @@ class UserService:
         
         try:
             # Преобразуем строковые значения к их правильным типам
-            if 'id' in user_data_dict: user_data_dict['id'] = int(user_data_dict['id'])
-            if 'role' in user_data_dict: user_data_dict['role'] = UserRole(int(user_data_dict['role']))
-            if 'electricity_cost' in user_data_dict: user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
+            if 'id' in user_data_dict:
+                user_data_dict['id'] = int(user_data_dict['id'])
+            if 'role' in user_data_dict:
+                user_data_dict['role'] = UserRole(int(user_data_dict['role']))
+            if 'electricity_cost' in user_data_dict:
+                user_data_dict['electricity_cost'] = float(user_data_dict['electricity_cost'])
             if 'verification_data' in user_data_dict and isinstance(user_data_dict['verification_data'], str):
                 user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
             

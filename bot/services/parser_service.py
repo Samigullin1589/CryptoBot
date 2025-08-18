@@ -91,7 +91,8 @@ class ParserService:
         logger.info("Парсер: Запрашиваю данные с AsicMinerValue...")
         try:
             html_content = await self._fetch(str(self.config.asicminervalue_url), response_type='text')
-            if not html_content: return []
+            if not html_content:
+                return []
 
             soup = BeautifulSoup(html_content, 'lxml')
             table = soup.find('table', class_='table-hover')
@@ -107,10 +108,12 @@ class ParserService:
             for row in table_body.find_all('tr'):
                 try:
                     cols = row.find_all('td')
-                    if len(cols) < 5: continue
-                    
+                    if len(cols) < 5:
+                        continue
+
                     name_tag = cols[1].find('a')
-                    if not name_tag: continue
+                    if not name_tag:
+                        continue
                     
                     name = name_tag.text.strip()
                     profit_text = cols[3].text.strip().replace('$', '').replace('/day', '').strip()

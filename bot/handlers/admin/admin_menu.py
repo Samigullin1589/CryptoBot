@@ -11,7 +11,7 @@ from aiogram.types import Message, CallbackQuery
 
 from bot.filters.access_filters import PrivilegeFilter, UserRole
 from bot.states.admin_states import AdminStates
-from bot.texts.admin_texts import ADMIN_MENU_TEXT, SUPER_ADMIN_ONLY_TEXT
+from bot.texts.admin_texts import SUPER_ADMIN_ONLY_TEXT
 from bot.keyboards.admin_keyboards import get_stats_menu_keyboard, get_back_to_admin_menu_keyboard, get_system_actions_keyboard
 from bot.keyboards.callback_factories import AdminCallback
 from bot.utils.dependencies import Deps

@@ -20,7 +20,7 @@ import json
 import logging
 import time
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Iterable, Mapping, Optional, Tuple
 
 import redis.asyncio as redis
 from aiogram.types import User as TgUser

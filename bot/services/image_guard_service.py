@@ -9,7 +9,7 @@ import contextlib
 import io
 import re
 from dataclasses import dataclass
-from typing import Optional, Tuple, Iterable, Any
+from typing import Optional, Tuple, Iterable
 
 from PIL import Image
 import numpy as np

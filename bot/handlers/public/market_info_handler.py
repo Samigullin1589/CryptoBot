@@ -25,7 +25,8 @@ async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMCon
 
     try:
         data = await deps.market_data_service.get_fear_and_greed_index()
-        if not data: raise ValueError("API индекса страха и жадности не вернул данных.")
+        if not data:
+            raise ValueError("API индекса страха и жадности не вернул данных.")
 
         value = int(data['value'])
         classification = data['value_classification']
@@ -52,7 +53,8 @@ async def handle_halving_info(call: CallbackQuery, deps: Deps, state: FSMContext
     await call.answer("Загружаю данные о халвинге...")
     try:
         data = await deps.market_data_service.get_halving_info()
-        if not data: raise ValueError("API для халвинга не вернул валидных данных.")
+        if not data:
+            raise ValueError("API для халвинга не вернул валидных данных.")
 
         text = format_halving_info(data)
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
@@ -67,7 +69,8 @@ async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
     try:
         # ИСПРАВЛЕНО: Вызов правильного метода
         data = await deps.market_data_service.get_btc_network_status()
-        if not data: raise ValueError("Сервис не вернул данные о статусе сети BTC.")
+        if not data:
+            raise ValueError("Сервис не вернул данные о статусе сети BTC.")
 
         text = format_network_status(data)
         hashrate_ehs = data.get('hashrate_ehs', 0.0)

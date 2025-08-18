@@ -1,10 +1,7 @@
 # bot/services/advanced_security_service.py
 from __future__ import annotations
 
-import asyncio
-import ipaddress
 import re
-import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
@@ -140,7 +137,6 @@ class AdvancedSecurityService:
                 score += 60
 
         # 6) Decide action
-        threshold = getattr(getattr(self.settings, "threat_filter", object()), "toxicity_threshold", 0.75)
         # convert to 0..1 scale roughly
         prob = min(1.0, max(0.0, score / 100.0))
 

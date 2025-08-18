@@ -67,6 +67,6 @@ async def make_request(
     except asyncio.TimeoutError:
         logger.error(f"Request to {url} timed out after {timeout} seconds.")
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("An unexpected error occurred in make_request for URL: %s", url)
         return None

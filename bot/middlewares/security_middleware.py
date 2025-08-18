@@ -11,9 +11,9 @@
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
