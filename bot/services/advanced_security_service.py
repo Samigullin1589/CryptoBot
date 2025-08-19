@@ -1,174 +1,203 @@
 # bot/services/advanced_security_service.py
-from __future__ import annotations
+# Дата обновления: 19.08.2025
+# Версия: 2.0.0
+# Описание: Модульный сервис для проактивной защиты от спама и нежелательного контента.
 
 import re
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-try:
-    from redis.asyncio import Redis
-except Exception:  # pragma: no cover
-    Redis = object  # type: ignore
+from aiogram.types import Message
+from loguru import logger
+from redis.asyncio import Redis
 
-URL_RE = re.compile(r"(https?://[^\s]+)", re.IGNORECASE)
+from bot.config.settings import settings
+from bot.services.antispam_learning import AntiSpamLearning
+from bot.services.image_vision_service import ImageVisionService
+from bot.utils.dependencies import get_bot_instance, get_redis_client
+from bot.utils.keys import KeyFactory
+from bot.utils.models import SecurityVerdict
+
+# Скомпилированные регулярные выражения для производительности
+URL_RE = re.compile(r"https?://[^\s/$.?#].[^\s]*", re.IGNORECASE)
 INVITE_RE = re.compile(r"(t\.me/joinchat/|t\.me/\+|discord\.gg/|wa\.me/)", re.IGNORECASE)
-
-@dataclass
-class Verdict:
-    action: Optional[str] = None  # None|delete|warn|mute|ban
-    reason: str = ""
-    minutes: int = 60
 
 
 class AdvancedSecurityService:
     """
-    Opinionated anti-spam engine that uses Redis for counters and memory.
-    Features:
-      - Heuristic text & link checks
-      - Self-learning memory (via AntiSpamLearning)
-      - Optional image analysis (via ImageVisionService)
-      - Autoban on repeated offenses within a window
+    Эвристический и самообучающийся движок для борьбы со спамом.
+    Анализирует сообщения по нескольким критериям, выставляет оценку угрозы
+    и выносит вердикт о необходимом действии.
     """
 
-    def __init__(
-        self,
-        redis: "Redis",
-        learning,
-        image_vision=None,
-        settings=None,
-        ns: str = "sec",
-    ) -> None:
-        self.r = redis
-        self.learning = learning
-        self.vision = image_vision
-        self.settings = settings
-        self.ns = ns
+    def __init__(self, learning_service: AntiSpamLearning, vision_service: Optional[ImageVisionService] = None):
+        """
+        Инициализирует сервис безопасности.
 
-    # Redis keys
-    def k_user_strikes(self, chat_id: int, user_id: int) -> str: return f"{self.ns}:strikes:{chat_id}:{user_id}"
+        :param learning_service: Сервис для работы с базой знаний о спаме.
+        :param vision_service: Опциональный сервис для анализа изображений.
+        """
+        self.redis: Redis = get_redis_client()
+        self.learning = learning_service
+        self.vision = vision_service
+        self.keys = KeyFactory
+        self.config = settings.THREAT_FILTER
+        logger.info("Сервис AdvancedSecurityService инициализирован.")
 
-    def _cfg(self, name: str, default: Any) -> Any:
-        tf = getattr(getattr(self.settings, "threat_filter", None), name, None)
-        return tf if tf is not None else default
-
-    async def _extract_domains(self, text: str) -> list[str]:
-        hosts: list[str] = []
-        for m in URL_RE.finditer(text or ""):
+    async def _extract_domains(self, text: str) -> List[str]:
+        """Извлекает все доменные имена из текста сообщения."""
+        if not text:
+            return []
+        
+        hosts: set[str] = set()
+        for match in URL_RE.finditer(text):
             try:
-                host = urlparse(m.group(1)).hostname or ""
-                if not host:
-                    continue
-                # Ignore obvious safe hosts (Telegram itself, youtube, etc.) – config later
-                hosts.append(host.lower())
+                host = urlparse(match.group(0)).hostname
+                if host and host.lower() not in self.config.SAFE_DOMAINS:
+                    hosts.add(host.lower())
             except Exception:
+                # Игнорируем некорректные URL
                 continue
-        return hosts
+        return list(hosts)
 
-    def _text_suspicions(self, text: str) -> int:
+    def _inspect_text_heuristics(self, text: str) -> Tuple[int, List[str]]:
+        """Проверяет текст на основе эвристик: стоп-слова, инвайт-ссылки, длина."""
         score = 0
-        t = (text or "").lower()
-        if any(x in t for x in ("быстрый заработок", "доход", "ставки", "казино", "подписывайся", "заработай", "успей")):
-            score += 60
-        if INVITE_RE.search(t):
-            score += 30
-        if len(t) > 350:
-            score += 10
-        return score
+        reasons = []
+        text_lower = (text or "").lower()
 
-    async def _image_verdict(self, message) -> Optional[Tuple[bool, str]]:
-        if not self.vision:
-            return None
-        try:
-            # pick largest photo
-            p = max(message.photo, key=lambda x: (x.width or 0) * (x.height or 0))
-            file = await message.bot.get_file(p.file_id)
-            buf = await message.bot.download_file(file.file_path)
-            data = buf.read()
-            ok, details = await self.vision.analyze(data)
-            if ok:
-                return True, details.get("explanation") or "Image marked as advertising/spam"
-        except Exception:
-            return None
-        return None
+        if any(word in text_lower for word in self.config.SUSPICIOUS_WORDS):
+            score += self.config.HEURISTIC_WORD_SCORE
+            reasons.append("suspicious_words")
+        
+        if INVITE_RE.search(text_lower):
+            score += self.config.HEURISTIC_INVITE_SCORE
+            reasons.append("invite_link")
+            
+        if len(text) > self.config.MAX_TEXT_LENGTH:
+            score += self.config.HEURISTIC_LENGTH_SCORE
+            reasons.append("long_text")
+            
+        return score, reasons
 
-    async def inspect_message(self, message) -> Dict[str, Any]:
-        """
-        Returns dict with optional 'action' and more fields.
-        """
-        user = message.from_user
-        if not user:
-            return {}
-
-        chat_id = message.chat.id
-
-        # 1) Gather text from various content types
-        text_parts = []
-        if message.text:
-            text_parts.append(message.text)
-        if message.caption:
-            text_parts.append(message.caption)
-        text = "\n".join(text_parts).strip()
-
-        # 2) Heuristics
-        score = self._text_suspicions(text)
-
-        # 3) Links / domains
-        bad_domain = False
-        domains = await self._extract_domains(text)
+    async def _inspect_domains(self, domains: List[str]) -> Tuple[int, List[str]]:
+        """Проверяет домены по черному списку и подозрительным TLD."""
+        score = 0
+        reasons = []
         for host in domains:
             if await self.learning.is_bad_domain(host):
-                bad_domain = True
-                score += 50
-                break
-            # suspicious TLDs heuristic
-            if host.endswith((".xyz", ".top", ".tokyo", ".icu", ".bet", ".casino")):
-                score += 10
+                score += self.config.BAD_DOMAIN_SCORE
+                reasons.append(f"bad_domain:{host}")
+                break  # Одного плохого домена достаточно
+        
+        if not reasons and any(host.endswith(tuple(self.config.SUSPICIOUS_TLDS)) for host in domains):
+            score += self.config.SUSPICIOUS_TLD_SCORE
+            reasons.append("suspicious_tld")
+            
+        return score, reasons
 
-        # 4) Self-learning phrases
+    async def _inspect_learned_phrases(self, text: str) -> Tuple[int, List[str]]:
+        """Проверяет текст по базе знаний спам-фраз."""
         best_ratio, best_phrase = await self.learning.score_text(text, min_ratio=85)
         if best_ratio and best_phrase:
-            score += min(40, best_ratio // 3)
+            score = min(40, best_ratio // 3)
+            return score, [f"learned_phrase:'{best_phrase.phrase}'"]
+        return 0, []
 
-        # 5) Images
-        if getattr(message, "photo", None):
-            iv = await self._image_verdict(message)
-            if iv and iv[0]:
-                score += 60
+    async def _inspect_image(self, message: Message) -> Tuple[int, List[str]]:
+        """Анализирует изображение в сообщении, если доступен сервис Vision."""
+        if not self.vision or not message.photo:
+            return 0, []
+        
+        try:
+            largest_photo = max(message.photo, key=lambda p: (p.width or 0) * (p.height or 0))
+            bot = get_bot_instance()
+            file_info = await bot.get_file(largest_photo.file_id)
+            
+            if file_info.file_path:
+                image_bytes = await bot.download_file(file_info.file_path)
+                if image_bytes:
+                    is_spam, details = await self.vision.analyze(image_bytes.read())
+                    if is_spam:
+                        reason = details.get("explanation", "Image marked as advertising/spam")
+                        return self.config.IMAGE_SPAM_SCORE, [f"image_spam:{reason}"]
+        except Exception as e:
+            logger.error(f"Ошибка при анализе изображения: {e}")
+        
+        return 0, []
 
-        # 6) Decide action
-        # convert to 0..1 scale roughly
-        prob = min(1.0, max(0.0, score / 100.0))
-
+    async def _calculate_final_verdict(self, score: int, chat_id: int, user_id: int) -> Tuple[Optional[str], str]:
+        """Определяет финальное действие на основе очков и количества страйков."""
         action: Optional[str] = None
         reason = ""
 
-        # progressive actions
-        if prob >= 0.95 or bad_domain:
-            action, reason = "ban", "Autoban (bad domain or very high score)"
-        elif prob >= 0.85:
-            action, reason = "mute", "Temporary mute due to suspicious content"
-        elif prob >= 0.75:
-            action, reason = "warn", "Suspicious content – warning"
-        elif prob >= 0.60:
-            action, reason = "delete", "Low-confidence spam – deleted"
+        if score >= self.config.SCORE_BAN:
+            action, reason = "ban", "Очень высокий уровень угрозы"
+        elif score >= self.config.SCORE_MUTE:
+            action, reason = "mute", "Высокий уровень угрозы"
+        elif score >= self.config.SCORE_WARN:
+            action, reason = "warn", "Средний уровень угрозы"
+        elif score >= self.config.SCORE_DELETE:
+            action, reason = "delete", "Низкий уровень угрозы"
 
-        # 7) Strikes escalation on repeat
         if action in ("delete", "warn", "mute"):
-            strikes_window = int(getattr(getattr(self.settings, "threat_filter", object()), "repeat_window_seconds", 3600))
-            strikes_for_ban = int(getattr(getattr(self.settings, "threat_filter", object()), "strikes_for_autoban", 2))
-            key = self.k_user_strikes(chat_id, user.id)
+            key = self.keys.user_strikes(chat_id, user_id)
             try:
-                # increment with TTL window
-                pipe = self.r.pipeline()
-                pipe.incr(key)
-                pipe.expire(key, strikes_window)
-                v, _ = await pipe.execute()
-                strikes = int(v or 0)
-            except Exception:
-                strikes = 1
+                strikes = await self.redis.incr(key)
+                await self.redis.expire(key, self.config.REPEAT_WINDOW_SECONDS)
+                
+                if strikes >= self.config.STRIKES_FOR_AUTOBAN:
+                    action, reason = "ban", f"Автобан после {strikes} нарушений"
+            except Exception as e:
+                logger.error(f"Ошибка при обновлении страйков для user {user_id} в чате {chat_id}: {e}")
+        
+        return action, reason
 
-            if strikes >= strikes_for_ban:
-                action, reason = "ban", "Autoban on repeated offenses"
+    async def inspect_message(self, message: Message) -> SecurityVerdict:
+        """
+        Проводит комплексную проверку сообщения и выносит вердикт.
+        """
+        user = message.from_user
+        if not user:
+            return SecurityVerdict()
 
-        return {"action": action, "reason": reason, "score": score, "domains": domains, "best_phrase": getattr(best_phrase, "phrase", None)}
+        text = (message.text or message.caption or "").strip()
+        total_score = 0
+        all_reasons: List[str] = []
+        
+        # Шаг 1: Эвристика текста
+        score, reasons = self._inspect_text_heuristics(text)
+        total_score += score
+        all_reasons.extend(reasons)
+
+        # Шаг 2: Анализ доменов
+        domains = await self._extract_domains(text)
+        score, reasons = await self._inspect_domains(domains)
+        total_score += score
+        all_reasons.extend(reasons)
+
+        # Шаг 3: Анализ по базе знаний
+        score, reasons = await self._inspect_learned_phrases(text)
+        total_score += score
+        all_reasons.extend(reasons)
+
+        # Шаг 4: Анализ изображений
+        score, reasons = await self._inspect_image(message)
+        total_score += score
+        all_reasons.extend(reasons)
+        
+        # Шаг 5: Вынесение финального вердикта
+        action, reason = await self._calculate_final_verdict(total_score, message.chat.id, user.id)
+
+        verdict = SecurityVerdict(
+            score=total_score,
+            action=action,
+            reason=reason,
+            details=all_reasons,
+            domains=domains
+        )
+        
+        if verdict.action:
+            logger.warning(f"Обнаружена угроза от user_id={user.id}: {verdict}")
+
+        return verdict
