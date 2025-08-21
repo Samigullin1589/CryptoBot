@@ -1,13 +1,13 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (aiogram 3.x, Aug 17, 2025)
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (aiogram 3.x, Aug 21, 2025)
 # Описание:
 #   • Полная инициализация бота (настройки, DI, middlewares, routers, команды)
 #   • Плановые задачи (jobs/scheduled_tasks)
 #   • Корректное завершение (await deps.close()) и обработка сигналов
-#   • AdminService создаётся ПОСЛЕ Bot (ему нужен bot)
-#   • Здесь же создаём ModerationService и SecurityService и сохраняем в deps.*
-#   • ZERO sync-хакинга: никаких run_until_complete внутри async-кода
+#   • AdminService, ModerationService, SecurityService создаются после Bot
+#     и безопасно добавляются в DI-контейнер deps.
+#   • Полностью асинхронная инициализация без блокирующих вызовов.
 # ======================================================================================
 
 from __future__ import annotations
@@ -26,45 +26,26 @@ from aiogram.types import BotCommand
 
 from bot.config.settings import settings
 from bot.utils.dependencies import Deps, dependencies_middleware
+from bot.utils.logging_setup import setup_logging
 
 # ===== Middlewares =====
 from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.middlewares.activity_middleware import ActivityMiddleware
-
-try:
-    from bot.middlewares.security_middleware import SecurityMiddleware  # антиспам/фильтры
-except Exception:  # noqa: BLE001
-    SecurityMiddleware = None  # type: ignore
+from bot.middlewares.security_middleware import SecurityMiddleware
 
 logger = logging.getLogger(__name__)
-
-
-# -------------------------------- Логирование ---------------------------------
-
-def setup_logging() -> None:
-    level = getattr(logging, getattr(settings, "log_level", "INFO").upper(), logging.INFO)
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    )
-    # aiogram достаточно «шумный» — чуть приглушим
-    logging.getLogger("aiogram.event").setLevel(logging.INFO)
-    logging.getLogger("aiogram.dispatcher").setLevel(logging.INFO)
 
 
 # ----------------------------- Команды бота -----------------------------------
 
 async def setup_commands(bot: Bot) -> None:
+    """Устанавливает команды, видимые пользователям в меню Telegram."""
     commands: list[BotCommand] = [
-        BotCommand(command="start", description="Запуск"),
-        BotCommand(command="help", description="Справка"),
-        BotCommand(command="menu", description="Главное меню"),
-        BotCommand(command="price", description="Котировки"),
-        BotCommand(command="news", description="Крипто-новости"),
-        BotCommand(command="convert", description="Калькулятор: конвертация"),
-        BotCommand(command="pnl", description="Калькулятор: PnL"),
-        BotCommand(command="roi", description="Калькулятор: ROI"),
-        # Админ-команды не выставляем глобально, чтобы не «светить» их всем.
+        BotCommand(command="start", description="Перезапустить бота"),
+        BotCommand(command="help", description="Помощь и справка"),
+        BotCommand(command="ask", description="Задать вопрос AI-консультанту (в ЛС)"),
+        BotCommand(command="check", description="Проверить пользователя"),
+        BotCommand(command="admin", description="Панель администратора"),
     ]
     await bot.set_my_commands(commands)
 
@@ -81,9 +62,10 @@ def _collect_routers(module: Any) -> list[Router]:
 
 
 def _import_optional(module_path: str) -> object | None:
+    """Безопасно импортирует модуль, возвращая None в случае ошибки."""
     try:
         return import_module(module_path)
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         logger.debug("Модуль %s не загружен: %s", module_path, e)
         return None
 
@@ -91,33 +73,41 @@ def _import_optional(module_path: str) -> object | None:
 def register_routers(dp: Dispatcher) -> None:
     """
     Импортирует и регистрирует все известные роутеры проекта.
-    Если какой-то модуль отсутствует — просто пропускаем (без заглушек).
+    Если какой-то модуль отсутствует — просто пропускаем.
     """
     module_paths: list[str] = [
-        # --- public ---
+        # --- Public Handlers ---
         "bot.handlers.public.start_handler",
-        "bot.handlers.public.help_handler",
-        "bot.handlers.public.menu_handler",
-        "bot.handlers.public.text_handler",
-        "bot.handlers.public.price_handler",
-        "bot.handlers.public.news_handler",
+        "bot.handlers.public.common_handler",
         "bot.handlers.public.onboarding_handler",
-
-        # --- tools ---
+        "bot.handlers.public.menu_handlers",
+        "bot.handlers.public.price_handler",
+        "bot.handlers.public.asic_handler",
+        "bot.handlers.public.news_handler",
+        "bot.handlers.public.quiz_handler",
+        "bot.handlers.public.market_info_handler",
+        "bot.handlers.public.crypto_center_handler",
+        "bot.handlers.public.achievements_handler",
+        "bot.handlers.public.verification_public_handler",
+        "bot.handlers.public.text_handler", # Должен идти последним из public
+        
+        # --- Tool Handlers ---
         "bot.handlers.tools.calculator_handler",
 
-        # --- game ---
+        # --- Game Handlers ---
         "bot.handlers.game.mining_game_handler",
 
-        # --- threats ---
-        "bot.handlers.threats",
+        # --- Threat/Spam Handlers ---
+        "bot.handlers.threats.threat_handler",
 
-        # --- admin ---
-        "bot.handlers.admin.admin_handler",
+        # --- Admin Handlers ---
+        "bot.handlers.admin.admin_menu",
         "bot.handlers.admin.moderation_handler",
         "bot.handlers.admin.stats_handler",
-        "bot.handlers.admin.health_handler",
+        "bot.handlers.admin.game_admin_handler",
+        "bot.handlers.admin.verification_admin_handler",
         "bot.handlers.admin.cache_handler",
+        "bot.handlers.admin.health_handler",
         "bot.handlers.admin.version_handler",
     ]
 
@@ -131,7 +121,7 @@ def register_routers(dp: Dispatcher) -> None:
             dp.include_router(r)
             total += 1
 
-    logger.info("Все роутеры успешно зарегистрированы. Кол-во: %s", total)
+    logger.info("Всего роутеров успешно зарегистрировано: %s", total)
 
 
 # ------------------------ Плановые задачи (jobs) -------------------------------
@@ -147,8 +137,7 @@ async def setup_scheduler(deps: Deps, dp: Dispatcher) -> None:
         return
     setup = getattr(mod, "setup_scheduler", None)
     if callable(setup):
-        # поддержим и sync, и async вариант
-        res = setup(deps, dp)  # type: ignore[misc]
+        res = setup(deps, dp)
         if inspect.isawaitable(res):
             await res
         logger.info("Все периодические задачи успешно настроены.")
@@ -159,6 +148,7 @@ async def setup_scheduler(deps: Deps, dp: Dispatcher) -> None:
 # ------------------------ Сигналы и остановка ---------------------------------
 
 def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+    """Назначает обработчик на сигналы SIGINT и SIGTERM."""
     def _handler(*_: object) -> None:
         if not stop.is_set():
             logger.warning("Получен сигнал остановки — завершаем polling...")
@@ -172,188 +162,98 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
             pass
 
 
-# --------- Вспомогательная фабрика (безопасное создание по сигнатуре) ---------
-
-def _filter_kwargs(callable_obj: Any, candidates: dict[str, Any]) -> dict[str, Any]:
-    target = getattr(callable_obj, "__init__", callable_obj) if inspect.isclass(callable_obj) else callable_obj
-    try:
-        sig = inspect.signature(target)
-    except (TypeError, ValueError):
-        return {}
-    supported = {
-        p.name
-        for p in sig.parameters.values()
-        if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
-    }
-    return {k: v for k, v in candidates.items() if k in supported}
-
+# --------- Фабрика для безопасного создания сервисов ---------
 
 async def _safe_make_instance_async(cls: Type, candidates: dict[str, Any]) -> Any:
-    """
-    Универсальная безопасная фабрика:
-      • если есть create(...): вызываем, await если нужно
-      • иначе конструктор __init__(...) по пересечению параметров
-    НИКАКИХ run_until_complete — только чистый async.
-    """
+    """Универсальная безопасная фабрика для создания экземпляров сервисов."""
     create = getattr(cls, "create", None)
     if callable(create):
-        kwargs = _filter_kwargs(create, candidates)
-        res = create(**kwargs)  # type: ignore[misc]
+        res = create(**_filter_kwargs(create, candidates))
         if inspect.isawaitable(res):
             return await res
         return res
-    kwargs = _filter_kwargs(cls, candidates)
-    return cls(**kwargs)  # type: ignore[misc]
+    return cls(**_filter_kwargs(cls, candidates))
 
 
-# -------------------- Создание модерации/безопасности -------------------------
+def _filter_kwargs(callable_obj: Any, candidates: dict[str, Any]) -> dict[str, Any]:
+    """Фильтрует kwargs, оставляя только те, что принимает конструктор/функция."""
+    target = getattr(callable_obj, "__init__", callable_obj) if inspect.isclass(callable_obj) else callable_obj
+    try:
+        sig = inspect.signature(target)
+        supported = {p.name for p in sig.parameters.values()}
+        return {k: v for k, v in candidates.items() if k in supported}
+    except (TypeError, ValueError):
+        return {}
+
+
+# -------------------- Создание сервисов модерации и безопасности -------------------------
 
 async def _init_moderation_and_security(deps: Deps, bot: Bot) -> None:
-    """
-    Создаёт ModerationService и SecurityService и сохраняет в deps.
-    Все импорты и зависимости — опционально, чтобы не валить процесс.
-    Полностью асинхронно и безопасно.
-    """
-    # Сбор общих кандидатов для конструкторов
+    """Создаёт и инициализирует сервисы модерации и безопасности."""
     base_kwargs: dict[str, Any] = {
-        "bot": bot,
-        "settings": settings,
-        "config": settings,  # если сервис ждёт параметр 'config'
-        "redis": deps.redis,
-        "redis_client": deps.redis,
-        "http_session": deps.http_session,
-        "user_service": deps.user_service,
-        "admin_service": deps.admin_service,
-        "ai_content_service": deps.ai_content_service,
-        "moderation_service": deps.moderation_service,  # будет обновлён после создания
-        "security_service": deps.security_service,
+        "bot": bot, "settings": settings, "redis": deps.redis,
+        "user_service": deps.user_service, "admin_service": deps.admin_service,
+        "ai_content_service": deps.ai_content_service
     }
 
-    # Необязательный StopWordService
-    try:
-        from bot.services.stop_word_service import StopWordService  # type: ignore
-        try:
-            sws = await _safe_make_instance_async(StopWordService, base_kwargs)
-            base_kwargs["stop_word_service"] = sws
-            logger.info("StopWordService инициализирован.")
-        except Exception as e:
-            logger.warning("StopWordService init failed: %s", e, exc_info=True)
-    except Exception:
-        logger.info("StopWordService не найден — продолжаю без него.")
-
-    # ModerationService
-    try:
-        from bot.services.moderation_service import ModerationService  # type: ignore
-        deps.moderation_service = await _safe_make_instance_async(ModerationService, base_kwargs)
-        base_kwargs["moderation_service"] = deps.moderation_service
-        logger.info("ModerationService инициализирован.")
-    except Exception as e:
-        deps.moderation_service = None
-        logger.warning("ModerationService init failed: %s", e, exc_info=True)
-
-    # SecurityService (если есть)
-    try:
-        from bot.services.security_service import SecurityService  # type: ignore
-        deps.security_service = await _safe_make_instance_async(SecurityService, base_kwargs)
-        logger.info("SecurityService инициализирован.")
-    except Exception as e:
-        deps.security_service = None
-        logger.info("SecurityService недоступен или не инициализировался: %s", e)
+    # Сервисы безопасности (опциональные)
+    services_to_init = {
+        "ModerationService": "bot.services.moderation_service",
+        "SecurityService": "bot.services.security_service"
+    }
+    for class_name, module_path in services_to_init.items():
+        if mod := _import_optional(module_path):
+            if service_class := getattr(mod, class_name, None):
+                try:
+                    instance = await _safe_make_instance_async(service_class, base_kwargs)
+                    setattr(deps, class_name.lower().replace("service", "_service"), instance)
+                    base_kwargs[class_name.lower().replace("service", "_service")] = instance
+                    logger.info("%s инициализирован.", class_name)
+                except Exception as e:
+                    logger.warning("%s не удалось инициализировать: %s", class_name, e)
 
 
 # --------------------------------- main() -------------------------------------
 
 async def main() -> None:
-    setup_logging()
-    logger.info("Конфигурация успешно загружена и валидирована.")
+    """Основная асинхронная функция запуска бота."""
+    setup_logging(level=settings.log_level, format="text")
 
-    # DI контейнер
     deps = await Deps.create(settings)
-
-    # Бот и диспетчер
-    bot = Bot(
-        token=settings.BOT_TOKEN.get_secret_value(),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    # --- AdminService зависит от bot, поэтому создаём его здесь и кладём в deps ---
-    try:
-        from bot.services.admin_service import AdminService
-        deps.admin_service = AdminService(redis=deps.redis, settings=settings, bot=bot)  # type: ignore[arg-type]
-        logger.info("AdminService инициализирован.")
-    except Exception as e:  # noqa: BLE001
-        deps.admin_service = None
-        logger.warning("AdminService init failed: %s", e, exc_info=True)
+    # AdminService зависит от bot, поэтому создаём его здесь
+    if mod := _import_optional("bot.services.admin_service"):
+        if service_class := getattr(mod, "AdminService", None):
+            deps.admin_service = service_class(bot=bot, redis=deps.redis, settings=settings)
+            logger.info("AdminService инициализирован.")
 
-    # --- ModerationService / SecurityService создаём здесь и сохраняем в deps ---
     await _init_moderation_and_security(deps, bot)
 
-    # Middlewares (порядок важен: deps → активность → антиспам → троттлинг)
+    # Middlewares (порядок важен)
     dp.update.outer_middleware(dependencies_middleware(deps))
     dp.update.outer_middleware(ActivityMiddleware())
-    if SecurityMiddleware:
-        try:
-            dp.update.outer_middleware(SecurityMiddleware(deps=deps))
-            logger.info("SecurityMiddleware подключён.")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Не удалось подключить SecurityMiddleware: %s", e)
+    if deps.security_service:
+        dp.update.outer_middleware(SecurityMiddleware(deps=deps))
+    dp.update.outer_middleware(ThrottlingMiddleware(deps=deps))
 
-    dp.update.outer_middleware(
-        ThrottlingMiddleware(
-            deps=deps,
-            user_rate=settings.throttling.user_rate_limit,
-            chat_rate=settings.throttling.chat_rate_limit,
-            key_prefix=settings.throttling.key_prefix,
-            exempt_admins=True,
-            feedback=True,
-        )
-    )
-
-    # Роутеры
     register_routers(dp)
-
-    # Команды
     await setup_commands(bot)
-
-    # Плановые задачи
     await setup_scheduler(deps, dp)
 
     logger.info("Запуск бота...")
-    loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
-    _bind_signals(loop, stop_event)
+    _bind_signals(asyncio.get_running_loop(), stop_event)
 
-    # Сбросим вебхук (если был) и очистим подвисшие апдейты
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-    except Exception:
-        pass
-
-    # Aiogram 3: получим список типов апдейтов, чтобы Telegram не ругался
-    try:
-        allowed = dp.resolve_used_update_types()
-    except Exception:
-        allowed = None
-
-    try:
-        logger.info("Start polling")
-        await dp.start_polling(
-            bot,
-            allowed_updates=allowed,
-            stop_event=stop_event,
-        )
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(), stop_event=stop_event)
     finally:
-        logger.info("Запуск процедур on_shutdown...")
-        try:
-            await deps.close()
-        finally:
-            # Закрываем HTTP-сессию бота (на всякий случай)
-            try:
-                await bot.session.close()
-            except Exception:
-                pass
-        logger.info("Процедуры on_shutdown завершены.")
+        logger.info("Завершение работы бота...")
+        await deps.close()
+        await bot.session.close()
+        logger.info("Бот остановлен.")
 
 
 # --------------------------------- Entrypoint ---------------------------------
@@ -362,4 +262,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        pass
+        logger.info("Выход из программы.")

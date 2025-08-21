@@ -24,7 +24,7 @@ services:
       # Основные переменные (секреты вводятся вручную в дашборде)
       - key: BOT_TOKEN
         sync: false
-      - key: ADMIN_IDS
+      - key: ADMIN_USER_IDS
         sync: false
       - key: TZ
         value: Asia/Tbilisi
@@ -47,11 +47,7 @@ services:
       # Внешние API (по необходимости)
       - key: CRYPTOCOMPARE_API_KEY
         sync: false
-      - key: CMC_API_KEY
-        sync: false
-      - key: BLOCKCHAIR_API_KEY
-        sync: false
-      - key: GLASSNODE_API_KEY
+      - key: COINGECKO_API_KEY
         sync: false
 
   # --- Key Value (современная замена типа redis) ---
