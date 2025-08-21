@@ -1,71 +1,83 @@
 # bot/services/image_vision_service.py
-from __future__ import annotations
+# Дата обновления: 20.08.2025
+# Версия: 2.0.0
+# Описание: Сервис-фасад для анализа изображений с использованием AI.
+# Делегирует задачи по распознаванию текста и модерации основному AI-сервису.
 
+import asyncio
 from io import BytesIO
-from typing import Tuple, Dict, Any
+from typing import Dict, Any, Optional
 
+from loguru import logger
 from PIL import Image
+
+from bot.services.ai_content_service import AIContentService
+from bot.utils.models import ImageAnalysisResult
+
 
 class ImageVisionService:
     """
-    Lightweight image analysis facade.
-    - If AI provider Gemini is configured via google-generativeai,
-      it will ask the model to classify spammy/advertising images and return extracted text.
-    - Otherwise, optionally performs a naive OCR if pytesseract is installed.
+    Предоставляет унифицированный интерфейс для анализа изображений.
+    Основная задача - подготовить данные и передать их в AIContentService
+    для распознавания текста (OCR) и вынесения вердикта о спаме.
     """
 
-    def __init__(self, ai_content_service=None):
-        self.ai = ai_content_service
+    def __init__(self, ai_service: AIContentService):
+        """
+        Инициализирует сервис.
 
-        # optional local OCR
-        try:  # lazy optional dependency
-            import pytesseract  # noqa: F401
-            self._has_tesseract = True
-        except Exception:
-            self._has_tesseract = False
+        :param ai_service: Экземпляр AIContentService для выполнения AI-запросов.
+        """
+        self.ai_service = ai_service
+        logger.info("Сервис ImageVisionService инициализирован.")
+
+    async def analyze(self, photo_bytes: bytes) -> ImageAnalysisResult:
+        """
+        Анализирует изображение на предмет спама и извлекает текст.
+
+        Возвращает объект ImageAnalysisResult с результатами анализа.
+        В случае сбоя AI или отсутствия AI-провайдера возвращает
+        нейтральный результат (не спам, нет текста).
+        """
+        if not self.ai_service:
+            logger.warning("AIContentService не доступен, анализ изображений пропущен.")
+            return ImageAnalysisResult()
+
+        try:
+            # Асинхронно выполняем CPU-bound операцию по обработке изображения
+            prepared_bytes = await asyncio.to_thread(self._prepare_image, photo_bytes)
+
+            prompt = (
+                "Проанализируй это изображение на предмет спама, рекламы или мошенничества. "
+                "Извлеки весь читаемый текст. Верни JSON."
+            )
+            
+            # Вызываем основной AI сервис для анализа
+            response_data = await self.ai_service.analyze_image(prompt, prepared_bytes)
+
+            if isinstance(response_data, dict):
+                return ImageAnalysisResult.model_validate(response_data)
+            
+            logger.warning(f"AI-сервис вернул неожиданный тип данных для анализа изображения: {type(response_data)}")
+            return ImageAnalysisResult(explanation="AI service returned invalid data type.")
+
+        except Exception as e:
+            logger.exception(f"Критическая ошибка при анализе изображения: {e}")
+            return ImageAnalysisResult(explanation=f"Analysis failed due to an exception: {e}")
 
     @staticmethod
-    def _img_from_bytes(photo_bytes: bytes) -> Image.Image:
-        return Image.open(BytesIO(photo_bytes)).convert("RGB")
-
-    def _ocr_local(self, img: Image.Image) -> str:
-        if not self._has_tesseract:
-            return ""
+    def _prepare_image(photo_bytes: bytes) -> bytes:
+        """
+        Подготавливает изображение для отправки в AI-модель.
+        Конвертирует в стандартный формат (JPEG) для лучшей совместимости.
+        Эта операция выполняется в отдельном потоке, чтобы не блокировать event loop.
+        """
         try:
-            import pytesseract
-            return pytesseract.image_to_string(img, lang="eng+rus")
-        except Exception:
-            return ""
-
-    async def analyze(self, photo_bytes: bytes) -> Tuple[bool, Dict[str, Any]]:
-        """
-        Returns tuple (is_spam, details)
-        details includes { 'extracted_text': str, 'model': 'gemini'|'tesseract'|None, 'explanation': str }
-        """
-        img = self._img_from_bytes(photo_bytes)
-
-        # Try AI provider first (Gemini Vision via your AIContentService)
-        if self.ai and getattr(self.ai, "analyze_image_for_spam", None):
-            try:
-                ok, explanation, extracted = await self.ai.analyze_image_for_spam(img)
-                return bool(ok), {
-                    "extracted_text": extracted or "",
-                    "model": "gemini",
-                    "explanation": explanation or "",
-                }
-            except Exception:
-                pass  # hard-failover to local OCR
-
-        # Fallback: local OCR (very naive)
-        text = self._ocr_local(img)
-        is_spam = False
-        exp = ""
-
-        text_l = (text or "").lower()
-        for kw in ("успей", "бонус", "подписывайся", "промокод", "зарегистрируйся", "выплаты", "онлайн", "ставки", "казино"):
-            if kw in text_l:
-                is_spam = True
-                exp = f"Keyword '{kw}' found in OCR"
-                break
-
-        return is_spam, {"extracted_text": text or "", "model": "tesseract" if self._has_tesseract else None, "explanation": exp}
+            img = Image.open(BytesIO(photo_bytes)).convert("RGB")
+            buffer = BytesIO()
+            img.save(buffer, format="JPEG", quality=90)
+            return buffer.getvalue()
+        except Exception as e:
+            logger.error(f"Не удалось подготовить изображение: {e}")
+            # В случае ошибки возвращаем исходные байты
+            return photo_bytes

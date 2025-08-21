@@ -1,489 +1,223 @@
-# ======================================================================================
-# File: bot/services/security_service.py
-# Version: "Distinguished Engineer" — MAX Build (Aug 17, 2025)
-# Description:
-#   Production-grade anti-spam & safety service for aiogram + Redis.
-#   Features:
-#     • Fast heuristics for spam/toxicity/raid
-#     • Offense tracking in Redis with escalation (warn → mute → autoban)
-#     • Media analysis (photos/docs) via AIContentService vision (Gemini/OpenAI fallback)
-#     • Domain allow/deny lists, link density, mention storms, repeats
-#     • Safe-by-default: if AI unavailable — heuristics still protect
-#     • Pluggable thresholds via settings.threat_filter (with safe defaults)
-#
-#   Public API (used by middlewares/handlers):
-#     - is_enabled() -> bool
-#     - is_blocked(user_id) -> bool                   # uses ModerationService if present
-#     - analyze_message(message) -> Verdict
-#     - register_violation(user_id, chat_id, reason, weight=1) -> Escalation
-#     - decide_and_enforce(bot, message, verdict)     # deletes/mutes/bans in groups
-#     - ban_user(admin_id, target_user_id, target_chat_id, reason)
-#     - pardon_user(admin_id, target_user_id, target_chat_id)
-#
-#   Redis keys (with project prefix):
-#     <pfx>:sec:off:u:<uid>:c:<chat_id>   -> integer offense counter (EX=window)
-#     <pfx>:sec:last:u:<uid>:c:<chat_id>  -> last offense timestamp
-# ======================================================================================
-
-from __future__ import annotations
+# bot/services/security_service.py
+# Дата обновления: 21.08.2025
+# Версия: 2.0.0
+# Описание: Комплексный сервис безопасности для обнаружения и предотвращения
+# спама, токсичного поведения и других угроз с использованием эвристик и AI.
 
 import asyncio
-import contextlib
 import html
-import logging
 import re
 import time
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
-import redis.asyncio as redis
 from aiogram import Bot
 from aiogram import types as tg
+from loguru import logger
+from redis.asyncio import Redis
 
-from bot.config.settings import Settings
+from bot.config.settings import settings
 from bot.services.ai_content_service import AIContentService
+from bot.services.image_vision_service import ImageVisionService
+from bot.services.moderation_service import ModerationService
+from bot.utils.dependencies import get_bot_instance, get_redis_client
+from bot.utils.keys import KeyFactory
+from bot.utils.models import Escalation, Verdict
 
-try:
-    # Опционально — даёт «жёсткий» глобальный бан по твоему ModerationService
-    from bot.services.moderation_service import ModerationService  # type: ignore
-except Exception:  # noqa: BLE001
-    ModerationService = None  # type: ignore
+# --- Скомпилированные регулярные выражения для эвристического анализа ---
 
-logger = logging.getLogger(__name__)
-
-# ---------- regexes & helpers ----------
+# Обнаруживает URL-адреса, ссылки на Telegram и упоминания пользователей
 URL_RE = re.compile(
-    r"(?i)\b((?:https?://|www\.)[^\s<>\"']+|t\.me/[A-Za-z0-9_]+|@[A-Za-z0-9_]{4,})"
+    r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)[^\s()<>]+|\bt\.me/[a-zA-Z0-9_]+|@[a-zA-Z0-9_]{5,})"
 )
-REPEAT_CHUNK_RE = re.compile(r"(.)\1{6,}")  # 7+ same chars подряд
-CAPS_HEAVY_RE = re.compile(r"[A-ZА-ЯЁ]{8,}")
-INVITE_RE = re.compile(r"(joinchat|invite|airdrop|free\s+crypto|bonus|giveaway)", re.IGNORECASE)
-
-# ---------- defaults (overridden by settings.threat_filter if present) ----------
-DEF_ENABLED = True
-DEF_TOXICITY_THRESHOLD = 0.75
-DEF_OFFENSE_WINDOW_SEC = 6 * 3600
-DEF_WARN_THRESHOLD = 1
-DEF_MUTE_THRESHOLD = 3
-DEF_BAN_THRESHOLD = 5
-DEF_MUTE_SECONDS = 3600  # 1 hour
-
-# Allow/Deny lists
-DEF_DOMAIN_ALLOW: Sequence[str] = (
-    "t.me", "telegram.me",
-    "coingecko.com", "cointelegraph.com", "forklog.com", "beincrypto.com", "beincrypto.ru",
-    "mempool.space", "blockchain.info",
+# Обнаруживает длинные последовательности одинаковых символов (флуд)
+REPEATED_CHARS_RE = re.compile(r"(.)\1{6,}")
+# Обнаруживает слова, написанные преимущественно заглавными буквами (КАПС)
+HEAVY_CAPS_RE = re.compile(r"\b[A-ZА-ЯЁ]{8,}\b")
+# Обнаруживает ключевые слова, часто встречающиеся в спаме и скаме
+SPAM_KEYWORDS_RE = re.compile(
+    r"\b(joinchat|invite|airdrop|free\s+crypto|bonus|giveaway|розыгрыш|бонус|подарок|приз|ставки|казино)\b",
+    re.IGNORECASE
 )
-DEF_DOMAIN_DENY: Sequence[str] = (
-    "bit-ly", "bitly.", "goo.gl", "cutt.ly", "tinyurl", "ow.ly",
-    "grabfree", "free-crypto", "bonus-crypto", "giveaway-crypto", "aird0p", "xn--",
-)
-
-# ---------- data models ----------
-@dataclass
-class Verdict:
-    ok: bool
-    reasons: List[str]
-    action: str  # "allow" | "delete" | "restrict" | "ban"
-    score: float = 0.0
-    labels: List[str] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.labels is None:
-            self.labels = []
-
-
-@dataclass
-class Escalation:
-    count: int
-    decision: str  # "none" | "warn" | "mute" | "ban"
-    mute_seconds: int = 0
-
 
 class SecurityService:
+    """
+    Оркестрирует анализ сообщений на предмет угроз, управляет эскалацией
+    нарушений и применяет меры модерации.
+    """
+
     def __init__(
         self,
-        *,
-        redis: redis.Redis,
-        settings: Optional[Settings] = None,
-        ai_content_service: Optional[AIContentService] = None,
-        moderation_service: Optional[Any] = None,
-        **_: Any,
-    ) -> None:
-        """
-        Safe-by-default. If AI is missing, heuristics still protect.
-        """
-        self.redis = redis
-        self.settings: Settings = settings or globals().get("settings")  # type: ignore[assignment]
-        self.ai = ai_content_service
-        self.moderation: Optional[ModerationService] = moderation_service  # type: ignore[assignment]
-
-        tf = getattr(self.settings, "threat_filter", None)
-        self.enabled: bool = getattr(tf, "enabled", DEF_ENABLED) if tf else DEF_ENABLED
-        self.toxicity_thr: float = getattr(tf, "toxicity_threshold", DEF_TOXICITY_THRESHOLD) if tf else DEF_TOXICITY_THRESHOLD
-
-        self.window_sec: int = getattr(tf, "offense_window_seconds", DEF_OFFENSE_WINDOW_SEC) if tf else DEF_OFFENSE_WINDOW_SEC
-        self.warn_thr: int = getattr(tf, "warn_threshold", DEF_WARN_THRESHOLD) if tf else DEF_WARN_THRESHOLD
-        self.mute_thr: int = getattr(tf, "mute_threshold", DEF_MUTE_THRESHOLD) if tf else DEF_MUTE_THRESHOLD
-        self.ban_thr: int = getattr(tf, "ban_threshold", DEF_BAN_THRESHOLD) if tf else DEF_BAN_THRESHOLD
-        self.mute_seconds: int = getattr(tf, "mute_seconds", DEF_MUTE_SECONDS) if tf else DEF_MUTE_SECONDS
-        self.allow_domains: Sequence[str] = tuple(getattr(tf, "allow_domains", DEF_DOMAIN_ALLOW) or DEF_DOMAIN_ALLOW)
-        self.deny_domains: Sequence[str] = tuple(getattr(tf, "deny_domains", DEF_DOMAIN_DENY) or DEF_DOMAIN_DENY)
-
-        # Project-wide Redis prefix (isolation across envs)
-        self._pfx: str = (
-            getattr(self.settings, "redis_prefix", None)
-            or getattr(self.settings, "project_slug", None)
-            or "bot"
-        )
-
-        logger.info(
-            "SecurityService initialized: enabled=%s, window=%ss, thresholds(warn/mute/ban)=%s/%s/%s.",
-            self.enabled, self.window_sec, self.warn_thr, self.mute_thr, self.ban_thr
-        )
-
-    # -------- lifecycle --------
-
-    @classmethod
-    async def create(cls, **kwargs: Any) -> "SecurityService":
-        inst = cls(**kwargs)
-        return inst
-
-    async def close(self) -> None:  # for DI .close()
-        pass
-
-    async def aclose(self) -> None:  # for DI .aclose()
-        await self.close()
-
-    # -------- toggles --------
+        ai_content_service: AIContentService,
+        image_vision_service: ImageVisionService,
+        moderation_service: ModerationService,
+    ):
+        self.redis: Redis = get_redis_client()
+        self.bot: Bot = get_bot_instance()
+        self.ai_service = ai_content_service
+        self.image_vision_service = image_vision_service
+        self.moderation_service = moderation_service
+        self.config = settings.SECURITY
+        self.keys = KeyFactory
+        logger.info("Сервис SecurityService инициализирован.")
 
     def is_enabled(self) -> bool:
-        return bool(self.enabled)
+        """Проверяет, включен ли сервис в конфигурации."""
+        return self.config.ENABLED
 
-    # External ban integration for middleware compatibility
-    async def is_blocked(self, user_id: int) -> bool:
-        """
-        If ModerationService is present, defer to it for global/user-level bans.
-        Otherwise, return False (anti-spam works per-chat via escalation).
-        """
-        if self.moderation and hasattr(self.moderation, "is_banned"):
-            try:
-                return bool(await self.moderation.is_banned(user_id))  # type: ignore[misc]
-            except Exception:
-                return False
-        return False
-
-    # -------- high-level API --------
+    async def is_globally_banned(self, user_id: int) -> bool:
+        """Проверяет, забанен ли пользователь глобально через ModerationService."""
+        return await self.moderation_service.get_ban_record(user_id) is not None
 
     async def analyze_message(self, message: tg.Message) -> Verdict:
         """
-        Main entry for message safety. Heuristics + optional AI vision/text.
+        Основной метод анализа сообщения. Прогоняет контент через каскад проверок:
+        1. Быстрые эвристики по тексту.
+        2. Проверка ссылок по белым/черным спискам.
+        3. Глубокий анализ текста и изображений через AI (если необходимо).
         """
-        if not self.enabled:
-            return Verdict(ok=True, reasons=["disabled"], action="allow")
+        if not self.is_enabled():
+            return Verdict(ok=True, reasons=["security_disabled"])
 
-        reasons: List[str] = []
-        labels: List[str] = []
-        score = 0.0
+        text = message.text or message.caption or ""
+        
+        # --- Уровень 1: Быстрые эвристики ---
+        verdict = self._apply_text_heuristics(text)
+        if not verdict.ok:
+            return verdict # Немедленно блокируем, если эвристика сработала
 
-        text = (message.text or message.caption or "") or ""
-        media_types = self._detect_media(message)
+        # --- Уровень 2: Анализ ссылок ---
+        link_verdict = self._analyze_links(text)
+        if not link_verdict.ok:
+            return link_verdict
 
-        # 1) Quick heuristics on text
-        if text:
-            t_ok, t_labels, t_score = self._heuristics_text(text)
-            if not t_ok:
-                reasons.append("heuristics_text")
-            labels.extend(t_labels)
-            score = max(score, t_score)
+        # --- Уровень 3: AI-анализ (текст и/или изображение) ---
+        ai_verdict = await self._apply_ai_analysis(message, text)
+        if not ai_verdict.ok:
+            return ai_verdict
 
-        # 2) Links & mentions density
-        if text:
-            link_penalty, link_bad = self._check_links(text)
-            if link_bad:
-                reasons.append("links_blacklist")
-                labels.append("suspicious_link")
-                score = max(score, 0.9)
-            elif link_penalty:
-                labels.append("link_heavy")
-                score = max(score, 0.6)
+        return Verdict(ok=True) # Если все проверки пройдены
 
-            at_count = text.count("@")
-            if at_count >= 8 and len(text) < 2000:
-                labels.append("mentions_storm")
-                score = max(score, 0.8)
-                reasons.append("mentions_storm")
-
-        # 3) Media vision (if present)
-        if media_types:
-            v_ok, v_labels, v_score = await self._vision_media_gate(message, media_types)
-            if not v_ok:
-                reasons.append("vision_block")
-            labels.extend(v_labels)
-            score = max(score, v_score)
-
-        # Decision
-        if reasons:
-            action = "delete"
-            if "nsfw" in labels or score >= 0.95:
-                action = "delete"
-            if "phishing" in labels or "suspicious_link" in labels:
-                action = "delete"
-            return Verdict(ok=False, reasons=sorted(set(reasons)), action=action, score=score, labels=sorted(set(labels)))
-
-        return Verdict(ok=True, reasons=[], action="allow", score=score, labels=sorted(set(labels)))
-
-    async def decide_and_enforce(self, bot: Bot, message: tg.Message, verdict: Verdict) -> Optional[Escalation]:
+    async def register_violation(self, user_id: int, chat_id: int, weight: int = 1) -> Escalation:
         """
-        Applies the verdict and updates offense counters with escalation.
-        - In private chats: only delete & warn.
-        - In groups/supergroups: delete + (warn/mute/ban).
-        Returns Escalation or None.
+        Регистрирует нарушение для пользователя в чате, увеличивает счетчик
+        и возвращает решение об эскалации (предупреждение, мут, бан).
         """
-        if verdict.ok:
-            return None
+        offense_key = self.keys.user_offense_count(user_id, chat_id)
+        
+        try:
+            # Атомарно увеличиваем счетчик и устанавливаем время жизни
+            pipe = self.redis.pipeline()
+            pipe.incrby(offense_key, weight)
+            pipe.expire(offense_key, self.config.WINDOW_SECONDS)
+            new_count = (await pipe.execute())[0]
+        except Exception as e:
+            logger.error(f"Не удалось обновить счетчик нарушений для user_id={user_id}: {e}")
+            new_count = weight
 
-        user_id = message.from_user.id if message.from_user else None
-        chat_id = message.chat.id if message.chat else None
-        chat_type = message.chat.type if message.chat else "private"
-        if not user_id or not chat_id:
-            return None
+        # Принимаем решение об эскалации на основе порогов из конфига
+        if new_count >= self.config.BAN_THRESHOLD:
+            decision = "ban"
+        elif new_count >= self.config.MUTE_THRESHOLD:
+            decision = "mute"
+        elif new_count >= self.config.WARN_THRESHOLD:
+            decision = "warn"
+        else:
+            decision = "none"
+            
+        return Escalation(count=new_count, decision=decision, mute_seconds=self.config.MUTE_SECONDS)
 
-        # 1) delete message (if possible)
+    async def enforce_decision(self, message: tg.Message, verdict: Verdict):
+        """Применяет наказание в соответствии с вердиктом и системой эскалации."""
+        if verdict.ok or not message.from_user:
+            return
+
+        user_id = message.from_user.id
+        chat_id = message.chat.id
+        
+        # Всегда удаляем подозрительное сообщение
         with contextlib.suppress(Exception):
             await message.delete()
 
-        # 2) register offense & escalate
-        esc = await self.register_violation(user_id, chat_id, reason=";".join(verdict.reasons))
+        # Если чат не групповой, дальнейшие действия не применяются
+        if message.chat.type == "private":
+            return
 
-        is_group = chat_type in ("group", "supergroup")
+        escalation = await self.register_violation(user_id, chat_id, weight=verdict.weight)
+        
+        if escalation.decision == "mute":
+            await self.moderation_service.apply_mute_in_chat(
+                chat_id, user_id, timedelta(seconds=escalation.mute_seconds)
+            )
+        elif escalation.decision == "ban":
+            await self.moderation_service.apply_ban_in_chat(chat_id, user_id, reason="Автобан за спам")
+            # Создаем глобальную запись о бане
+            await self.moderation_service.create_ban_record(
+                user_id=user_id, by_admin_id=self.bot.id, reason="Автобан за спам (превышен лимит нарушений)"
+            )
 
-        # 3) enforce escalation
-        if esc.decision == "warn":
-            await self._send_ephemeral(bot, chat_id, f"⚠️ {self._u_mention(message)}: предупреждение за спам/нарушение.")
-        elif esc.decision == "mute" and is_group:
-            until = datetime.now(timezone.utc) + timedelta(seconds=esc.mute_seconds or self.mute_seconds)
-            with contextlib.suppress(Exception):
-                await bot.restrict_chat_member(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    permissions=tg.ChatPermissions(can_send_messages=False),
-                    until_date=until,
-                )
-            await self._send_ephemeral(bot, chat_id, f"🔇 {self._u_mention(message)} заглушен на {(esc.mute_seconds or self.mute_seconds) // 60} мин.")
-        elif esc.decision == "ban" and is_group:
-            # Баним в чате
-            with contextlib.suppress(Exception):
-                await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-            await self._send_ephemeral(bot, chat_id, f"⛔ {self._u_mention(message)} заблокирован за повторные нарушения.")
+    def _apply_text_heuristics(self, text: str) -> Verdict:
+        """Применяет быстрые проверки текста на основе регулярных выражений."""
+        if REPEATED_CHARS_RE.search(text):
+            return Verdict(ok=False, reasons=["repeated_chars"], weight=2)
+        if HEAVY_CAPS_RE.search(text) and len(text) > 20:
+            return Verdict(ok=False, reasons=["heavy_caps"], weight=1)
+        if SPAM_KEYWORDS_RE.search(text):
+            return Verdict(ok=False, reasons=["spam_keyword"], weight=3)
+        return Verdict(ok=True)
 
-            # При наличии ModerationService — фиксируем глобальный бан (опционально)
-            if self.moderation and hasattr(self.moderation, "ban"):
-                with contextlib.suppress(Exception):
-                    await self.moderation.ban(user_id=user_id, by_id=0, reason="auto-ban by security", duration=None)  # type: ignore[misc]
+    def _analyze_links(self, text: str) -> Verdict:
+        """Проверяет все найденные в тексте ссылки."""
+        urls = URL_RE.findall(text)
+        if not urls:
+            return Verdict(ok=True)
 
-        return esc
-
-    async def register_violation(self, user_id: int, chat_id: int, *, reason: str, weight: int = 1) -> Escalation:
-        """
-        Increments offense counter within window. Decides escalation stage.
-        """
-        k = f"{self._pfx}:sec:off:u:{user_id}:c:{chat_id}"
-        k_last = f"{self._pfx}:sec:last:u:{user_id}:c:{chat_id}"
-        try:
-            pipe = self.redis.pipeline()
-            pipe.incrby(k, amount=max(1, int(weight)))
-            pipe.expire(k, self.window_sec)
-            pipe.set(k_last, int(time.time()), ex=self.window_sec)
-            res = await pipe.execute()
-            count = int(res[0]) if res and len(res) >= 1 else 1
-        except Exception as e:
-            logger.debug("register_violation error: %s", e)
-            count = self.warn_thr
-
-        # Decide
-        if count >= self.ban_thr:
-            return Escalation(count=count, decision="ban")
-        if count >= self.mute_thr:
-            return Escalation(count=count, decision="mute", mute_seconds=self.mute_seconds)
-        if count >= self.warn_thr:
-            return Escalation(count=count, decision="warn")
-        return Escalation(count=count, decision="none")
-
-    async def ban_user(self, admin_id: int, target_user_id: int, target_chat_id: int, reason: str = "") -> str:
-        """
-        Helper for handlers (admin panels). Does not perform Telegram API calls here.
-        """
-        txt = f"Администратор {admin_id} инициировал бан {target_user_id} в чате {target_chat_id}."
-        if reason:
-            txt += f" Причина: {reason}"
-        logger.info("SecurityService: %s", txt)
-        return txt
-
-    async def pardon_user(self, admin_id: int, target_user_id: int, target_chat_id: int) -> str:
-        """
-        Clears counters and returns text for UI.
-        """
-        with contextlib.suppress(Exception):
-            await self.redis.delete(f"{self._pfx}:sec:off:u:{target_user_id}:c:{target_chat_id}")
-            await self.redis.delete(f"{self._pfx}:sec:last:u:{target_user_id}:c:{target_chat_id}")
-        txt = f"Администратор {admin_id} помиловал {target_user_id} в чате {target_chat_id}."
-        logger.info("SecurityService: %s", txt)
-        return txt
-
-    # -------- internals --------
-
-    def _detect_media(self, m: tg.Message) -> List[str]:
-        types: List[str] = []
-        if m.photo:
-            types.append("photo")
-        if m.document:
-            mime = getattr(m.document, "mime_type", "") or ""
-            if mime.startswith("image/"):
-                types.append("image")
-            else:
-                types.append("document")
-        if m.video:
-            types.append("video")
-        if m.animation:
-            types.append("gif")
-        return types
-
-    def _heuristics_text(self, text: str) -> Tuple[bool, List[str], float]:
-        labels: List[str] = []
-        score = 0.0
-        ok = True
-
-        # Massive repeats / caps
-        if REPEAT_CHUNK_RE.search(text):
-            labels.append("repeat")
-            score = max(score, 0.7)
-            ok = False
-        # caps — сигнал, но не всегда блокирующий
-        if CAPS_HEAVY_RE.search(text) and len(text) >= 16:
-            labels.append("caps")
-            score = max(score, 0.55)
-
-        # Invite spam / phishing words
-        if INVITE_RE.search(text):
-            labels.append("phishing")
-            score = max(score, 0.9)
-            ok = False
-
-        # Link density
-        links = URL_RE.findall(text)
-        if links:
-            density = len(links) / max(1, len(text) / 40.0)  # ~1 link per 40 chars ok
-            if density > 0.6:
-                labels.append("link_dense")
-                score = max(score, 0.7)
-
-        return ok, labels, score
-
-    def _check_links(self, text: str) -> Tuple[bool, bool]:
-        """
-        Returns (penalty, hard_block_by_blacklist)
-        """
-        penalty = False
-        hard = False
-        for m in URL_RE.findall(text):
-            host = self._extract_host(str(m))
-            if not host:
-                continue
-            if any(bad in host for bad in self.deny_domains):
-                hard = True
-            if not any(allow in host for allow in self.allow_domains):
-                penalty = True
-        return penalty, hard
-
-    @staticmethod
-    def _extract_host(url: str) -> Optional[str]:
-        u = url.lower()
-        u = u.replace("https://", "").replace("http://", "")
-        if u.startswith("www."):
-            u = u[4:]
-        return u.split("/")[0] if "/" in u else u
-
-    async def _vision_media_gate(self, message: tg.Message, media_types: List[str]) -> Tuple[bool, List[str], float]:
-        """
-        If AI vision available, analyze images/photos. Otherwise, pass-through.
-        """
-        if not self.ai:
-            return True, [], 0.0
-
-        labels: List[str] = []
-        score = 0.0
-
-        # Try various method names for best compatibility
-        method = None
-        for name in ("analyze_vision_content", "analyze_image_content", "vision_moderate"):
-            if hasattr(self.ai, name):
-                method = getattr(self.ai, name)
-                break
-
-        if not method:
-            return True, [], 0.0
-
-        # Invoke with flexible signature
-        try:
-            # Preferred signature: (message=..., bot=...) so service can fetch bytes by itself
-            res: Dict[str, Any]
+        for url in urls:
             try:
-                res = await method(message=message, bot=getattr(message, "bot", None))  # type: ignore[misc]
-            except TypeError:
-                prompt = "Проверь изображение/медиа на спам, фишинг, NSFW, QR/фишинговые линки, крипто-лохотроны."
-                res = await method(prompt)  # type: ignore[misc]
+                domain = urlparse(f"http://{url.replace('https://', '').replace('http://', '')}").hostname
+                if not domain:
+                    continue
+                
+                # Проверка по черному списку
+                if any(denied in domain for denied in self.config.DENY_DOMAINS):
+                    return Verdict(ok=False, reasons=[f"denied_domain:{domain}"], weight=5)
+                
+                # Проверка по белому списку
+                if not any(allowed in domain for allowed in self.config.ALLOW_DOMAINS):
+                    return Verdict(ok=False, reasons=[f"suspicious_link:{domain}"], weight=2)
+            except Exception:
+                continue # Игнорируем ошибки парсинга невалидных URL
 
-            # Expected res format (flexible):
-            # {
-            #   "ok": bool,
-            #   "labels": ["nsfw","phishing_image",...],
-            #   "score": float,
-            #   "reason": "..."
-            # }
-            v_ok = bool(res.get("ok", True))
-            v_labels = list(res.get("labels", []))
-            v_score = float(res.get("score", 0.0))
-            reason = str(res.get("reason", ""))
+        return Verdict(ok=True)
 
-            if not v_ok and reason:
-                v_labels.append(reason)
+    async def _apply_ai_analysis(self, message: tg.Message, text: str) -> Verdict:
+        """Делегирует анализ контента AI-сервисам, если они доступны."""
+        if not self.ai_service:
+            return Verdict(ok=True)
 
-            # Normalize NSFW/phishing hints from AI
-            if any(lbl.lower() in {"nsfw", "adult", "explicit"} for lbl in v_labels):
-                labels.append("nsfw")
-                v_ok = False
-                v_score = max(v_score, 0.95)
-            if any("phish" in lbl.lower() for lbl in v_labels):
-                labels.append("phishing_image")
-                v_ok = False
-                v_score = max(v_score, 0.9)
+        tasks = []
+        # Анализ текста, если он есть
+        if text:
+            tasks.append(self.ai_service.analyze_text(text))
+        # Анализ изображения, если оно есть
+        if message.photo or (message.document and message.document.mime_type and "image" in message.document.mime_type):
+            photo_bytes = await self.image_vision_service._download_photo(message)
+            if photo_bytes:
+                tasks.append(self.image_vision_service.analyze(photo_bytes))
+        
+        if not tasks:
+            return Verdict(ok=True)
 
-            labels.extend(v_labels)
-            score = max(score, v_score)
-            return v_ok, labels, score
-        except Exception as e:
-            logger.debug("Vision gate error: %s", e)
-            return True, [], 0.0
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        final_verdict = Verdict(ok=True)
+        for res in results:
+            if isinstance(res, Verdict) and not res.ok:
+                final_verdict.ok = False
+                final_verdict.reasons.extend(res.reasons)
+                final_verdict.weight = max(final_verdict.weight, res.weight)
+            elif isinstance(res, Exception):
+                logger.error(f"Ошибка при AI-анализе контента: {res}")
 
-    async def _send_ephemeral(self, bot: Bot, chat_id: int, text: str) -> None:
-        """
-        Sends a temporary message and deletes it after 5 seconds.
-        """
-        with contextlib.suppress(Exception):
-            msg = await bot.send_message(chat_id, text)
-            await asyncio.sleep(5)
-            with contextlib.suppress(Exception):
-                await msg.delete()
-
-    @staticmethod
-    def _u_mention(message: tg.Message) -> str:
-        u = message.from_user
-        if not u:
-            return "user"
-        name = (u.full_name or u.username or str(u.id)).strip()
-        return f"<a href=\"tg://user?id={u.id}\">{html.escape(name)}</a>"
-
-
-__all__ = ["SecurityService", "Verdict", "Escalation"]
+        return final_verdict

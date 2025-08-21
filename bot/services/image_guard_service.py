@@ -1,267 +1,192 @@
-# =============================================================================
-# File: bot/services/image_guard_service.py
-# Purpose: Anti-spam for images with OCR (Gemini) + perceptual hash + escalation
-# Ban policy: autoban after N triggers (default: 3, override via settings.security.image_spam_autoban_threshold)
-# =============================================================================
-from __future__ import annotations
+# bot/services/image_guard_service.py
+# Дата обновления: 20.08.2025
+# Версия: 2.0.0
+# Описание: Сервис для многоуровневой защиты от спам-изображений, использующий
+# перцептивное хэширование, AI-анализ (OCR) и систему эскалации нарушений.
 
+import asyncio
 import contextlib
 import io
 import re
-from dataclasses import dataclass
-from typing import Optional, Tuple, Iterable
-
-from PIL import Image
-import numpy as np
+from typing import Iterable, List, Optional, Tuple
 
 from aiogram import Bot
-from aiogram.types import Message, PhotoSize
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.types import Message, PhotoSize, User
+from loguru import logger
+from PIL import Image, ImageOps
+from redis.asyncio import Redis
 
-from bot.utils.dependencies import Deps
+from bot.config.settings import settings
+from bot.services.ai_content_service import AIContentService
+from bot.utils.dependencies import get_bot_instance, get_redis_client
+from bot.utils.keys import KeyFactory
+from bot.utils.models import ImageVerdict
+
+# Скомпилированное рег. выражение для поиска спам-паттернов в тексте
+_SPAM_RX = re.compile("|".join(settings.SECURITY.IMAGE_SPAM_PATTERNS), re.IGNORECASE)
 
 
-_SPAM_PATTERNS = (
-    r"(airdrop|bonus|claim|gift|giveaway|win\s+\$?\d+|guarantee|support|客服|赠送|抽奖)",
-    r"(usdt|trx|bnb|eth|btc)\b",
-    r"(free\s+(crypto|money|nft))",
-    r"(подпис(ывайся|ка)|розыгрыш|бонус|подарок|приз|выиграй)",
-    r"(100%\s*доход|быстрые\s*деньги|инвестиции\s*без\s*риска)",
-    r"(t\.me/|@[\w_]{3,})",
-    r"(wa\.me/|bit\.ly/|goo\.gl/|tinyurl\.com/)",
-)
-_SPAM_RX = re.compile("|".join(_SPAM_PATTERNS), re.IGNORECASE)
+def dhash(image: Image.Image) -> int:
+    """Вычисляет 64-битный перцептивный dHash для изображения."""
+    img = ImageOps.exif_transpose(image.convert("L"))
+    img = img.resize((9, 8), Image.Resampling.LANCZOS)
+    pixels = list(img.getdata())
+    hash_val = 0
+    for row in range(8):
+        for col in range(8):
+            left = pixels[row * 9 + col]
+            right = pixels[row * 9 + col + 1]
+            hash_val = (hash_val << 1) | (1 if left > right else 0)
+    return hash_val
 
-
-@dataclass
-class ImageVerdict:
-    action: str     # "allow" | "delete" | "ban"
-    reason: str = ""
+def hamming_distance(hash1: int, hash2: int) -> int:
+    """Вычисляет расстояние Хэмминга между двумя 64-битными хэшами."""
+    return (hash1 ^ hash2).bit_count()
 
 
 class ImageGuardService:
     """
-    Анализ фото:
-      1) Скачиваем байты.
-      2) Сверяем aHash с базой известных спам-баннеров (устойчиво к сжатию/скейлу).
-      3) OCR через Gemini (если доступен) + эвристики по тексту/подписи.
-      4) Эскалация: при повторе — автобан.
+    Анализирует изображения на спам, используя комбинацию перцептивных хэшей,
+    OCR через AI и эвристический анализ текста.
     """
 
-    def __init__(self, deps: Deps):
-        self.deps = deps
-        self.redis = deps.redis
-        self.settings = deps.settings
-        # Redis keys
-        self._k_hashes = "security:spam_image_hashes"    # set of hex64
-        self._k_seen_cnt = "security:user_spam_img_cnt"  # hash: user_id -> count
+    def __init__(self, ai_service: AIContentService):
+        self.redis: Redis = get_redis_client()
+        self.bot: Bot = get_bot_instance()
+        self.ai_service = ai_service
+        self.config = settings.SECURITY
+        self.keys = KeyFactory
+        logger.info("Сервис ImageGuardService инициализирован.")
 
-    # -------------------- public API --------------------
+    async def check_message_with_photo(self, message: Message) -> ImageVerdict:
+        """
+        Основной метод проверки сообщения с фото.
+        Возвращает вердикт с решением и причиной.
+        """
+        if not message.from_user or not (message.photo or (message.document and message.document.mime_type and "image" in message.document.mime_type)):
+            return ImageVerdict(action="allow")
 
-    async def check_message_with_photo(self, bot: Bot, message: Message) -> ImageVerdict:
-        photo = self._pick_best_photo(message.photo or [])
-        if not photo:
-            return ImageVerdict("allow")
-
-        img_bytes = await self._download_photo(bot, photo)
+        img_bytes = await self._download_photo(message)
         if not img_bytes:
-            return ImageVerdict("allow")
+            return ImageVerdict(action="allow", reason="download_failed")
 
-        # 1) быстрый hash-check
-        h = self._ahash(img_bytes)
-        if h is not None:
-            is_known, dist = await self._is_known_spam_hash(h, max_distance=5)
-            if is_known:
-                return await self._punish(message, f"Известная спам-картинка (dist={dist}).")
+        # Уровень 1: Проверка по базе хэшей известных спам-изображений
+        image_hash = await asyncio.to_thread(dhash, Image.open(io.BytesIO(img_bytes)))
+        is_known_spam, reason = await self._is_known_spam_hash(image_hash)
+        if is_known_spam:
+            return await self._escalate_punishment(message, reason)
 
-        # 2) подпись + OCR текст
+        # Уровень 2: Анализ текста (подпись + OCR)
         full_text = (message.caption or "").strip()
-        ocr_text = await self._ocr_with_gemini(img_bytes)
-        if ocr_text:
-            full_text = f"{full_text}\n{ocr_text}".strip()
+        ocr_text = await self.ai_service.analyze_image("Извлеки весь текст с картинки.", img_bytes)
+        if isinstance(ocr_text, dict) and ocr_text.get("extracted_text"):
+             full_text = f"{full_text}\n{ocr_text['extracted_text']}".strip()
 
-        if self._looks_spam(full_text):
-            return await self._punish(message, "Подозрительный текст на изображении/в подписи.")
+        if self._text_looks_like_spam(full_text):
+            # Если текст подозрительный, добавляем хэш в базу для будущих проверок
+            await self.mark_hash_as_spam(image_hash)
+            return await self._escalate_punishment(message, "suspicious_text_on_image")
 
-        return ImageVerdict("allow")
+        return ImageVerdict(action="allow")
 
-    async def mark_current_photo_as_spam(self, bot: Bot, message: Message) -> str:
-        """Админский хелпер: добавить хэш текущего изображения в чёрный список."""
-        photo = self._pick_best_photo(message.photo or [])
-        if not photo:
-            return "Нет фото в сообщении."
-        img_bytes = await self._download_photo(bot, photo)
+    async def mark_photo_as_spam(self, message: Message) -> str:
+        """Админский метод: добавить хэш изображения в черный список."""
+        img_bytes = await self._download_photo(message)
         if not img_bytes:
-            return "Не удалось скачать фото."
-        h = self._ahash(img_bytes)
-        if h is None:
-            return "Не удалось вычислить хэш."
-        await self.redis.sadd(self._k_hashes, f"{h:016x}")
-        return "Хэш изображения добавлен в черный список."
-
-    # -------------------- internals --------------------
-
-    def _pick_best_photo(self, photos: Iterable[PhotoSize]) -> Optional[PhotoSize]:
-        best = None
-        max_area = -1
-        for ph in photos:
-            w = getattr(ph, "width", 0) or 0
-            h = getattr(ph, "height", 0) or 0
-            area = w * h
-            if area > max_area:
-                max_area = area
-                best = ph
-        return best
-
-    async def _download_photo(self, bot: Bot, photo: PhotoSize) -> Optional[bytes]:
-        buff = io.BytesIO()
+            return "Не удалось скачать фото для анализа."
+        
+        image_hash = await asyncio.to_thread(dhash, Image.open(io.BytesIO(img_bytes)))
+        if image_hash is None:
+            return "Не удалось вычислить хэш изображения."
+            
+        await self.mark_hash_as_spam(image_hash)
+        return "Хэш изображения успешно добавлен в базу спама."
+    
+    async def mark_hash_as_spam(self, image_hash: Optional[int]):
+        """Добавляет хэш в соответствующий бакет в Redis."""
+        if image_hash is None:
+            return
         try:
-            await bot.download(photo, destination=buff)  # aiogram v3
-            return buff.getvalue()
-        except Exception:
-            pass
+            prefix = image_hash >> (64 - self.config.PHASH_PREFIX_BITS)
+            bucket_key = self.keys.image_hash_bucket(prefix)
+            pipe = self.redis.pipeline()
+            pipe.sadd(bucket_key, str(image_hash))
+            pipe.expire(bucket_key, self.config.PHASH_TTL_SECONDS)
+            await pipe.execute()
+        except Exception as e:
+            logger.error(f"Не удалось добавить хэш {image_hash} в Redis: {e}")
+
+    async def _is_known_spam_hash(self, image_hash: Optional[int]) -> Tuple[bool, str]:
+        """Проверяет, похож ли хэш на один из известных спам-хэшей."""
+        if image_hash is None:
+            return False, "hash_calculation_failed"
         try:
-            f = await bot.get_file(photo.file_id)
-            dst = io.BytesIO()
-            await bot.download_file(f.file_path, dst)  # fallback
-            return dst.getvalue()
-        except Exception:
-            return None
+            prefix = image_hash >> (64 - self.config.PHASH_PREFIX_BITS)
+            bucket_key = self.keys.image_hash_bucket(prefix)
+            
+            candidate_hashes = await self.redis.smembers(bucket_key)
+            if not candidate_hashes:
+                return False, "no_matches"
 
-    def _ahash(self, image_bytes: bytes, size: int = 8) -> Optional[int]:
-        try:
-            img = Image.open(io.BytesIO(image_bytes)).convert("L").resize((size, size), Image.LANCZOS)
-            arr = np.asarray(img, dtype=np.float32)
-            avg = arr.mean()
-            bits = (arr >= avg).astype(np.uint8)
-            v = 0
-            for b in bits.flatten():
-                v = (v << 1) | int(b)
-            return v
-        except Exception:
-            return None
+            for ch_str in candidate_hashes:
+                distance = hamming_distance(image_hash, int(ch_str))
+                if distance <= self.config.PHASH_DISTANCE:
+                    return True, f"similar_hash(dist={distance})"
+            return False, "no_similar_hashes"
+        except Exception as e:
+            logger.error(f"Ошибка при проверке хэша изображения в Redis: {e}")
+            return False, "redis_error"
 
-    async def _is_known_spam_hash(self, h: int, max_distance: int = 5) -> Tuple[bool, int]:
-        try:
-            members = await self.redis.smembers(self._k_hashes)
-        except Exception:
-            return False, 64
-        if not members:
-            return False, 64
-
-        hv = int(h)
-        best = 64
-        for m in members:
-            try:
-                mv = int(m, 16) if isinstance(m, str) else int(m.decode(), 16)
-            except Exception:
-                continue
-            d = self._hamming(hv, mv)
-            if d < best:
-                best = d
-                if d <= max_distance:
-                    return True, d
-        return False, best
-
-    def _hamming(self, a: int, b: int) -> int:
-        return (a ^ b).bit_count()
-
-    async def _ocr_with_gemini(self, img_bytes: bytes) -> Optional[str]:
-        svc = getattr(self.deps, "ai_content_service", None)
-        if svc is None:
-            return None
-        model = getattr(svc, "gemini_pro", None) or getattr(svc, "gemini_flash", None)
-        if model is None:
-            return None
-
-        prompt = (
-            "Извлеки читабельный текст с изображения как есть (без домыслов). "
-            "Верни только текст без лишних комментариев."
-        )
-        try:
-            result = model.generate_content([prompt, {"mime_type": "image/jpeg", "data": img_bytes}])
-            text = getattr(result, "text", None)
-            if not text and getattr(result, "candidates", None):
-                parts = result.candidates[0].content.parts
-                if parts and getattr(parts[0], "text", None):
-                    text = parts[0].text
-            return (text or "").strip() or None
-        except Exception:
-            return None
-
-    def _looks_spam(self, text: str) -> bool:
+    def _text_looks_like_spam(self, text: str) -> bool:
+        """Применяет эвристики для определения спама в тексте."""
         if not text:
             return False
         if _SPAM_RX.search(text):
             return True
-        money_marks = len(re.findall(r"[💰💵🪙\$€₽₿₮₺₹₩₪₫₴₦₱]", text))
+        
+        # Подсчет дополнительных признаков спама
+        money_marks = len(re.findall(r"[💰💵🪙\$€₽₿₮]", text))
         links = len(re.findall(r"https?://|t\.me/", text, re.IGNORECASE))
-        at_tags = len(re.findall(r"@\w{3,}", text))
-        score = money_marks + links + at_tags
-        return score >= 4
+        mentions = len(re.findall(r"@\w{4,}", text))
+        
+        # Простая система очков
+        score = (money_marks * 2) + (links * 1.5) + mentions
+        return score >= self.config.IMAGE_TEXT_SPAM_SCORE
 
-    async def _punish(self, message: Message, reason: str) -> ImageVerdict:
-        # 1) удаляем сообщение
-        with contextlib.suppress(Exception):
-            await message.delete()
-
-        # 2) увеличиваем счётчик нарушений
+    async def _escalate_punishment(self, message: Message, reason: str) -> ImageVerdict:
+        """Определяет меру наказания на основе количества нарушений."""
+        if not message.from_user:
+            return ImageVerdict("delete", reason)
+            
         try:
-            uid = message.from_user.id if message.from_user else 0
-            await self.redis.hincrby(self._k_seen_cnt, uid, 1)
-            cnt = int(await self.redis.hget(self._k_seen_cnt, uid) or 0)
-        except Exception:
-            cnt = 1
+            key = self.keys.user_spam_image_count(message.from_user.id)
+            violations_count = await self.redis.incr(key)
+            await self.redis.expire(key, self.config.WINDOW_SECONDS)
+        except Exception as e:
+            logger.error(f"Не удалось обновить счетчик нарушений для user_id={message.from_user.id}: {e}")
+            violations_count = 1
 
-        # 3) порог автобана
-        sec = getattr(self.settings, "security", None)
-        threshold = 3
-        with contextlib.suppress(Exception):
-            threshold = int(getattr(sec, "image_spam_autoban_threshold", 3))
-        if threshold < 1:
-            threshold = 1
+        if violations_count >= self.config.IMAGE_SPAM_AUTOBAN_THRESHOLD:
+            return ImageVerdict("ban", f"{reason} (нарушение #{violations_count})")
+        
+        return ImageVerdict("delete", f"{reason} (нарушение #{violations_count})")
 
-        # 4) эскалация: баним в группах/супергруппах
-        chat_type = getattr(message.chat, "type", "private")
-        should_ban = cnt >= threshold and chat_type in ("group", "supergroup")
+    async def _download_photo(self, message: Message) -> Optional[bytes]:
+        """Скачивает изображение из сообщения в байты."""
+        photo_size = None
+        if message.photo:
+            photo_size = max(message.photo, key=lambda p: p.file_size or 0)
+        elif message.document:
+            photo_size = message.document
 
-        if should_ban:
-            banned = await self._ban_user(message, reason=f"Автобан (спам-картинки), count={cnt}. {reason}")
-            if banned:
-                with contextlib.suppress(Exception):
-                    await message.answer(f"🚫 Пользователь заблокирован (антиспам: изображение). Причина: {reason}")
-                return ImageVerdict("ban", f"{reason} (count={cnt})")
+        if not photo_size:
+            return None
 
-        # 5) мягкое уведомление
-        with contextlib.suppress(Exception):
-            await message.answer(f"🚫 Сообщение удалено (антиспам: изображение). Причина: {reason} (повторов: {cnt})")
-
-        return ImageVerdict("delete", reason)
-
-    async def _ban_user(self, message: Message, reason: str) -> bool:
         try:
-            user_id = message.from_user.id if message.from_user else None
-            if user_id is None:
-                return False
-            chat_id = message.chat.id
-
-            # Пытаемся использовать централизованный ModerationService, если он есть
-            mod = getattr(self.deps, "moderation_service", None)
-            if mod is not None:
-                # пытаемся аккуратно определить "админа"-инициатора
-                admin_id = 0
-                with contextlib.suppress(Exception):
-                    # у некоторых ботов есть bot.id / bot.me.id
-                    admin_id = getattr(message.bot, "id", 0) or getattr(getattr(message.bot, "me", None), "id", 0) or 0
-                await mod.ban_user(
-                    admin_id=admin_id,
-                    target_user_id=user_id,
-                    target_chat_id=chat_id,
-                    reason=reason,
-                )
-                return True
-
-            # Фоллбек: напрямую через Telegram API
-            await message.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-            return True
-        except Exception:
-            return False
+            buffer = io.BytesIO()
+            await self.bot.download(photo_size, destination=buffer)
+            return buffer.getvalue()
+        except Exception as e:
+            logger.error(f"Не удалось скачать фото file_id={photo_size.file_id}: {e}")
+            return None
