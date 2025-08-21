@@ -1,21 +1,25 @@
-# bot/services/price_service.py
-# Дата обновления: 20.08.2025
-# Версия: 2.0.0
-# Описание: Высокопроизводительный сервис для получения и кэширования цен
-# на криптовалюты, работающий как отказоустойчивый слой поверх MarketDataService.
+# src/bot/services/price_service.py
+# =================================================================================
+# Файл: bot/services/price_service.py
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ СБОРКА
+# Описание:
+#   • Объединяет превосходную логику кеширования (Pydantic-модели,
+#     batch-операции, "прогрев") с правильным паттерном Dependency Injection.
+#   • Зависимости (redis, market_data_service, config) теперь передаются
+#     через конструктор, что делает сервис полностью тестируемым и независимым.
+#   • Убраны устаревшие импорты (get_redis_client).
+# =================================================================================
 
-import asyncio
 import json
 import time
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 from redis.asyncio import Redis
 
-from bot.config.settings import settings
+from bot.config.settings import PriceServiceConfig
 from bot.services.market_data_service import MarketDataService
-from bot.utils.dependencies import get_redis_client
 from bot.utils.keys import KeyFactory
 
 
@@ -35,15 +39,22 @@ class PriceService:
     запросы на получение свежих данных в MarketDataService.
     """
 
-    def __init__(self, market_data_service: MarketDataService):
+    def __init__(
+        self,
+        redis_client: Redis,
+        market_data_service: MarketDataService,
+        config: PriceServiceConfig,
+    ):
         """
         Инициализирует сервис с необходимыми зависимостями.
 
+        :param redis_client: Асинхронный клиент Redis.
         :param market_data_service: Сервис для получения рыночных данных.
+        :param config: Конфигурация для сервиса цен.
         """
-        self.redis: Redis = get_redis_client()
+        self.redis = redis_client
         self.market_data_service = market_data_service
-        self.config = settings.PRICE
+        self.config = config
         self.keys = KeyFactory
         logger.info("Сервис PriceService инициализирован.")
 
@@ -64,6 +75,7 @@ class PriceService:
         # 3. Если есть пропуски, запрашиваем их одним пакетом
         if missing_ids:
             logger.debug(f"Промах кэша для {len(missing_ids)} монет. Запрашиваю свежие данные...")
+            # Делегируем получение свежих данных MarketDataService
             fresh_prices = await self.market_data_service.get_prices(missing_ids)
             
             # Кэшируем новые данные
@@ -86,14 +98,14 @@ class PriceService:
         """
         logger.info("Запуск задачи 'прогрева' кэша цен...")
         try:
-            top_coins = await self.market_data_service.get_top_coins_by_market_cap(
-                limit=self.config.PREFETCH_COIN_LIMIT
+            top_coins = await self.market_data_service.get_top_n_coins(
+                limit=self.config.top_n_coins
             )
             if not top_coins:
                 logger.warning("Не удалось получить список топ-монет для 'прогрева' кэша.")
                 return
 
-            top_coin_ids = [coin.id for coin in top_coins]
+            top_coin_ids = [coin['id'] for coin in top_coins]
             await self.get_prices(top_coin_ids)
             logger.success(f"Кэш цен для {len(top_coin_ids)} топ-монет успешно 'прогрет'.")
         except Exception as e:
@@ -101,10 +113,7 @@ class PriceService:
 
     async def _get_cached_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
         """Массово получает цены из кэша Redis."""
-        if not self.redis:
-            return {cid: None for cid in coin_ids}
-        
-        keys = [self.keys.price_cache(cid) for cid in coin_ids]
+        keys = [self.keys.get_coin_price_key(cid) for cid in coin_ids]
         try:
             cached_results = await self.redis.mget(keys)
             
@@ -116,7 +125,7 @@ class PriceService:
                     try:
                         price_data = PriceData.model_validate_json(raw_data)
                         # Проверяем, не устарели ли данные в кэше
-                        if (now - price_data.timestamp) <= self.config.CACHE_TTL_SECONDS:
+                        if (now - price_data.timestamp) <= self.config.cache_ttl_seconds:
                             prices[coin_id] = price_data.price
                             continue
                     except (ValidationError, json.JSONDecodeError):
@@ -130,18 +139,15 @@ class PriceService:
 
     async def _cache_prices(self, price_data: Dict[str, Optional[float]]):
         """Массово сохраняет цены в кэш Redis."""
-        if not self.redis:
-            return
-            
         try:
             pipe = self.redis.pipeline()
             now = int(time.time())
             cached_count = 0
             for coin_id, price in price_data.items():
                 if price is not None:
-                    key = self.keys.price_cache(coin_id)
+                    key = self.keys.get_coin_price_key(coin_id)
                     data = PriceData(price=price, timestamp=now).model_dump_json()
-                    pipe.set(key, data, ex=self.config.CACHE_TTL_SECONDS)
+                    pipe.set(key, data, ex=self.config.cache_ttl_seconds)
                     cached_count += 1
             
             if cached_count > 0:
