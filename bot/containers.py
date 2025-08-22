@@ -27,55 +27,50 @@ from bot.services.user_service import UserService
 from bot.services.verification_service import VerificationService
 from bot.services.ai_content_service import AIContentService
 from bot.utils.http_client import HttpClient
+from bot.services.parser_service import ParserService
+from bot.services.mining_service import MiningService
+from bot.services.moderation_service import ModerationService
+from bot.services.security_service import SecurityService
+from bot.services.image_vision_service import ImageVisionService
 
 
 class Container(containers.DeclarativeContainer):
     """
-    Основной контейнер приложения.
+    Основной контейнер приложения для внедрения зависимостей.
     """
-    # --- Wiring ---
     wiring_config = containers.WiringConfiguration(
         modules=[
             "bot.main",
-            "bot.middlewares.dependencies_middleware",
-            "bot.handlers.public.start_handler",
-            "bot.handlers.public.price_handler",
-            "bot.handlers.public.market_handler",
-            "bot.handlers.public.market_info_handler",
-            "bot.handlers.public.news_handler",
-            "bot.handlers.public.quiz_handler",
-            "bot.handlers.public.achievements_handler",
-            "bot.handlers.public.asic_handler",
-            "bot.handlers.public.crypto_center_handler",
-            "bot.handlers.public.game_handler",
-            "bot.handlers.game.mining_game_handler",
-            "bot.handlers.admin.admin_menu",
-            "bot.handlers.admin.cache_handler",
-            "bot.handlers.admin.stats_handler",
-            "bot.handlers.admin.verification_admin_handler",
+            "bot.utils.dependencies",
             "bot.jobs.scheduled_tasks",
+        ],
+        packages=[
+            "bot.handlers",
+            "bot.middlewares",
         ]
     )
 
-    # --- Конфигурация ---
-    config: providers.Provider[Settings] = providers.Object(settings)
+    config = providers.Object(settings)
 
-    # --- Клиенты ---
     redis_client = providers.Singleton(
         Redis.from_url,
         url=config.provided.REDIS_URL.get_secret_value(),
         decode_responses=True,
     )
 
-    http_client = providers.Singleton(HttpClient, config=config.provided.endpoints)
+    http_client = providers.Singleton(HttpClient)
 
-    # --- Сервисы ---
+    ai_content_service = providers.Singleton(AIContentService)
+    
+    image_vision_service = providers.Singleton(
+        ImageVisionService,
+        ai_service=ai_content_service,
+    )
+
     user_service = providers.Singleton(
         UserService,
         redis_client=redis_client,
     )
-    
-    ai_content_service = providers.Singleton(AIContentService)
 
     coin_list_service = providers.Singleton(
         CoinListService,
@@ -87,8 +82,9 @@ class Container(containers.DeclarativeContainer):
     coin_alias_service = providers.Singleton(
         CoinAliasService,
         redis_client=redis_client,
-        coin_list_service=coin_list_service,
     )
+    
+    parser_service = providers.Singleton(ParserService)
 
     market_data_service = providers.Singleton(
         MarketDataService,
@@ -101,9 +97,7 @@ class Container(containers.DeclarativeContainer):
     price_service = providers.Singleton(
         PriceService,
         redis_client=redis_client,
-        http_client=http_client,
         market_data_service=market_data_service,
-        coin_alias_service=coin_alias_service,
         config=config.provided.price_service,
     )
 
@@ -117,39 +111,38 @@ class Container(containers.DeclarativeContainer):
     quiz_service = providers.Singleton(
         QuizService,
         ai_content_service=ai_content_service,
-        config=config.provided.quiz,
     )
 
     achievement_service = providers.Singleton(
         AchievementService,
         redis_client=redis_client,
         market_data_service=market_data_service,
-        config=config.provided.achievements,
     )
 
     asic_service = providers.Singleton(
         AsicService,
         redis_client=redis_client,
-        http_client=http_client,
-        config=config.provided.asic_service,
+        parser_service=parser_service,
     )
 
     crypto_center_service = providers.Singleton(
         CryptoCenterService,
         redis_client=redis_client,
-        http_client=http_client,
         news_service=news_service,
         ai_content_service=ai_content_service,
-        config=config.provided.crypto_center,
     )
 
+    mining_service = providers.Singleton(
+        MiningService,
+        market_data_service=market_data_service,
+    )
+    
     mining_game_service = providers.Singleton(
         MiningGameService,
         redis_client=redis_client,
         user_service=user_service,
         asic_service=asic_service,
         achievement_service=achievement_service,
-        config=config.provided.game,
     )
 
     verification_service = providers.Singleton(
@@ -160,5 +153,16 @@ class Container(containers.DeclarativeContainer):
     admin_service = providers.Singleton(
         AdminService,
         redis_client=redis_client,
-        config=config,
+    )
+
+    moderation_service = providers.Singleton(
+        ModerationService,
+        redis_client=redis_client
+    )
+
+    security_service = providers.Singleton(
+        SecurityService,
+        ai_content_service=ai_content_service,
+        image_vision_service=image_vision_service,
+        moderation_service=moderation_service,
     )
