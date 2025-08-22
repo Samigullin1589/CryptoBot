@@ -16,12 +16,8 @@ services:
     startCommand: |
       python -m bot.main
     envVars:
-      # Фикс версии Python согласно оф. документации Render:
-      # https://render.com/docs/python-version
       - key: PYTHON_VERSION
         value: 3.12.11
-
-      # Основные переменные (секреты вводятся вручную в дашборде)
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_USER_IDS
@@ -30,21 +26,15 @@ services:
         value: Asia/Tbilisi
       - key: LOG_LEVEL
         value: INFO
-
-      # Подключение к Key Value (Redis) из сервиса ниже:
       - key: REDIS_URL
         fromService:
           name: cryptobot-kv
           type: keyvalue
           property: connectionString
-
-      # ИИ-ключи (по необходимости)
       - key: OPENAI_API_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-
-      # Внешние API (по необходимости)
       - key: CRYPTOCOMPARE_API_KEY
         sync: false
       - key: COINGECKO_API_KEY
@@ -53,6 +43,6 @@ services:
   # --- Key Value (современная замена типа redis) ---
   - type: keyvalue
     name: cryptobot-kv
-    plan: free           # допустим для Key Value
-    ipAllowList: []      # доступ из приватной сети Render
+    plan: free
+    ipAllowList: []
     maxmemoryPolicy: allkeys-lru

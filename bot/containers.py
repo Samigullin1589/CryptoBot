@@ -1,14 +1,11 @@
-# src/bot/containers.py
 # =================================================================================
 # Файл: bot/containers.py
-# Версия: "Distinguished Engineer" — МАКСИМАЛЬНАЯ
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (22.08.2025)
 # Описание:
 #   • Центральный DI-контейнер, адаптированный под новую, вложенную конфигурацию.
 #   • Инициализирует Redis-клиент напрямую из DSN (REDIS_URL).
 #   • Прокидывает в каждый сервис только его собственный, изолированный
 #     блок настроек (например, settings.price_service), а не весь объект целиком.
-#     Это улучшает инкапсуляцию и упрощает тестирование.
-#   • Полностью совместим с вашим расширенным файлом settings.py.
 # =================================================================================
 
 from dependency_injector import containers, providers
@@ -27,6 +24,8 @@ from bot.services.news_service import NewsService
 from bot.services.price_service import PriceService
 from bot.services.quiz_service import QuizService
 from bot.services.user_service import UserService
+from bot.services.verification_service import VerificationService
+from bot.services.ai_content_service import AIContentService
 from bot.utils.http_client import HttpClient
 
 
@@ -35,7 +34,6 @@ class Container(containers.DeclarativeContainer):
     Основной контейнер приложения.
     """
     # --- Wiring ---
-    # Указываем модули для "проброса" зависимостей.
     wiring_config = containers.WiringConfiguration(
         modules=[
             "bot.main",
@@ -51,20 +49,18 @@ class Container(containers.DeclarativeContainer):
             "bot.handlers.public.crypto_center_handler",
             "bot.handlers.public.game_handler",
             "bot.handlers.game.mining_game_handler",
-            "bot.handlers.admin.admin_handler",
+            "bot.handlers.admin.admin_menu",
             "bot.handlers.admin.cache_handler",
             "bot.handlers.admin.stats_handler",
+            "bot.handlers.admin.verification_admin_handler",
             "bot.jobs.scheduled_tasks",
         ]
     )
 
     # --- Конфигурация ---
-    # Предоставляем полный объект настроек
     config: providers.Provider[Settings] = providers.Object(settings)
 
     # --- Клиенты ---
-    # Используем Singleton, чтобы во всем приложении был один экземпляр.
-    # Инициализируем Redis из DSN-строки, как и положено.
     redis_client = providers.Singleton(
         Redis.from_url,
         url=config.provided.REDIS_URL.get_secret_value(),
@@ -74,13 +70,12 @@ class Container(containers.DeclarativeContainer):
     http_client = providers.Singleton(HttpClient, config=config.provided.endpoints)
 
     # --- Сервисы ---
-    # Каждый сервис получает только свой, строго типизированный блок конфигурации.
-    # Это лучшая практика, так как сервис не знает о существовании других настроек.
-
     user_service = providers.Singleton(
         UserService,
         redis_client=redis_client,
     )
+    
+    ai_content_service = providers.Singleton(AIContentService)
 
     coin_list_service = providers.Singleton(
         CoinListService,
@@ -99,6 +94,7 @@ class Container(containers.DeclarativeContainer):
         MarketDataService,
         redis_client=redis_client,
         http_client=http_client,
+        coin_list_service=coin_list_service,
         config=config.provided.market_data,
     )
 
@@ -120,14 +116,14 @@ class Container(containers.DeclarativeContainer):
 
     quiz_service = providers.Singleton(
         QuizService,
-        redis_client=redis_client,
-        http_client=http_client,
+        ai_content_service=ai_content_service,
         config=config.provided.quiz,
     )
 
     achievement_service = providers.Singleton(
         AchievementService,
         redis_client=redis_client,
+        market_data_service=market_data_service,
         config=config.provided.achievements,
     )
 
@@ -143,18 +139,26 @@ class Container(containers.DeclarativeContainer):
         redis_client=redis_client,
         http_client=http_client,
         news_service=news_service,
+        ai_content_service=ai_content_service,
         config=config.provided.crypto_center,
     )
 
     mining_game_service = providers.Singleton(
         MiningGameService,
         redis_client=redis_client,
+        user_service=user_service,
+        asic_service=asic_service,
+        achievement_service=achievement_service,
         config=config.provided.game,
+    )
+
+    verification_service = providers.Singleton(
+        VerificationService,
+        user_service=user_service,
     )
 
     admin_service = providers.Singleton(
         AdminService,
         redis_client=redis_client,
-        # Админскому сервису может потребоваться доступ ко всем настройкам
         config=config,
     )
