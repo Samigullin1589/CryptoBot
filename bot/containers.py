@@ -74,3 +74,4 @@ class Container(containers.DeclarativeContainer):
     admin_service = providers.Singleton(AdminService, redis_client=redis_client, bot=bot)
     moderation_service = providers.Singleton(ModerationService, redis_client=redis_client, bot=bot)
     security_service = providers.Singleton(SecurityService, ai_content_service=ai_content_service, image_vision_service=image_vision_service, moderation_service=moderation_service, redis_client=redis_client, bot=bot)
+}
