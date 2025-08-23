@@ -1,12 +1,12 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
 # Описание: Централизованное хранилище Pydantic-моделей.
-# ИСПРАВЛЕНИЕ: Добавлены все недостающие модели, включая Achievement.
+# ИСПРАВЛЕНИЕ: Добавлены все недостающие модели, включая UserGameStats.
 # =================================================================================
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -103,7 +103,7 @@ class AirdropProject(BaseModel):
     status: str
     tasks: List[str]
     guide_url: Optional[str] = None
-
+    
 class MiningProject(BaseModel):
     id: str
     name: str
@@ -124,7 +124,6 @@ class MarketListing(BaseModel):
     created_at: int
     asic_data: str
 
-# --- ИСПРАВЛЕНО: Добавлена модель Achievement ---
 class Achievement(BaseModel):
     id: str
     name: str
@@ -174,7 +173,7 @@ class ImageAnalysisResult(BaseModel):
     is_spam: bool = False
     explanation: Optional[str] = None
     extracted_text: Optional[str] = None
-
+    
 # --- МОДЕЛИ ДЛЯ ИГРЫ ---
 class ElectricityTariff(BaseModel):
     name: str
@@ -186,3 +185,25 @@ class MiningSession(BaseModel):
     started_at: float
     ends_at: float
     tariff_json: str
+
+# --- ИСПРАВЛЕНО: Добавлена модель UserGameStats ---
+class UserGameStats(BaseModel):
+    sessions_total: int = 0
+    spent_total: float = 0.0
+    earned_total: float = 0.0
+
+class EventItem(BaseModel):
+    id: str
+    name: str
+    description: str
+    domain: str = "all"
+    multiplier: float = 1.0
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+    def is_active(self, now: datetime) -> bool:
+        if self.start_date and now < self.start_date:
+            return False
+        if self.end_date and now > self.end_date:
+            return False
+        return True

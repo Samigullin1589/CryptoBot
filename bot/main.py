@@ -135,7 +135,8 @@ async def main() -> None:
     
     bot = await container.bot()
     dp = Dispatcher()
-
+    
+    # ИСПРАВЛЕНО: Правильная инициализация middleware с зависимостями
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
