@@ -57,4 +57,12 @@ async def cmd_version(message: Message, deps) -> None:
         f"• redis: <code>{getattr(redis, '__version__', 'n/a')}</code>",
         f"• APScheduler: <code>{getattr(apscheduler, '__version__', 'n/a')}</code>",
         f"• openai: <code>{getattr(openai, '__version__', 'n/a')}</code> — {'✅' if has_openai else '—'}",
-        f"• google-generativeai: <code>{getattr(genai, '__version__', 'n/a') if genai else 'n/a'}</code>
+        f"• google-generativeai: <code>{getattr(genai, '__version__', 'n/a') if genai else 'n/a'}</code> — {'✅' if has_gemini else '—'}",
+        "",
+        "<b>Providers</b>",
+        f"• CryptoPanic: {'✅' if has_cp else '—'}",
+        f"• NewsAPI: {'✅' if has_newsapi else '—'}",
+        "",
+        "<i>Совет: /health для полной диагностики</i>",
+    ]
+    await message.answer("\n".join(lines), parse_mode="HTML", disable_web_page_preview=True)
