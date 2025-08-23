@@ -1,13 +1,13 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
 # Описание: Централизованное хранилище Pydantic-моделей.
-# ИСПРАВЛЕНИЕ: Добавлены все недостающие модели, включая UserGameStats.
+# ИСПРАВЛЕНИЕ: Добавлены все недостающие модели, включая Verdict и Escalation.
 # =================================================================================
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, List, Optional, Dict
-from datetime import datetime, timezone
+from typing import Any, List, Optional, Dict, Literal
+from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -158,6 +158,16 @@ class MuteRecord(BaseModel):
     until: datetime
 
 # --- МОДЕЛИ ДЛЯ СИСТЕМЫ БЕЗОПАСНОСТИ ---
+class Verdict(BaseModel):
+    ok: bool
+    reasons: List[str] = Field(default_factory=list)
+    weight: int = 1
+
+class Escalation(BaseModel):
+    count: int
+    decision: Literal["ban", "mute", "warn", "none"]
+    mute_seconds: int
+
 class ImageVerdict(BaseModel):
     action: str
     reason: Optional[str] = None
@@ -186,7 +196,6 @@ class MiningSession(BaseModel):
     ends_at: float
     tariff_json: str
 
-# --- ИСПРАВЛЕНО: Добавлена модель UserGameStats ---
 class UserGameStats(BaseModel):
     sessions_total: int = 0
     spent_total: float = 0.0
