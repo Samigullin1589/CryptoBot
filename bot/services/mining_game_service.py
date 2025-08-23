@@ -1,8 +1,7 @@
 # bot/services/mining_game_service.py
-# Дата обновления: 20.08.2025
-# Версия: 2.0.0
-# Описание: Основной сервис, управляющий игровой логикой "виртуального майнинга",
-# включая управление сессиями, тарифами и взаимодействием с балансом пользователя.
+# Дата обновления: 23.08.2025
+# Версия: 2.1.0
+# Описание: Основной сервис, управляющий игровой логикой "виртуального майнинга".
 
 import json
 import time
@@ -17,10 +16,10 @@ from bot.config.settings import settings
 from bot.services.achievement_service import AchievementService
 from bot.services.asic_service import AsicService
 from bot.services.user_service import UserService
-from bot.utils.dependencies import get_redis_client
 from bot.utils.keys import KeyFactory
 from bot.utils.models import AsicMiner, ElectricityTariff, MiningSession, UserGameStats
 from bot.utils.redis_lock import LockAcquisitionError, RedisLock
+from bot.config.settings import MiningGameServiceConfig
 
 
 class MiningGameService:
@@ -34,15 +33,16 @@ class MiningGameService:
         user_service: UserService,
         asic_service: AsicService,
         achievement_service: AchievementService,
+        redis_client: Redis,
     ):
         """
         Инициализирует сервис с необходимыми зависимостями.
         """
-        self.redis: Redis = get_redis_client()
+        self.redis = redis_client
         self.user_service = user_service
         self.asic_service = asic_service
         self.achievement_service = achievement_service
-        self.config = settings.GAME
+        self.config: MiningGameServiceConfig = settings.game
         self.keys = KeyFactory
         logger.info("Сервис MiningGameService инициализирован.")
 
@@ -55,7 +55,6 @@ class MiningGameService:
             return MiningSession.model_validate(session_data)
         except ValidationError as e:
             logger.error(f"Ошибка валидации данных сессии для user_id={user_id}: {e}. Данные: {session_data}")
-            # Удаляем поврежденные данные, чтобы избежать проблем в будущем
             await self.redis.delete(self.keys.active_session(user_id))
             return None
 
@@ -69,7 +68,7 @@ class MiningGameService:
         Атомарно покупает и запускает майнинг-сессию.
         Возвращает кортеж (сообщение_для_пользователя, флаг_успеха).
         """
-        lock_key = self.keys.session_lock(user_id)
+        lock_key = f"lock:session:{user_id}"
         try:
             async with RedisLock(self.redis, lock_key, timeout=5):
                 return await self._atomic_start_session(user_id, selected_asic)
@@ -90,29 +89,27 @@ class MiningGameService:
             return "Ошибка: цена оборудования не может быть отрицательной.", False
 
         if price > 0:
-            debit_success, new_balance = await self.user_service.debit_balance(
+            debit_success, _ = await self.user_service.debit_balance(
                 user_id, price, reason=f"Покупка ASIC: {selected_asic.name}"
             )
             if not debit_success:
                 price_f = f"{price:,.2f}".replace(",", " ")
                 return f"Недостаточно средств для покупки <b>{selected_asic.name}</b> (нужно {price_f} монет).", False
 
-        # Создание сессии
         now = time.time()
-        ends_at = now + self.config.SESSION_DURATION_MINUTES * 60
         current_tariff = await self._get_current_tariff_object(user_id)
         
         session = MiningSession(
             asic_json=selected_asic.model_dump_json(),
             started_at=now,
-            ends_at=ends_at,
+            ends_at=now + self.config.session_duration_minutes * 60,
             tariff_json=current_tariff.model_dump_json()
         )
 
         try:
             pipe = self.redis.pipeline()
             pipe.hset(self.keys.active_session(user_id), mapping=session.model_dump(mode="json"))
-            pipe.expire(self.keys.active_session(user_id), self.config.SESSION_DURATION_MINUTES * 60 + 10)
+            pipe.expire(self.keys.active_session(user_id), self.config.session_duration_minutes * 60 + 10)
             pipe.hincrby(self.keys.user_game_stats(user_id), "sessions_total", 1)
             if price > 0:
                 pipe.hincrbyfloat(self.keys.user_game_stats(user_id), "spent_total", price)
@@ -120,7 +117,7 @@ class MiningGameService:
 
             await self.achievement_service.process_static_event(user_id, "mining_session_started")
             
-            duration_min = self.config.SESSION_DURATION_MINUTES
+            duration_min = self.config.session_duration_minutes
             msg = (
                 f"🎉 Сессия запущена!\n\n"
                 f"Оборудование: <b>{selected_asic.name}</b>\n"
@@ -129,42 +126,45 @@ class MiningGameService:
             return msg, True
         except Exception as e:
             logger.exception(f"Ошибка при создании сессии в Redis для user_id={user_id}: {e}")
-            # Попытка откатить списание средств
             await self.user_service.credit_balance(user_id, price, reason="Возврат средств после сбоя старта сессии")
             return "Не удалось запустить сессию из-за ошибки базы данных. Средства возвращены.", False
 
     async def get_electricity_tariffs(self) -> List[ElectricityTariff]:
         """Возвращает список всех доступных тарифов из конфигурации."""
-        return [ElectricityTariff(name=name, **data) for name, data in self.config.ELECTRICITY_TARIFFS.items()]
+        return [ElectricityTariff(name=name, **data.model_dump()) for name, data in self.config.electricity_tariffs.items()]
 
     async def get_user_tariffs_info(self, user_id: int) -> Tuple[List[str], str]:
         """Возвращает список купленных тарифов и название текущего."""
         owned_key = self.keys.owned_tariffs(user_id)
         profile_key = self.keys.user_profile(user_id)
         
-        pipe = self.redis.pipeline()
-        pipe.smembers(owned_key)
-        pipe.hget(profile_key, "current_tariff")
-        owned_raw, current_raw = await pipe.execute()
+        owned_raw, current_raw = await asyncio.gather(
+            self.redis.smembers(owned_key),
+            self.redis.hget(profile_key, "current_tariff")
+        )
         
         owned = list(owned_raw or [])
-        # Гарантируем, что дефолтный тариф всегда "куплен"
-        if self.config.DEFAULT_ELECTRICITY_TARIFF not in owned:
-            owned.append(self.config.DEFAULT_ELECTRICITY_TARIFF)
+        if self.config.default_electricity_tariff not in owned:
+            owned.append(self.config.default_electricity_tariff)
             
-        current = current_raw or self.config.DEFAULT_ELECTRICITY_TARIFF
+        current = current_raw or self.config.default_electricity_tariff
         return sorted(owned), current
 
     async def _get_current_tariff_object(self, user_id: int) -> ElectricityTariff:
         """Возвращает Pydantic-объект текущего тарифа пользователя."""
-        profile_key = self.keys.user_profile(user_id)
-        tariff_name = await self.redis.hget(profile_key, "current_tariff") or self.config.DEFAULT_ELECTRICITY_TARIFF
-        tariff_data = self.config.ELECTRICITY_TARIFFS.get(tariff_name, {})
-        return ElectricityTariff(name=tariff_name, **tariff_data)
+        _, current_tariff_name = await self.get_user_tariffs_info(user_id)
+        tariff_data = self.config.electricity_tariffs.get(current_tariff_name)
+        
+        if not tariff_data:
+            default_name = self.config.default_electricity_tariff
+            tariff_data = self.config.electricity_tariffs[default_name]
+            return ElectricityTariff(name=default_name, **tariff_data.model_dump())
+            
+        return ElectricityTariff(name=current_tariff_name, **tariff_data.model_dump())
 
     async def select_tariff(self, user_id: int, tariff_name: str) -> str:
         """Выбирает тариф в качестве текущего, если он куплен."""
-        all_tariffs = {t.name for t in await self.get_electricity_tariffs()}
+        all_tariffs = self.config.electricity_tariffs.keys()
         if tariff_name not in all_tariffs:
             return "Такой тариф не существует."
 
@@ -177,8 +177,7 @@ class MiningGameService:
 
     async def buy_tariff(self, user_id: int, tariff_name: str) -> str:
         """Покупает тариф, если он еще не куплен и у пользователя достаточно средств."""
-        all_tariffs = {t.name: t for t in await self.get_electricity_tariffs()}
-        tariff = all_tariffs.get(tariff_name)
+        tariff = self.config.electricity_tariffs.get(tariff_name)
         if not tariff:
             return "Такой тариф не существует."
 
@@ -195,7 +194,6 @@ class MiningGameService:
                 price_f = f"{price:,.0f}".replace(",", " ")
                 return f"Недостаточно средств для покупки тарифа <b>{tariff_name}</b> (нужно {price_f} монет)."
         
-        # Добавляем тариф в список купленных и делаем его текущим
         pipe = self.redis.pipeline()
         pipe.sadd(self.keys.owned_tariffs(user_id), tariff_name)
         pipe.hset(self.keys.user_profile(user_id), "current_tariff", tariff_name)
