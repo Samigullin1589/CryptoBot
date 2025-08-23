@@ -50,7 +50,7 @@ class Container(containers.DeclarativeContainer):
     # ИСПРАВЛЕНО: RedisDsn преобразуется в строку через str()
     redis_client = providers.Resource(
         Redis.from_url,
-        url=config.provided.REDIS_URL.as_str(),
+        url=str(config.provided.REDIS_URL),
         decode_responses=True,
     )
     http_client = providers.Resource(HttpClient, config=config.provided.endpoints)
