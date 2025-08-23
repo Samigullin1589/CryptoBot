@@ -3,9 +3,9 @@
 # Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (22.08.2025)
 # Описание:
 #   • Центральный DI-контейнер, адаптированный под новую, вложенную конфигурацию.
-#   • Инициализирует Redis-клиент напрямую из DSN (REDIS_URL).
+#   • Инициализирует Redis-клиент и HttpClient как управляемые ресурсы.
 #   • Прокидывает в каждый сервис только его собственный, изолированный
-#     блок настроек (например, settings.price_service), а не весь объект целиком.
+#     блок настроек (например, settings.price_service).
 # =================================================================================
 
 from dependency_injector import containers, providers
@@ -50,16 +50,21 @@ class Container(containers.DeclarativeContainer):
         ]
     )
 
-    config = providers.Object(settings)
+    config = providers.Singleton(Settings)
 
-    redis_client = providers.Singleton(
+    # --- Управляемые ресурсы (с методами startup/shutdown) ---
+    redis_client = providers.Resource(
         Redis.from_url,
         url=config.provided.REDIS_URL.get_secret_value(),
         decode_responses=True,
     )
 
-    http_client = providers.Singleton(HttpClient)
+    http_client = providers.Resource(
+        HttpClient,
+        config=config.provided.endpoints,
+    )
 
+    # --- Сервисы ---
     ai_content_service = providers.Singleton(AIContentService)
     
     image_vision_service = providers.Singleton(
@@ -84,7 +89,7 @@ class Container(containers.DeclarativeContainer):
         redis_client=redis_client,
     )
     
-    parser_service = providers.Singleton(ParserService)
+    parser_service = providers.Singleton(ParserService, http_client=http_client)
 
     market_data_service = providers.Singleton(
         MarketDataService,
@@ -115,7 +120,6 @@ class Container(containers.DeclarativeContainer):
 
     achievement_service = providers.Singleton(
         AchievementService,
-        redis_client=redis_client,
         market_data_service=market_data_service,
     )
 

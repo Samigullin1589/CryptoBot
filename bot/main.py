@@ -4,9 +4,7 @@
 # Описание:
 #   • Полная инициализация бота (настройки, DI, middlewares, routers, команды)
 #   • Плановые задачи (jobs/scheduled_tasks)
-#   • Корректное завершение и обработка сигналов
-#   • Все сервисы создаются через DI-контейнер.
-#   • Полностью асинхронная инициализация без блокирующих вызовов.
+#   • Корректное завершение и обработка сигналов, включая ресурсы контейнера.
 # ======================================================================================
 
 from __future__ import annotations
@@ -16,7 +14,7 @@ import inspect
 import logging
 import signal
 from importlib import import_module
-from typing import Any, Type
+from typing import Any
 
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
@@ -25,9 +23,9 @@ from aiogram.types import BotCommand
 
 from bot.config.settings import settings
 from bot.containers import Container
-from bot.utils.dependencies import Deps, dependencies_middleware
+from bot.utils.dependencies import dependencies_middleware
 from bot.utils.logging_setup import setup_logging
-from bot.middlewares.throttling_middleware import Throttling_middleware
+from bot.middlewares.throttling_middleware import ThrottlingMiddleware
 from bot.middlewares.activity_middleware import ActivityMiddleware
 from bot.middlewares.action_tracking_middleware import ActionTrackingMiddleware
 
@@ -50,8 +48,11 @@ async def setup_commands(bot: Bot) -> None:
 def _collect_routers(module: Any) -> list[Router]:
     """Ищет все объекты Router в модуле."""
     routers: list[Router] = []
-    for _, obj in vars(module).items():
+    for name, obj in vars(module).items():
         if isinstance(obj, Router):
+            # Добавляем имя файла в имя роутера для лучшей отладки
+            if not obj.name:
+                obj.name = name
             routers.append(obj)
     return routers
 
@@ -141,21 +142,27 @@ async def main() -> None:
     setup_logging(level=settings.log_level, format="text")
 
     container = Container()
-    container.config.from_object(settings)
+    container.wire(
+        modules=[__name__],
+        packages=["bot.handlers", "bot.middlewares", "bot.jobs"],
+    )
     
     bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(container=container)
 
-    # Внедряем зависимости во все обработчики
-    dp.update.outer_middleware(dependencies_middleware)
+    # Внедряем Bot в контейнер, чтобы сервисы могли его использовать
+    container.admin_service.provided.bot.set(bot)
+    container.moderation_service.provided.bot.set(bot)
 
     # Middlewares (порядок важен)
+    dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
     dp.update.outer_middleware(ThrottlingMiddleware(redis=await container.redis_client()))
     
     register_routers(dp)
     await setup_commands(bot)
+    await container.init_resources() # Инициализируем Redis, HTTP и т.д.
     await setup_scheduler(container)
 
     logger.info("Запуск бота...")
@@ -167,7 +174,7 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(), stop_event=stop_event)
     finally:
         logger.info("Завершение работы бота...")
-        await container.shutdown_resources()
+        await container.shutdown_resources() # Корректно закрываем соединения
         await bot.session.close()
         logger.info("Бот остановлен.")
 
