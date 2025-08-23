@@ -72,5 +72,3 @@ class Container(containers.DeclarativeContainer):
     mining_game_service = providers.Singleton(MiningGameService, user_service=user_service, asic_service=asic_service, achievement_service=achievement_service, redis_client=redis_client)
     verification_service = providers.Singleton(VerificationService, user_service=user_service)
     admin_service = providers.Singleton(AdminService, redis_client=redis_client, bot=bot)
-    moderation_service = providers.Singleton(ModerationService, redis_client=redis_client, bot=bot)
-    security_service = providers.Singleton(SecurityService, ai_content_service=ai_content_service, image_vision_service=image_vision_service, moderation_service=moderation_service, redis_client=redis_client, bot=bot)

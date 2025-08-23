@@ -156,17 +156,4 @@ class AdminService:
             logger.success(f"Админ {admin_id} изменил баланс user_id={user_id} на {amount}. Новый баланс: {new_balance}")
             return new_balance
         except Exception as e:
-            logger.exception(f"Ошибка при изменении баланса для user_id={user_id} админом {admin_id}: {e}")
-            return None
-
-    async def clear_asic_cache(self) -> int:
-        logger.info("Запущена задача очистки кэша ASIC.")
-        deleted_count = 0
-        async for key in self.redis.scan_iter(match="asic:*"):
-            deleted_count += await self.redis.delete(key)
-        
-        service_keys = [self.keys.asics_sorted_set(), self.keys.asics_last_update()]
-        deleted_count += await self.redis.delete(*service_keys)
-        
-        logger.success(f"Кэш ASIC очищен. Удалено ключей: {deleted_count}.")
-        return deleted_count
+            logger.exception(f"Ошибка при изменении баланса для user_id={user_id} админом {admin_id}: {e
