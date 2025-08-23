@@ -139,7 +139,7 @@ async def main() -> None:
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
-    dp.update.outer_middleware(ThrottlingMiddleware(deps=data['deps']))
+    dp.update.outer_middleware(ThrottlingMiddleware(redis=await container.redis_client()))
     
     register_routers(dp)
     await setup_commands(bot)

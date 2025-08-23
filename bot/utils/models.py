@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
 # Описание: Централизованное хранилище Pydantic-моделей.
-# ИСПРАВЛЕНИЕ: Добавлена недостающая функция parse_datetime.
+# ИСПРАВЛЕНИЕ: Добавлены все недостающие модели, включая Achievement.
 # =================================================================================
 from __future__ import annotations
 
@@ -12,20 +12,17 @@ from email.utils import parsedate_to_datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# --- ИСПРАВЛЕНО: Добавлена недостающая функция ---
 def parse_datetime(date_string: Optional[str]) -> int:
     """Безопасно парсит строку с датой в Unix timestamp."""
     if not date_string:
         return int(datetime.now(timezone.utc).timestamp())
     try:
-        # Пытаемся обработать стандартные форматы (RFC 2822, ISO 8601)
         dt = parsedate_to_datetime(date_string)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return int(dt.timestamp())
     except (TypeError, ValueError):
         try:
-            # Фолбэк для форматов типа '2025-08-23T12:00:00Z'
             dt = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
             return int(dt.timestamp())
         except Exception:
@@ -55,11 +52,7 @@ class User(BaseModel):
     role: UserRole = UserRole.USER
     verification_data: VerificationData = Field(default_factory=VerificationData)
     electricity_cost: float = 0.05
-    
-    model_config = ConfigDict(
-        populate_by_name=True,
-        arbitrary_types_allowed=True,
-    )
+    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
 # --- КАЛЬКУЛЯТОР ---
 class CalculationInput(BaseModel):
@@ -93,8 +86,8 @@ class AsicMiner(BaseModel):
     net_profit: Optional[float] = None
     gross_profit: Optional[float] = None
     electricity_cost_per_day: Optional[float] = None
-    id: Optional[str] = None # Для совместимости с данными из ангара
-    
+    id: Optional[str] = None
+
 class NewsArticle(BaseModel):
     title: str
     url: str
@@ -110,7 +103,7 @@ class AirdropProject(BaseModel):
     status: str
     tasks: List[str]
     guide_url: Optional[str] = None
-    
+
 class MiningProject(BaseModel):
     id: str
     name: str
@@ -129,7 +122,41 @@ class MarketListing(BaseModel):
     seller_id: int
     price: float
     created_at: int
-    asic_data: str # JSON-строка с данными AsicMiner
+    asic_data: str
+
+# --- ИСПРАВЛЕНО: Добавлена модель Achievement ---
+class Achievement(BaseModel):
+    id: str
+    name: str
+    description: str
+    reward_coins: float
+    trigger_event: str
+    type: str = "static"
+    trigger_conditions: Optional[Dict[str, Any]] = None
+
+class MiningSessionResult(BaseModel):
+    asic_name: str
+    user_tariff_name: str
+    gross_earned: float
+    total_electricity_cost: float
+    net_earned: float
+    event_description: Optional[str] = None
+    unlocked_achievement: Optional[Achievement] = None
+
+# --- МОДЕЛИ МОДЕРАЦИИ ---
+class BanRecord(BaseModel):
+    user_id: int
+    by_admin_id: int
+    reason: Optional[str] = None
+    created_at: datetime
+    until: Optional[datetime] = None
+
+class MuteRecord(BaseModel):
+    user_id: int
+    by_admin_id: int
+    reason: Optional[str] = None
+    created_at: datetime
+    until: datetime
 
 # --- МОДЕЛИ ДЛЯ СИСТЕМЫ БЕЗОПАСНОСТИ ---
 class ImageVerdict(BaseModel):
@@ -147,7 +174,7 @@ class ImageAnalysisResult(BaseModel):
     is_spam: bool = False
     explanation: Optional[str] = None
     extracted_text: Optional[str] = None
-    
+
 # --- МОДЕЛИ ДЛЯ ИГРЫ ---
 class ElectricityTariff(BaseModel):
     name: str
