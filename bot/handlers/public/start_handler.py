@@ -1,32 +1,34 @@
-# ======================================================================================
-# File: bot/handlers/start_handler.py
-# Version: "Distinguished Engineer" — Aug 16, 2025
-# Description:
-#   /start приветствие + кнопка открытия главного меню.
-# ======================================================================================
-
-from __future__ import annotations
+# =============================================================================
+# Файл: src/bot/handlers/public/start_handler.py
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (23 августа 2025)
+# Описание: Обработчик базовых команд /start и /help. Экспортирует "router".
+# =============================================================================
 
 from aiogram import Router
-from aiogram.filters import CommandStart
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import CommandStart, Command
+from aiogram.types import Message
+from aiogram.utils.markdown import hbold
 
-router = Router(name="start_public")
+# Важно: имя переменной должно быть "router", чтобы _safe_import его нашёл.
+router = Router(name="start_handler_router")
 
-
-def _menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Открыть меню", callback_data="menu:open")],
-        ]
-    )
-
+HELP_MESSAGE = (
+    f"{hbold('ℹ️ Справка по командам бота:')}\n\n"
+    "▪️ /start - Перезапустить бота\n"
+    "▪️ /game - Открыть игровое меню\n"
+    "▪️ /help - Показать это сообщение"
+)
 
 @router.message(CommandStart())
-async def cmd_start(message: Message) -> None:
-    text = (
-        "<b>Привет!</b>\n"
-        "Я помогу с котировками, новостями и инструментами для крипто.\n"
-        "Открой меню — там всё основное."
-    )
-    await message.answer(text, parse_mode="HTML", reply_markup=_menu_kb())
+async def handle_start(message: Message):
+    """
+    Обработчик команды /start. Приветствует пользователя.
+    """
+    await message.answer(f"Привет, {hbold(message.from_user.full_name)}!")
+
+@router.message(Command("help"))
+async def handle_help(message: Message):
+    """
+    Обработчик команды /help. Отправляет справочное сообщение.
+    """
+    await message.answer(HELP_MESSAGE)

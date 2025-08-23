@@ -1,9 +1,5 @@
-# ===============================================================
-# Файл: bot/handlers/game/__init__.py (НОВЫЙ ФАЙЛ)
-# Описание: Делает директорию 'game' Python-пакетом и экспортирует
-#           необходимые роутеры для централизованной регистрации.
-# ===============================================================
-
+from aiogram import Router
 from .mining_game_handler import game_router as mining_game_router
 
-__all__ = ["mining_game_router"]
+game_router = Router(name="game_router")
+game_router.include_router(mining_game_router)

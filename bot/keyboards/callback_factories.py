@@ -1,6 +1,6 @@
 # =============================================================================
-# Файл: bot/keyboards/callback_factories.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (Aug 23, 2025)
+# Файл: src/bot/keyboards/callback_factories.py
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (23 августа 2025)
 # Описание: Единые, строго типизированные фабрики CallbackData для всех модулей.
 # =============================================================================
 
@@ -64,3 +64,11 @@ class CryptoCenterCallback(CallbackData, prefix="crypto_center"):
 
 class OnboardingCallback(CallbackData, prefix="onb"):
     action: str
+
+# --- ИСПРАВЛЕНИЕ: Добавлен недостающий класс PaginatorCallback ---
+# Причина: Логи показывали падение бота из-за невозможности импортировать этот класс.
+# Его добавление напрямую устраняет ошибку ImportError при запуске.
+class PaginatorCallback(CallbackData, prefix="paginator"):
+    action: str  # Например, "next" или "prev"
+    page: int
+    module: str  # Идентификатор модуля, для которого используется пагинация (например, "news", "market")
