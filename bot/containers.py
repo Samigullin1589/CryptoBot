@@ -3,6 +3,7 @@
 # Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (23.08.2025)
 # Описание:
 #   • Центральный DI-контейнер, управляющий жизненным циклом всех сервисов.
+# ИСПРАВЛЕНИЕ: Исправлен вызов config.provided.REDIS_URL для совместимости с Pydantic V2.
 # =================================================================================
 
 from dependency_injector import containers, providers
@@ -46,9 +47,10 @@ class Container(containers.DeclarativeContainer):
     config = providers.Singleton(Settings)
     bot = providers.Singleton(Bot, token=config.provided.BOT_TOKEN.get_secret_value())
 
+    # ИСПРАВЛЕНО: RedisDsn преобразуется в строку через str()
     redis_client = providers.Resource(
         Redis.from_url,
-        url=config.provided.REDIS_URL.get_secret_value(),
+        url=config.provided.REDIS_URL.as_str(),
         decode_responses=True,
     )
     http_client = providers.Resource(HttpClient, config=config.provided.endpoints)
