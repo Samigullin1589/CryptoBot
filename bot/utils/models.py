@@ -1,10 +1,35 @@
+# =================================================================================
+# Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
+# Описание: Централизованное хранилище Pydantic-моделей.
+# ИСПРАВЛЕНИЕ: Добавлена недостающая функция parse_datetime.
+# =================================================================================
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any
+from typing import Any, List, Optional
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# --- ИСПРАВЛЕНО: Добавлена недостающая функция ---
+def parse_datetime(date_string: Optional[str]) -> int:
+    """Безопасно парсит строку с датой в Unix timestamp."""
+    if not date_string:
+        return int(datetime.now(timezone.utc).timestamp())
+    try:
+        # Пытаемся обработать стандартные форматы (RFC 2822, ISO 8601)
+        dt = parsedate_to_datetime(date_string)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except (TypeError, ValueError):
+        try:
+            # Фолбэк для форматов типа '2025-08-23T12:00:00Z'
+            dt = datetime.fromisoformat(date_string.replace('Z', '+00:00'))
+            return int(dt.timestamp())
+        except Exception:
+            return int(datetime.now(timezone.utc).timestamp())
 
 # --- ИЕРАРХИЯ РОЛЕЙ ---
 class UserRole(IntEnum):
@@ -14,38 +39,27 @@ class UserRole(IntEnum):
     ADMIN = 3
     SUPER_ADMIN = 4
 
-
 # --- МОДЕЛЬ ВЕРИФИКАЦИИ ---
 class VerificationData(BaseModel):
     is_verified: bool = False
     passport_verified: bool = False
     deposit: float = 0.0
-    country_code: str = "🇷🇺"
-
-
-# --- МОДЕЛЬ ИГРОВОГО ПРОФИЛЯ ---
-class UserGameProfile(BaseModel):
-    balance: float = 0.0
-    total_earned: float = 0.0
-    current_tariff: str
-    owned_tariffs: list[str]
-
+    country_code: str = "RU"
 
 # --- ЦЕНТРАЛЬНАЯ МОДЕЛЬ ПОЛЬЗОВАТЕЛЯ ---
 class User(BaseModel):
-    id: int = Field(alias="user_id")
-    username: str | None = None
-    first_name: str = Field(alias="full_name")
-    language_code: str | None = None
+    id: int
+    username: Optional[str] = None
+    first_name: str
+    language_code: Optional[str] = None
     role: UserRole = UserRole.USER
     verification_data: VerificationData = Field(default_factory=VerificationData)
     electricity_cost: float = 0.05
-
+    
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True,
     )
-
 
 # --- КАЛЬКУЛЯТОР ---
 class CalculationInput(BaseModel):
@@ -54,18 +68,14 @@ class CalculationInput(BaseModel):
     electricity_cost: float
     pool_commission: float
 
-
 class CalculationResult(BaseModel):
     btc_price_usd: float
     usd_rub_rate: float
-    network_hashrate_ths: float
-    block_reward_btc: float
     gross_revenue_usd_daily: float
     electricity_cost_usd_daily: float
     pool_fee_usd_daily: float
     total_expenses_usd_daily: float
     net_profit_usd_daily: float
-
 
 # --- ПРОЧИЕ МОДЕЛИ ---
 class Coin(BaseModel):
@@ -73,96 +83,79 @@ class Coin(BaseModel):
     symbol: str
     name: str
 
-
-class PriceInfo(BaseModel):
-    price: float
-    market_cap: float | None = None
-    volume_24h: float | None = None
-    change_24h: float | None = None
-
-
-class MiningEvent(BaseModel):
-    name: str
-    description: str
-    probability: float = Field(ge=0.0, le=1.0)
-    profit_multiplier: float = 1.0
-    cost_multiplier: float = 1.0
-
-
 class AsicMiner(BaseModel):
-    id: str
     name: str
-    vendor: str | None = "Unknown"
     hashrate: str
     power: int
-    algorithm: str
-    profitability: float | None = None
-    price: float | None = None
-    net_profit: float | None = None
-    gross_profit: float | None = None
-    electricity_cost_per_day: float | None = None
-
-
+    algorithm: Optional[str] = None
+    profitability: Optional[float] = None
+    price: Optional[float] = None
+    net_profit: Optional[float] = None
+    gross_profit: Optional[float] = None
+    electricity_cost_per_day: Optional[float] = None
+    id: Optional[str] = None # Для совместимости с данными из ангара
+    
 class NewsArticle(BaseModel):
     title: str
     url: str
-    body: str | None = None
-    source: str | None = None
-    timestamp: int | None = None
-    published_at: str | None = None
-    ai_summary: str | None = None
-
+    source: str
+    timestamp: int
+    body: Optional[str] = None
+    ai_summary: Optional[str] = None
 
 class AirdropProject(BaseModel):
     id: str
     name: str
     description: str
     status: str
-    tasks: list[str]
-    guide_url: str | None = None
-
-
-class Achievement(BaseModel):
+    tasks: List[str]
+    guide_url: Optional[str] = None
+    
+class MiningProject(BaseModel):
     id: str
     name: str
     description: str
-    reward_coins: float
-    trigger_event: str
-    type: str = "static"
-    trigger_conditions: dict[str, Any | None] = None
+    algorithm: str
+    hardware: str
+    status: str
 
-
-class MiningSessionResult(BaseModel):
-    asic_name: str
-    user_tariff_name: str
-    gross_earned: float
-    total_electricity_cost: float
-    net_earned: float
-    event_description: str | None = None
-    unlocked_achievement: Achievement | None = None
-
+class QuizQuestion(BaseModel):
+    question: str
+    options: List[str]
+    correct_option_index: int
 
 class MarketListing(BaseModel):
     id: str
     seller_id: int
     price: float
     created_at: int
-    asic_data: str
+    asic_data: str # JSON-строка с данными AsicMiner
 
-
-class QuizQuestion(BaseModel):
-    question: str
-    options: list[str]
-    correct_option_index: int
-    explanation: str | None = None
-
-
-# --- ВЕРДИКТ ДЛЯ ФИЛЬТРА УГРОЗ ---
-class AIVerdict(BaseModel):
-    intent: str = "other"
-    toxicity_score: float = 0.0
-    is_potential_scam: bool = False
-    is_potential_phishing: bool = False
-    # Для ThreatFilter и логирования:
+# --- МОДЕЛИ ДЛЯ СИСТЕМЫ БЕЗОПАСНОСТИ ---
+class ImageVerdict(BaseModel):
+    action: str
+    reason: Optional[str] = None
+    
+class SecurityVerdict(BaseModel):
     score: float = 0.0
-    reasons: list[str] = Field(default_factory=list)
+    action: Optional[str] = None
+    reason: Optional[str] = None
+    details: List[str] = []
+    domains: List[str] = []
+
+class ImageAnalysisResult(BaseModel):
+    is_spam: bool = False
+    explanation: Optional[str] = None
+    extracted_text: Optional[str] = None
+    
+# --- МОДЕЛИ ДЛЯ ИГРЫ ---
+class ElectricityTariff(BaseModel):
+    name: str
+    cost_per_kwh: float
+    unlock_price: float
+
+class MiningSession(BaseModel):
+    asic_json: str
+    started_at: float
+    ends_at: float
+    tariff_json: str

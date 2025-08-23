@@ -8,12 +8,11 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup
 
-# Импортируем наши новые фабрики
 from .callback_factories import MenuCallback
 
 def get_promo_button() -> InlineKeyboardButton:
     """Создает универсальную промо-кнопку со случайным текстом."""
-    promo_url = "https://cutt.ly/5rWGcgYL"
+    promo_url = "https://example.com" # Замените на реальную ссылку
     promo_texts = [
         "🎁 Суперцена на майнеры –50%", "🔥 Горячий прайс: скидка до 30%",
         "⏳ Лимитированная цена на ASIC!", "📉 Цена-провал: ASIC по демо-тарифу",
@@ -35,7 +34,7 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     for text, action in buttons.items():
         builder.button(
             text=text, 
-            callback_data=MenuCallback(level=0, action=action).pack() # ИСПРАВЛЕНО
+            callback_data=MenuCallback(level=0, action=action).pack()
         )
         
     builder.adjust(2)
@@ -50,7 +49,7 @@ def get_back_to_main_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(
         text="⬅️ Назад в главное меню", 
-        callback_data=MenuCallback(level=0, action="main").pack() # ИСПРАВЛЕНО
+        callback_data=MenuCallback(level=0, action="main").pack()
     )
     builder.row(get_promo_button())
     return builder.as_markup()

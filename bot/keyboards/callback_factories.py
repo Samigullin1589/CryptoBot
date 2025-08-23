@@ -1,8 +1,7 @@
 # =============================================================================
 # Файл: bot/keyboards/callback_factories.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (Aug 21, 2025)
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (Aug 23, 2025)
 # Описание: Единые, строго типизированные фабрики CallbackData для всех модулей.
-# Устранена избыточность и неоднозначность полей.
 # =============================================================================
 
 from typing import Optional
@@ -10,6 +9,7 @@ from aiogram.filters.callback_data import CallbackData
 
 class MenuCallback(CallbackData, prefix="menu"):
     action: str
+    level: int = 0
 
 class GameCallback(CallbackData, prefix="game"):
     action: str

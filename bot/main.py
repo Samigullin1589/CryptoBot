@@ -17,7 +17,6 @@ from importlib import import_module
 from typing import Any
 
 from aiogram import Bot, Dispatcher, Router
-from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
@@ -140,7 +139,7 @@ async def main() -> None:
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
-    dp.update.outer_middleware(ThrottlingMiddleware(redis=await container.redis_client()))
+    dp.update.outer_middleware(ThrottlingMiddleware(deps=data['deps']))
     
     register_routers(dp)
     await setup_commands(bot)

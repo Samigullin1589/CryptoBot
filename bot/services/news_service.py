@@ -28,7 +28,7 @@ class NewsService:
         """Инициализирует сервис с зависимостями."""
         self.redis = redis_client
         self.http_client = http_client
-        self.config = settings.NEWS
+        self.config = settings.news_service
         self.keys = KeyFactory
         logger.info("Сервис NewsService инициализирован.")
 
@@ -47,65 +47,44 @@ class NewsService:
         """
         Принудительно обновляет кэш новостей.
         """
-        tasks = [self._fetch_cryptopanic(), self._fetch_newsapi()]
+        tasks = [self._fetch_rss(feed) for feed in self.config.feeds.main_rss_feeds]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         raw_articles = [item for res in results if isinstance(res, list) for item in res]
         
         unique_articles = self._deduplicate_articles(raw_articles)
-        unique_articles.sort(key=lambda x: x.get("published_at"), reverse=True)
-
-        enrich_tasks = [self._fetch_article_body(article) for article in unique_articles[:self.config.ENRICH_LIMIT]]
-        enriched_articles = await asyncio.gather(*enrich_tasks)
+        unique_articles.sort(key=lambda x: x.get("timestamp", 0), reverse=True)
 
         try:
-            validated_articles = [NewsArticle.model_validate(art) for art in enriched_articles]
+            validated_articles = [NewsArticle.model_validate(art) for art in unique_articles]
             await self._cache_articles(validated_articles)
             return validated_articles[:limit]
         except ValidationError as e:
             logger.error(f"Ошибка валидации новостей перед кэшированием: {e}")
             return []
-
-    async def _fetch_cryptopanic(self) -> List[Dict[str, Any]]:
-        """Получает новости из API CryptoPanic."""
-        if not settings.CRYPTOPANIC_API_KEY: return []
-        params = {"auth_token": settings.CRYPTOPANIC_API_KEY.get_secret_value(), "kind": "news", "public": "true"}
+            
+    async def _fetch_rss(self, url: str) -> List[Dict[str, Any]]:
+        """Получает и парсит новости из RSS-фида."""
         try:
-            data = await self.http_client.get(self.config.CRYPTOPANIC_URL, params=params)
-            return [{"id": item.get("id"), "title": item.get("title"), "url": item.get("url"), "source": item.get("source", {}).get("title"), "published_at": parse_datetime(item.get("published_at"))} for item in data.get("results", [])]
+            response_text = await self.http_client.get(url, response_type='text')
+            soup = BeautifulSoup(response_text, 'xml')
+            
+            articles = []
+            for item in soup.find_all('item')[:self.config.news_limit_per_source]:
+                title = item.find('title').text if item.find('title') else 'Без заголовка'
+                link = item.find('link').text if item.find('link') else ''
+                pub_date_str = item.find('pubDate').text if item.find('pubDate') else ''
+                
+                articles.append({
+                    "title": title,
+                    "url": link,
+                    "source": url.split('/')[2],
+                    "timestamp": parse_datetime(pub_date_str),
+                })
+            return articles
         except Exception as e:
-            logger.error(f"Не удалось получить новости от CryptoPanic: {e}")
+            logger.error(f"Не удалось получить новости из RSS {url}: {e}")
             return []
-
-    async def _fetch_newsapi(self) -> List[Dict[str, Any]]:
-        """Получает новости из NewsAPI."""
-        if not settings.NEWS_API_KEY: return []
-        params = {"q": "crypto OR bitcoin OR ethereum OR blockchain", "sortBy": "publishedAt", "language": self.config.LANGUAGE, "pageSize": self.config.PAGE_SIZE, "apiKey": settings.NEWS_API_KEY.get_secret_value()}
-        try:
-            data = await self.http_client.get(self.config.NEWSAPI_URL, params=params)
-            return [{"id": hashlib.sha1(item.get("url", "").encode()).hexdigest(), "title": item.get("title"), "url": item.get("url"), "source": item.get("source", {}).get("name"), "published_at": parse_datetime(item.get("publishedAt"))} for item in data.get("articles", [])]
-        except Exception as e:
-            logger.error(f"Не удалось получить новости от NewsAPI: {e}")
-            return []
-
-    async def _fetch_article_body(self, article_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Пытается загрузить и очистить полный текст статьи."""
-        url = article_data.get("url")
-        if not url:
-            article_data["body"] = ""
-            return article_data
-        
-        try:
-            html = await self.http_client.get(url, response_type='text')
-            soup = BeautifulSoup(html, "html.parser")
-            for script_or_style in soup(["script", "style"]): script_or_style.decompose()
-            text = soup.get_text(separator="\n", strip=True)
-            article_data["body"] = "\n".join(line for line in text.splitlines() if line.strip())
-        except Exception as e:
-            logger.warning(f"Не удалось загрузить тело статьи {url}: {e}")
-            article_data["body"] = ""
-        
-        return article_data
 
     def _deduplicate_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Удаляет дубликаты новостей по URL."""
@@ -116,14 +95,14 @@ class NewsService:
         """Сохраняет список новостей в кэш Redis."""
         try:
             data = json.dumps([a.model_dump(mode='json') for a in articles])
-            await self.redis.set(self.keys.news_cache(), data, ex=self.config.CACHE_TTL_SECONDS)
+            await self.redis.set(self.keys.news_deduplication_set(), data, ex=self.config.cache_ttl_seconds)
         except Exception as e:
             logger.error(f"Ошибка при сохранении новостей в кэш Redis: {e}")
 
     async def _get_cached_news(self) -> Optional[List[NewsArticle]]:
         """Получает и валидирует список новостей из кэша Redis."""
         try:
-            data = await self.redis.get(self.keys.news_cache())
+            data = await self.redis.get(self.keys.news_deduplication_set())
             if not data: return None
             return [NewsArticle.model_validate(item) for item in json.loads(data)]
         except (json.JSONDecodeError, ValidationError):

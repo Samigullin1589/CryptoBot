@@ -17,13 +17,13 @@ services:
       python -m bot.main
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.11
+        value: 3.12.1
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_USER_IDS
         sync: false
       - key: TZ
-        value: Asia/Tbilisi
+        value: "UTC"
       - key: LOG_LEVEL
         value: INFO
       - key: REDIS_URL
