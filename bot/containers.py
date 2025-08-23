@@ -1,17 +1,17 @@
 # =================================================================================
 # Файл: bot/containers.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (22.08.2025)
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (23.08.2025)
 # Описание:
-#   • Центральный DI-контейнер, адаптированный под новую, вложенную конфигурацию.
-#   • Инициализирует Redis-клиент и HttpClient как управляемые ресурсы.
-#   • Прокидывает в каждый сервис только его собственный, изолированный
-#     блок настроек (например, settings.price_service).
+#   • Центральный DI-контейнер.
+#   • Инициализирует все клиенты и сервисы, передавая зависимости через конструктор.
+#   • Управляет жизненным циклом ресурсов (Redis, HTTP).
 # =================================================================================
 
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
+from aiogram import Bot
 
-from bot.config.settings import Settings, settings
+from bot.config.settings import Settings
 from bot.services.achievement_service import AchievementService
 from bot.services.admin_service import AdminService
 from bot.services.asic_service import AsicService
@@ -51,8 +51,8 @@ class Container(containers.DeclarativeContainer):
     )
 
     config = providers.Singleton(Settings)
+    bot = providers.Singleton(Bot, token=config.provided.BOT_TOKEN.get_secret_value())
 
-    # --- Управляемые ресурсы (с методами startup/shutdown) ---
     redis_client = providers.Resource(
         Redis.from_url,
         url=config.provided.REDIS_URL.get_secret_value(),
@@ -64,7 +64,6 @@ class Container(containers.DeclarativeContainer):
         config=config.provided.endpoints,
     )
 
-    # --- Сервисы ---
     ai_content_service = providers.Singleton(AIContentService)
     
     image_vision_service = providers.Singleton(
@@ -89,7 +88,7 @@ class Container(containers.DeclarativeContainer):
         redis_client=redis_client,
     )
     
-    parser_service = providers.Singleton(ParserService, http_client=http_client)
+    parser_service = providers.Singleton(ParserService)
 
     market_data_service = providers.Singleton(
         MarketDataService,
@@ -109,8 +108,6 @@ class Container(containers.DeclarativeContainer):
     news_service = providers.Singleton(
         NewsService,
         redis_client=redis_client,
-        http_client=http_client,
-        config=config.provided.news_service,
     )
 
     quiz_service = providers.Singleton(
@@ -121,19 +118,20 @@ class Container(containers.DeclarativeContainer):
     achievement_service = providers.Singleton(
         AchievementService,
         market_data_service=market_data_service,
+        redis_client=redis_client,
     )
 
     asic_service = providers.Singleton(
         AsicService,
-        redis_client=redis_client,
         parser_service=parser_service,
+        redis_client=redis_client,
     )
 
     crypto_center_service = providers.Singleton(
         CryptoCenterService,
-        redis_client=redis_client,
+        ai_service=ai_content_service,
         news_service=news_service,
-        ai_content_service=ai_content_service,
+        redis_client=redis_client,
     )
 
     mining_service = providers.Singleton(
@@ -143,10 +141,10 @@ class Container(containers.DeclarativeContainer):
     
     mining_game_service = providers.Singleton(
         MiningGameService,
-        redis_client=redis_client,
         user_service=user_service,
         asic_service=asic_service,
         achievement_service=achievement_service,
+        redis_client=redis_client,
     )
 
     verification_service = providers.Singleton(
@@ -157,11 +155,13 @@ class Container(containers.DeclarativeContainer):
     admin_service = providers.Singleton(
         AdminService,
         redis_client=redis_client,
+        bot=bot,
     )
 
     moderation_service = providers.Singleton(
         ModerationService,
-        redis_client=redis_client
+        redis_client=redis_client,
+        bot=bot,
     )
 
     security_service = providers.Singleton(
@@ -169,4 +169,6 @@ class Container(containers.DeclarativeContainer):
         ai_content_service=ai_content_service,
         image_vision_service=image_vision_service,
         moderation_service=moderation_service,
+        redis_client=redis_client,
+        bot=bot,
     )

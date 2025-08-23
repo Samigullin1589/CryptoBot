@@ -1,9 +1,9 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (aiogram 3.x, Aug 22, 2025)
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (aiogram 3.x, Aug 23, 2025)
 # Описание:
 #   • Полная инициализация бота (настройки, DI, middlewares, routers, команды)
-#   • Плановые задачи (jobs/scheduled_tasks)
+#   • Плановые задачи, управляемые через DI.
 #   • Корректное завершение и обработка сигналов, включая ресурсы контейнера.
 # ======================================================================================
 
@@ -50,7 +50,6 @@ def _collect_routers(module: Any) -> list[Router]:
     routers: list[Router] = []
     for name, obj in vars(module).items():
         if isinstance(obj, Router):
-            # Добавляем имя файла в имя роутера для лучшей отладки
             if not obj.name:
                 obj.name = name
             routers.append(obj)
@@ -69,32 +68,19 @@ def _import_optional(module_path: str) -> object | None:
 def register_routers(dp: Dispatcher) -> None:
     """Импортирует и регистрирует все роутеры проекта."""
     module_paths: list[str] = [
-        "bot.handlers.public.start_handler",
-        "bot.handlers.public.menu_handlers",
-        "bot.handlers.public.help_handler",
-        "bot.handlers.public.common_handler",
-        "bot.handlers.public.onboarding_handler",
-        "bot.handlers.public.price_handler",
-        "bot.handlers.public.asic_handler",
-        "bot.handlers.public.news_handler",
-        "bot.handlers.public.quiz_handler",
-        "bot.handlers.public.market_info_handler",
-        "bot.handlers.public.crypto_center_handler",
-        "bot.handlers.public.achievements_handler",
-        "bot.handlers.public.verification_public_handler",
-        "bot.handlers.public.game_handler",
-        "bot.handlers.public.market_handler",
-        "bot.handlers.tools.calculator_handler",
-        "bot.handlers.game.mining_game_handler",
-        "bot.handlers.threats.threat_handler",
-        "bot.handlers.admin.admin_menu",
-        "bot.handlers.admin.moderation_handler",
-        "bot.handlers.admin.stats_handler",
-        "bot.handlers.admin.game_admin_handler",
-        "bot.handlers.admin.verification_admin_handler",
-        "bot.handlers.admin.cache_handler",
-        "bot.handlers.admin.health_handler",
-        "bot.handlers.admin.version_handler",
+        "bot.handlers.public.start_handler", "bot.handlers.public.menu_handlers",
+        "bot.handlers.public.help_handler", "bot.handlers.public.common_handler",
+        "bot.handlers.public.onboarding_handler", "bot.handlers.public.price_handler",
+        "bot.handlers.public.asic_handler", "bot.handlers.public.news_handler",
+        "bot.handlers.public.quiz_handler", "bot.handlers.public.market_info_handler",
+        "bot.handlers.public.crypto_center_handler", "bot.handlers.public.achievements_handler",
+        "bot.handlers.public.verification_public_handler", "bot.handlers.public.game_handler",
+        "bot.handlers.public.market_handler", "bot.handlers.tools.calculator_handler",
+        "bot.handlers.game.mining_game_handler", "bot.handlers.threats.threat_handler",
+        "bot.handlers.admin.admin_menu", "bot.handlers.admin.moderation_handler",
+        "bot.handlers.admin.stats_handler", "bot.handlers.admin.game_admin_handler",
+        "bot.handlers.admin.verification_admin_handler", "bot.handlers.admin.cache_handler",
+        "bot.handlers.admin.health_handler", "bot.handlers.admin.version_handler",
         "bot.handlers.public.text_handler",
     ]
 
@@ -142,19 +128,15 @@ async def main() -> None:
     setup_logging(level=settings.log_level, format="text")
 
     container = Container()
+    container.config.from_object(settings)
     container.wire(
         modules=[__name__],
         packages=["bot.handlers", "bot.middlewares", "bot.jobs"],
     )
     
-    bot = Bot(token=settings.BOT_TOKEN.get_secret_value(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher(container=container)
+    bot = await container.bot()
+    dp = Dispatcher()
 
-    # Внедряем Bot в контейнер, чтобы сервисы могли его использовать
-    container.admin_service.provided.bot.set(bot)
-    container.moderation_service.provided.bot.set(bot)
-
-    # Middlewares (порядок важен)
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
@@ -162,7 +144,7 @@ async def main() -> None:
     
     register_routers(dp)
     await setup_commands(bot)
-    await container.init_resources() # Инициализируем Redis, HTTP и т.д.
+    await container.init_resources()
     await setup_scheduler(container)
 
     logger.info("Запуск бота...")
@@ -174,7 +156,7 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(), stop_event=stop_event)
     finally:
         logger.info("Завершение работы бота...")
-        await container.shutdown_resources() # Корректно закрываем соединения
+        await container.shutdown_resources()
         await bot.session.close()
         logger.info("Бот остановлен.")
 
