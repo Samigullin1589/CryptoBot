@@ -1,6 +1,7 @@
 # =============================================================================
-# Файл: src/bot/handlers/public/__init__.py (ИСПРАВЛЕННЫЙ)
-# Описание: Исправлена логика агрегации роутеров для предотвращения двойной регистрации.
+# Файл: src/bot/handlers/public/__init__.py
+# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (23 августа 2025)
+# Описание: Агрегатор роутеров для общедоступных команд с безопасным импортом.
 # =============================================================================
 
 from aiogram import Router
@@ -70,10 +71,7 @@ verification_public_router = _safe_import("src.bot.handlers.public.verification_
 achievements_router = _safe_import("src.bot.handlers.public.achievements_handler")
 game_router = _safe_import_any("src.bot.handlers.game", ["game_router", "router"])
 _menu_try = _safe_import_any("src.bot.handlers.public.menu_handler", ["menu_router", "router"])
-# ===============================================================
-# ИСПРАВЛЕНИЕ ЗДЕСЬ: menu_router больше не дублирует start_router
-# ===============================================================
-menu_router = _menu_try if not _is_empty_router(_menu_try) else Router(name="menu_empty")
+menu_router = start_router if _is_empty_router(_menu_try) else _menu_try
 crypto_center_router = _safe_import("src.bot.handlers.public.crypto_center_handler")
 common_router = _safe_import("src.bot.handlers.public.common_handler")
 

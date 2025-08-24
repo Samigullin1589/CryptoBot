@@ -1,8 +1,6 @@
 # =================================================================================
-# Файл: bot/handlers/public/game_handler.py (ВЕРСЯ "Distinguished Engineer" - ФИНАЛЬНАЯ)
-# Описание: Полнофункциональный обработчик для раздела "Виртуальный Майнинг".
-# Управляет FSM, навигацией и запуском игровых сессий.
-# ИСПРАВЛЕНИЕ: Переход на использование GameCallback и MenuCallback.
+# Файл: bot/handlers/public/game_handler.py (ИСПРАВЛЕННЫЙ)
+# Описание: Исправлен импорт `get_hangar_keyboard`.
 # =================================================================================
 import logging
 from aiogram import F, Router
@@ -12,7 +10,10 @@ from aiogram.types import CallbackQuery
 from bot.utils.dependencies import Deps
 from bot.states.game_states import MiningGameStates
 from bot.keyboards.callback_factories import MenuCallback, GameCallback
-from bot.keyboards.game_keyboards import get_game_main_menu_keyboard, get_hangar_keyboard
+# ===============================================================
+# ИСПРАВЛЕНИЕ ЗДЕСЬ: `get_hangar_keyboard` импортируется из `mining_keyboards`
+# ===============================================================
+from bot.keyboards.mining_keyboards import get_mining_menu_keyboard, get_hangar_keyboard
 
 router = Router(name=__name__)
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ async def show_game_menu(call: CallbackQuery, deps: Deps, state: FSMContext):
     is_session_active = bool(session_data)
 
     text = f"{farm_info}\n\n{stats_info}"
-    keyboard = get_game_main_menu_keyboard(is_session_active)
+    keyboard = get_mining_menu_keyboard(is_session_active)
 
     await call.message.edit_text(text, reply_markup=keyboard)
     await call.answer()

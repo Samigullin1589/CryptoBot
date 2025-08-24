@@ -1,11 +1,6 @@
 # ===============================================================
-# Файл: bot/keyboards/mining_keyboards.py (ПРОДАКШН-ВЕРСИЯ 2025 - ПОЛНАЯ ВОССТАНОВЛЕННАЯ)
-# Описание: Генераторы клавиатур для игры "Виртуальный Майнинг" и Калькулятора.
-# ИСПРАВЛЕНИЯ:
-#   • Переход на фабрики CallbackData.
-#   • Клавиатура тарифов поддерживает dict/объекты, безопасное форматирование цены.
-#   • Корректные действия: покупка/выбор/пометка текущего, кнопка «Назад».
-#   • Совместима с вашим mining_game_handler.py (confirm_purchase и т.д.).
+# Файл: bot/keyboards/mining_keyboards.py (ИСПРАВЛЕННЫЙ)
+# Описание: Добавлена недостающая функция `get_hangar_keyboard`.
 # ===============================================================
 
 from __future__ import annotations
@@ -16,21 +11,18 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from bot.utils.models import AsicMiner
 from bot.utils.text_utils import normalize_asic_name
-from .callback_factories import MenuCallback, GameCallback, PaginatorCallback, CalculatorCallback  # noqa: F401
+from .callback_factories import MenuCallback, GameCallback, PaginatorCallback, CalculatorCallback
 
 PAGE_SIZE = 5
 
-# -------------------------- утилиты ---------------------------
-
+# ... (код существующих функций _get, _fmt_money, _normalize_items и др. остается без изменений) ...
 def _get(obj: Any, key: str, default=None):
-    """Атрибут из объекта или ключ из dict."""
     if isinstance(obj, Mapping):
         return obj.get(key, default)
     return getattr(obj, key, default)
 
 
 def _fmt_money(val: Any, digits: int = 0, dash: str = "—") -> str:
-    """Безопасное форматирование суммы (None -> '—')."""
     try:
         if val is None:
             return dash
@@ -40,7 +32,6 @@ def _fmt_money(val: Any, digits: int = 0, dash: str = "—") -> str:
 
 
 def _normalize_items(tariffs: Iterable[Any] | Mapping[str, Any]) -> Sequence[tuple[str, Any]]:
-    """Приводим тарифы к списку пар (name, data)."""
     if isinstance(tariffs, Mapping):
         return [(k, tariffs[k]) for k in sorted(tariffs.keys())]
     items: list[tuple[str, Any]] = []
@@ -49,17 +40,50 @@ def _normalize_items(tariffs: Iterable[Any] | Mapping[str, Any]) -> Sequence[tup
         items.append((inferred or f"Тариф {i + 1}", t))
     return items
 
+# ===============================================================
+# НОВАЯ ФУНКЦИЯ, КОТОРАЯ БЫЛА ПРОПУЩЕНА
+# ===============================================================
+def get_hangar_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMarkup:
+    """Создает клавиатуру для ангара с пагинацией."""
+    builder = InlineKeyboardBuilder()
+    start_offset = page * PAGE_SIZE
+    end_offset = start_offset + PAGE_SIZE
 
-# -------------------- Клавиатуры игры -------------------------
+    for asic in asics[start_offset:end_offset]:
+        builder.button(
+            text=f"▶️ {asic.name}",
+            callback_data=GameCallback(action="session_start_confirm", value=asic.id).pack()
+        )
+
+    nav_buttons: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(text="⬅️", callback_data=GameCallback(action="hangar", page=page - 1).pack())
+        )
+
+    total_pages = (len(asics) + PAGE_SIZE - 1) // PAGE_SIZE
+    if total_pages > 1:
+        nav_buttons.append(InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="do_nothing"))
+
+    if end_offset < len(asics):
+        nav_buttons.append(
+            InlineKeyboardButton(text="➡️", callback_data=GameCallback(action="hangar", page=page + 1).pack())
+        )
+
+    if nav_buttons:
+        builder.row(*nav_buttons)
+
+    builder.row(InlineKeyboardButton(text="⬅️ Назад в меню игры", callback_data=GameCallback(action="main_menu").pack()))
+    builder.adjust(1)
+    return builder.as_markup()
+
+# ... (остальной код файла остается без изменений) ...
 
 def get_mining_menu_keyboard(is_session_active: bool) -> InlineKeyboardMarkup:
-    """
-    Главное меню игры (динамически скрывает кнопку запуска сессии).
-    """
     builder = InlineKeyboardBuilder()
 
     if not is_session_active:
-        builder.button(text="▶️ Начать сессию", callback_data=GameCallback(action="shop").pack())
+        builder.button(text="▶️ Начать сессию", callback_data=GameCallback(action="start_session").pack())
 
     builder.button(text="🏠 Моя ферма", callback_data=GameCallback(action="my_farm").pack())
     builder.button(text="💡 Электричество", callback_data=GameCallback(action="electricity").pack())
@@ -83,7 +107,6 @@ def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMa
             callback_data=GameCallback(action="start", value=asic_id).pack(),
         )
 
-    # Навигация
     nav_buttons: list[InlineKeyboardButton] = []
     if page > 0:
         nav_buttons.append(
@@ -114,11 +137,6 @@ def get_shop_keyboard(asics: List[AsicMiner], page: int = 0) -> InlineKeyboardMa
 
 
 def get_confirm_purchase_keyboard(item_id: str) -> InlineKeyboardMarkup:
-    """
-    Клавиатура подтверждения покупки — строго под ваш handler:
-    - Подтвердить -> action="confirm_purchase"
-    - Отмена      -> action="main_menu"
-    """
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Купить", callback_data=GameCallback(action="confirm_purchase", value=item_id).pack())
     builder.button(text="❌ Отмена", callback_data=GameCallback(action="main_menu").pack())
@@ -145,16 +163,6 @@ def get_electricity_menu_keyboard(
     user_tariffs: List[str] | None,
     current_tariff: str | None,
 ) -> InlineKeyboardMarkup:
-    """
-    Клавиатура тарифов:
-      • Если не куплен -> 🛒 <name> (<цена/бесплатно>) -> tariff_buy
-      • Если куплен    -> 🔌 Выбрать: <name>           -> tariff_select
-      • Если текущий   -> ✅ <name> (текущий)          -> tariff_select
-    Поддерживает:
-      - список объектов (name, unlock_price)
-      - список dict'ов ({name, unlock_price})
-      - dict[name] = объект/словарь
-    """
     builder = InlineKeyboardBuilder()
     owned = set(user_tariffs or [])
     items = _normalize_items(tariffs)
@@ -187,8 +195,6 @@ def get_electricity_menu_keyboard(
     builder.button(text="⬅️ Назад в меню", callback_data=GameCallback(action="main_menu").pack())
     builder.adjust(1)
     return builder.as_markup()
-
-# ---------------- Клавиатуры калькулятора ---------------------
 
 def get_calculator_cancel_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()

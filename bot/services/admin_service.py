@@ -156,9 +156,6 @@ class AdminService:
             logger.success(f"Админ {admin_id} изменил баланс user_id={user_id} на {amount}. Новый баланс: {new_balance}")
             return new_balance
         except Exception as e:
-            # ===============================================================
-            # ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавлена закрывающая кавычка и скобка
-            # ===============================================================
             logger.exception(f"Ошибка при изменении баланса для user_id={user_id} админом {admin_id}: {e}")
             return None
 
