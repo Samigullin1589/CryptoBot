@@ -11,7 +11,7 @@ from bot.utils.dependencies import Deps
 from bot.states.game_states import MiningGameStates
 from bot.keyboards.callback_factories import MenuCallback, GameCallback
 # ===============================================================
-# ИСПРАВЛЕНИЕ ЗДЕСЬ: `get_hangar_keyboard` импортируется из `mining_keyboards`
+# ИСПРАВЛЕНИЕ ЗДЕСЬ: `get_hangar_keyboard` и `get_game_main_menu_keyboard` импортируются из `mining_keyboards`
 # ===============================================================
 from bot.keyboards.mining_keyboards import get_mining_menu_keyboard, get_hangar_keyboard
 
@@ -22,7 +22,7 @@ async def show_game_menu(call: CallbackQuery, deps: Deps, state: FSMContext):
     """Отображает главное меню игры, обновляя информацию."""
     await state.set_state(MiningGameStates.main_menu)
     farm_info, stats_info = await deps.mining_game_service.get_farm_and_stats_info(call.from_user.id)
-    session_data = await deps.redis_pool.hgetall(deps.keys.active_session(call.from_user.id))
+    session_data = await deps.redis.hgetall(deps.keys.active_session(call.from_user.id))
     is_session_active = bool(session_data)
 
     text = f"{farm_info}\n\n{stats_info}"

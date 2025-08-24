@@ -15,7 +15,6 @@ from .callback_factories import MenuCallback, GameCallback, PaginatorCallback, C
 
 PAGE_SIZE = 5
 
-# ... (код существующих функций _get, _fmt_money, _normalize_items и др. остается без изменений) ...
 def _get(obj: Any, key: str, default=None):
     if isinstance(obj, Mapping):
         return obj.get(key, default)
@@ -40,9 +39,7 @@ def _normalize_items(tariffs: Iterable[Any] | Mapping[str, Any]) -> Sequence[tup
         items.append((inferred or f"Тариф {i + 1}", t))
     return items
 
-# ===============================================================
-# НОВАЯ ФУНКЦИЯ, КОТОРАЯ БЫЛА ПРОПУЩЕНА
-# ===============================================================
+
 def get_hangar_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMarkup:
     """Создает клавиатуру для ангара с пагинацией."""
     builder = InlineKeyboardBuilder()
@@ -77,7 +74,6 @@ def get_hangar_keyboard(asics: List[AsicMiner], page: int) -> InlineKeyboardMark
     builder.adjust(1)
     return builder.as_markup()
 
-# ... (остальной код файла остается без изменений) ...
 
 def get_mining_menu_keyboard(is_session_active: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
