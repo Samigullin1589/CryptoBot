@@ -1,5 +1,14 @@
-from aiogram import Router
-from .mining_game_handler import game_router as mining_game_router
+# ===============================================================
+# Файл: bot/handlers/game/__init__.py
+# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
+# Описание:
+#   • ИСПРАВЛЕНО: Удалена логика агрегации роутеров, которая вызывала
+#     ошибку ImportError. Файл теперь просто экспортирует роутер
+#     из соответствующего обработчика.
+# ===============================================================
 
-game_router = Router(name="game_router")
-game_router.include_router(mining_game_router)
+from .mining_game_handler import game_router
+
+# Экспортируем роутер, чтобы его можно было импортировать
+# из других модулей, если потребуется.
+__all__ = ["game_router"]
