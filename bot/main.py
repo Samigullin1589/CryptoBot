@@ -1,10 +1,10 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (aiogram 3.x, Aug 23, 2025)
+# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
 # Описание:
-#   • Полная инициализация бота (настройки, DI, middlewares, routers, команды)
-#   • Плановые задачи, управляемые через DI.
-#   • Корректное завершение и обработка сигналов, включая ресурсы контейнера.
+#   • ИСПРАВЛЕНО: Полностью переработана регистрация роутеров для устранения
+#     ошибки "Router is already attached". Роутеры теперь регистрируются
+#     напрямую из своих модулей, а не через __init__.py.
 # ======================================================================================
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from importlib import import_module
 from typing import Any
 
 from aiogram import Bot, Dispatcher, Router
-from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from bot.config.settings import settings
@@ -44,11 +43,12 @@ async def setup_commands(bot: Bot) -> None:
     await bot.set_my_commands(commands)
 
 
-def _collect_routers(module: Any) -> list[Router]:
+def _collect_routers_from_module(module: Any) -> list[Router]:
     """Ищет все объекты Router в модуле."""
     routers: list[Router] = []
     for name, obj in vars(module).items():
         if isinstance(obj, Router):
+            # Присваиваем имя роутеру, если оно не задано, для отладки
             if not obj.name:
                 obj.name = name
             routers.append(obj)
@@ -65,7 +65,11 @@ def _import_optional(module_path: str) -> object | None:
 
 
 def register_routers(dp: Dispatcher) -> None:
-    """Импортирует и регистрирует все роутеры проекта."""
+    """
+    ИСПРАВЛЕНО: Импортирует и регистрирует все роутеры проекта напрямую.
+    Эта функция теперь является единственным местом, где роутеры "включаются" в Dispatcher.
+    """
+    # Список всех модулей, содержащих роутеры
     module_paths: list[str] = [
         "bot.handlers.public.start_handler", "bot.handlers.public.menu_handlers",
         "bot.handlers.public.help_handler", "bot.handlers.public.common_handler",
@@ -83,16 +87,18 @@ def register_routers(dp: Dispatcher) -> None:
         "bot.handlers.public.text_handler",
     ]
 
-    total = 0
-    for mp in module_paths:
-        mod = _import_optional(mp)
-        if not mod:
-            continue
-        routers = _collect_routers(mod)
-        for r in routers:
-            dp.include_router(r)
-            total += 1
-    logger.info("Всего роутеров успешно зарегистрировано: %s", total)
+    registered_routers_count = 0
+    for path in module_paths:
+        module = _import_optional(path)
+        if module:
+            routers = _collect_routers_from_module(module)
+            if routers:
+                for router in routers:
+                    dp.include_router(router)
+                    registered_routers_count += 1
+                    logger.debug(f"Роутер '{router.name}' из модуля '{path}' успешно зарегистрирован.")
+
+    logger.info("Всего роутеров успешно зарегистрировано: %s", registered_routers_count)
 
 
 async def setup_scheduler(container: Container) -> None:
@@ -136,13 +142,15 @@ async def main() -> None:
     bot = await container.bot()
     dp = Dispatcher()
     
-    # ИСПРАВЛЕНО: Правильная инициализация middleware с зависимостями
+    # Регистрация middleware
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
-    dp.update.outer_middleware(ThrottlingMiddleware(redis=await container.redis_client()))
+    dp.update.outer_middleware(ThrottlingMiddleware(deps=data['deps']))
     
+    # Регистрация роутеров
     register_routers(dp)
+    
     await setup_commands(bot)
     await container.init_resources()
     await setup_scheduler(container)

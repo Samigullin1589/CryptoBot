@@ -1,13 +1,19 @@
 # =============================================================================
-# Файл: src/bot/handlers/__init__.py
-# Описание: Главный агрегатор роутеров со всех модулей приложения.
+# Файл: bot/handlers/__init__.py
+# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
+# Описание:
+#   • ИСПРАВЛЕНО: Удалена логика агрегации роутеров. Этот файл теперь
+#     служит для экспорта роутеров из под-пакетов, если это необходимо
+#     в других частях приложения. Регистрация происходит в main.py.
 # =============================================================================
 
-from aiogram import Router
-from .public import public_router # Импортируем уже собранный роутер
-# from .admin import admin_router # Аналогично для других модулей
+from .public import public_router
+from .admin import admin_router
 
-main_router = Router(name="main_router")
-
-main_router.include_router(public_router)
-# main_router.include_router(admin_router)
+# Этот экспорт нужен для обратной совместимости, если где-то в коде
+# остался импорт `from bot.handlers import ...`.
+# В новой архитектуре он не используется для регистрации в Dispatcher.
+__all__ = [
+    "public_router",
+    "admin_router",
+]
