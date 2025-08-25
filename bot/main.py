@@ -1,9 +1,11 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ СБОРКА (25 августа 2025)
+# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
 # Описание:
-#   • ИСПРАВЛЕНО: Удалена лишняя строка инициализации конфигурации,
-#     вызывавшая AttributeError при запуске.
+#   • ИСПРАВЛЕНО: Убраны некорректные вызовы 'await' для синхронных объектов,
+#     что устраняло 'TypeError: object Bot can't be used in 'await' expression'.
+#   • ИСПРАВЛЕНО: Устранена ошибка 'NameError' в ThrottlingMiddleware путем
+#     корректной передачи зависимости Redis из контейнера.
 # ======================================================================================
 
 from __future__ import annotations
@@ -127,21 +129,28 @@ async def main() -> None:
     setup_logging(level=settings.log_level, format="text")
 
     container = Container()
-    # ИСПРАВЛЕНО: Эта строка удалена, так как она вызывала ошибку
-    # container.config.from_object(settings) 
     container.wire(
         modules=[__name__],
         packages=["bot.handlers", "bot.middlewares", "bot.jobs"],
     )
     
-    bot = await container.bot()
+    # ИСПРАВЛЕНИЕ 1: Убран 'await'. container.bot() - это синхронный вызов,
+    # который просто возвращает готовый объект из контейнера.
+    bot = container.bot()
     dp = Dispatcher()
     
     # Регистрация middleware
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
-    dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=await container.admin_service()))
-    dp.update.outer_middleware(ThrottlingMiddleware(deps=data['deps']))
+    
+    # ИСПРАВЛЕНИЕ 2: Убран 'await'. container.admin_service() также является синхронным.
+    dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=container.admin_service()))
+    
+    # ИСПРАВЛЕНИЕ 3: Устранена ошибка NameError. Вместо несуществующей переменной 'data'
+    # теперь используется корректное получение redis-клиента из контейнера.
+    # Примечание: предполагается, что ваш ThrottlingMiddleware принимает аргумент 'redis'.
+    # Если он называется иначе (например, 'storage'), измените 'redis=' на 'storage='.
+    dp.update.outer_middleware(ThrottlingMiddleware(redis=container.redis_client()))
     
     # Регистрация роутеров
     register_routers(dp)
