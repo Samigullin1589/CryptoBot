@@ -1,11 +1,10 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
 # Описание:
-#   • ИСПРАВЛЕНО: Убраны некорректные вызовы 'await' для синхронных объектов,
-#     что устраняло 'TypeError: object Bot can't be used in 'await' expression'.
-#   • ИСПРАВЛЕНО: Устранена ошибка 'NameError' в ThrottlingMiddleware путем
-#     корректной передачи зависимости Redis из контейнера.
+#   • ИСПРАВЛЕНО: ThrottlingMiddleware теперь инициализируется без аргументов.
+#     Он спроектирован так, чтобы самостоятельно получать Redis из контекста
+#     при обработке сообщения, что устраняет ошибку TypeError.
 # ======================================================================================
 
 from __future__ import annotations
@@ -134,23 +133,18 @@ async def main() -> None:
         packages=["bot.handlers", "bot.middlewares", "bot.jobs"],
     )
     
-    # ИСПРАВЛЕНИЕ 1: Убран 'await'. container.bot() - это синхронный вызов,
-    # который просто возвращает готовый объект из контейнера.
     bot = container.bot()
     dp = Dispatcher()
     
     # Регистрация middleware
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
-    
-    # ИСПРАВЛЕНИЕ 2: Убран 'await'. container.admin_service() также является синхронным.
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=container.admin_service()))
     
-    # ИСПРАВЛЕНИЕ 3: Устранена ошибка NameError. Вместо несуществующей переменной 'data'
-    # теперь используется корректное получение redis-клиента из контейнера.
-    # Примечание: предполагается, что ваш ThrottlingMiddleware принимает аргумент 'redis'.
-    # Если он называется иначе (например, 'storage'), измените 'redis=' на 'storage='.
-    dp.update.outer_middleware(ThrottlingMiddleware(redis=container.redis_client()))
+    # ИСПРАВЛЕНО: ThrottlingMiddleware инициализируется без аргументов.
+    # Он сам получит все необходимые зависимости (включая Redis)
+    # из `data` при обработке события.
+    dp.update.outer_middleware(ThrottlingMiddleware())
     
     # Регистрация роутеров
     register_routers(dp)
