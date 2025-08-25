@@ -1,10 +1,9 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ СБОРКА (25 августа 2025)
 # Описание:
-#   • ИСПРАВЛЕНО: Полностью переработана регистрация роутеров для устранения
-#     ошибки "Router is already attached". Роутеры теперь регистрируются
-#     напрямую из своих модулей, а не через __init__.py.
+#   • ИСПРАВЛЕНО: Удалена лишняя строка инициализации конфигурации,
+#     вызывавшая AttributeError при запуске.
 # ======================================================================================
 
 from __future__ import annotations
@@ -48,7 +47,6 @@ def _collect_routers_from_module(module: Any) -> list[Router]:
     routers: list[Router] = []
     for name, obj in vars(module).items():
         if isinstance(obj, Router):
-            # Присваиваем имя роутеру, если оно не задано, для отладки
             if not obj.name:
                 obj.name = name
             routers.append(obj)
@@ -65,11 +63,7 @@ def _import_optional(module_path: str) -> object | None:
 
 
 def register_routers(dp: Dispatcher) -> None:
-    """
-    ИСПРАВЛЕНО: Импортирует и регистрирует все роутеры проекта напрямую.
-    Эта функция теперь является единственным местом, где роутеры "включаются" в Dispatcher.
-    """
-    # Список всех модулей, содержащих роутеры
+    """Импортирует и регистрирует все роутеры проекта напрямую."""
     module_paths: list[str] = [
         "bot.handlers.public.start_handler", "bot.handlers.public.menu_handlers",
         "bot.handlers.public.help_handler", "bot.handlers.public.common_handler",
@@ -133,7 +127,8 @@ async def main() -> None:
     setup_logging(level=settings.log_level, format="text")
 
     container = Container()
-    container.config.from_object(settings)
+    # ИСПРАВЛЕНО: Эта строка удалена, так как она вызывала ошибку
+    # container.config.from_object(settings) 
     container.wire(
         modules=[__name__],
         packages=["bot.handlers", "bot.middlewares", "bot.jobs"],
