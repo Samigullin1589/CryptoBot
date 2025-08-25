@@ -1,15 +1,10 @@
 # =================================================================================
 # Файл: bot/config/settings.py
-# Версия: "Distinguished Engineer" — МАКСИМАЛЬНАЯ, СЛИТО И РАСШИРЕНО
+# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25.08.2025)
 # Описание:
-#   Единая, строго типизированная система конфигурации для бота (aiogram 3 + Redis).
-#   Совмещает твой вариант + мои дополнения:
-#     • Полный набор сервисных конфигов (новости, цены, рынок, игра, достижения и т.д.)
-#     • Безопасные валидаторы (ADMIN_USER_IDS), строгие типы (Pydantic v2)
-#     • Доп. endpoint для курса валют (currency_rate_api)
-#     • Расширяемая секция логирования/телеметрии
-#     • Гибкая AI-конфигурация (Gemini по умолчанию, OpenAI — опционально)
-#     • Совместимость с ранее залогированными сообщениями и DI-контейнером
+#   • ИСПРАВЛЕНО: Добавлен валидатор для REDIS_URL, который автоматически
+#     добавляет префикс "redis://", если он отсутствует. Это устраняет
+#     ошибку ValueError при подключении к Redis.
 # =================================================================================
 
 from __future__ import annotations
@@ -189,7 +184,6 @@ class MiningGameServiceConfig(BaseModel):
 
     default_electricity_tariff: str = "Бытовой"
 
-    # ВАЖНО: Pydantic приведёт вложенные dict'ы к ElectricityTariff-моделям.
     electricity_tariffs: Dict[str, ElectricityTariff] = Field(
         default_factory=lambda: {
             "Бытовой": {"cost_per_kwh": 0.10, "unlock_price": 0},
@@ -209,9 +203,7 @@ class LoggingConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
 
     json_enabled: bool = False
-    # Префикс для структурированных логов, если нужен
     service_name: str = "ai-bot"
-    # Список логгеров, которым повышаем уровень (например, отладка HTTP)
     debug_loggers: List[str] = []
 
 
@@ -265,6 +257,18 @@ class Settings(BaseSettings):
 
     # --- валидаторы ---
 
+    # ИСПРАВЛЕНИЕ: Этот валидатор гарантирует, что у REDIS_URL есть схема "redis://".
+    @field_validator("REDIS_URL", mode="before")
+    @classmethod
+    def assemble_redis_dsn(cls, v: Any) -> str:
+        """
+        Гарантирует, что Redis URL имеет правильную схему (redis://),
+        даже если в .env она не указана.
+        """
+        if isinstance(v, str) and not v.startswith(("redis://", "rediss://", "unix://")):
+            return f"redis://{v}"
+        return v
+
     @field_validator("admin_ids", mode="before")
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
@@ -282,7 +286,6 @@ class Settings(BaseSettings):
             s = v.strip()
             if not s:
                 return []
-            # Разрешаем как "1,2,3", так и с пробелами
             return [int(item.strip()) for item in s.split(",") if item.strip()]
         raise TypeError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком.")
 
@@ -290,7 +293,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        env_nested_delimiter="__",  # например: PRICE_SERVICE__CACHE_TTL_SECONDS=120
+        env_nested_delimiter="__",
     )
 
 
@@ -298,7 +301,6 @@ class Settings(BaseSettings):
 
 try:
     settings = Settings()
-    # Базовое логирование поднимем сразу, чтобы видеть ранние сообщения
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
     logging.info("Конфигурация успешно загружена и валидирована.")
 except ValidationError as e:
