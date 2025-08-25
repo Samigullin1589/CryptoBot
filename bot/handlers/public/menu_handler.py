@@ -3,9 +3,7 @@
 # Version: "Distinguished Engineer" — Aug 17, 2025
 # Description:
 #   /menu и инлайн-меню с быстрыми действиями: цены, новости, справка.
-#   • Всегда вызываем call.answer() -> нет «вечной загрузки»
-#   • Универсальные фолбэки получения цены/новостей (совместимы с твоими сервисами)
-#   • /menu показывает и большое главное меню, и быстрые шорткаты
+# ИСПРАВЛЕНИЕ: Путь импорта для get_main_menu_keyboard исправлен.
 # ======================================================================================
 
 from __future__ import annotations
@@ -17,7 +15,8 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
-from bot.keyboards.main_menu import get_main_menu_keyboard
+# ИСПРАВЛЕНО: Импорт теперь указывает на правильный файл `keyboards.py`
+from bot.keyboards.keyboards import get_main_menu_keyboard
 
 router = Router(name="menu_public")
 
