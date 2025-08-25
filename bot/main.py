@@ -2,9 +2,9 @@
 # Файл: bot/main.py
 # Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
 # Описание:
-#   • ИСПРАВЛЕНО: ThrottlingMiddleware теперь инициализируется без аргументов.
-#     Он спроектирован так, чтобы самостоятельно получать Redis из контекста
-#     при обработке сообщения, что устраняет ошибку TypeError.
+#   • ИСПРАВЛЕНО: Функция register_routers теперь отслеживает уже
+#     зарегистрированные роутеры и избегает их повторного добавления.
+#     Это устраняет ошибку 'RuntimeError: Router is already attached'.
 # ======================================================================================
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def _import_optional(module_path: str) -> object | None:
 
 
 def register_routers(dp: Dispatcher) -> None:
-    """Импортирует и регистрирует все роутеры проекта напрямую."""
+    """Импортирует и регистрирует все роутеры проекта, избегая дубликатов."""
     module_paths: list[str] = [
         "bot.handlers.public.start_handler", "bot.handlers.public.menu_handlers",
         "bot.handlers.public.help_handler", "bot.handlers.public.common_handler",
@@ -82,18 +82,27 @@ def register_routers(dp: Dispatcher) -> None:
         "bot.handlers.public.text_handler",
     ]
 
+    # ИСПРАВЛЕНИЕ: Создаем множество для хранения ID уже зарегистрированных роутеров.
+    registered_routers = set()
     registered_routers_count = 0
+
     for path in module_paths:
         module = _import_optional(path)
         if module:
             routers = _collect_routers_from_module(module)
             if routers:
                 for router in routers:
-                    dp.include_router(router)
-                    registered_routers_count += 1
-                    logger.debug(f"Роутер '{router.name}' из модуля '{path}' успешно зарегистрирован.")
+                    # Проверяем, что этот конкретный экземпляр роутера еще не был зарегистрирован.
+                    # id(router) возвращает уникальный идентификатор объекта в памяти.
+                    if id(router) not in registered_routers:
+                        dp.include_router(router)
+                        registered_routers.add(id(router))
+                        registered_routers_count += 1
+                        logger.debug(f"Роутер '{router.name or 'unknown'}' из модуля '{path}' успешно зарегистрирован.")
+                    else:
+                        logger.debug(f"Роутер '{router.name or 'unknown'}' из модуля '{path}' уже был зарегистрирован ранее, пропускаем.")
 
-    logger.info("Всего роутеров успешно зарегистрировано: %s", registered_routers_count)
+    logger.info("Всего уникальных роутеров успешно зарегистрировано: %s", registered_routers_count)
 
 
 async def setup_scheduler(container: Container) -> None:
@@ -140,10 +149,6 @@ async def main() -> None:
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=container.admin_service()))
-    
-    # ИСПРАВЛЕНО: ThrottlingMiddleware инициализируется без аргументов.
-    # Он сам получит все необходимые зависимости (включая Redis)
-    # из `data` при обработке события.
     dp.update.outer_middleware(ThrottlingMiddleware())
     
     # Регистрация роутеров
