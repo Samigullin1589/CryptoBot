@@ -1,9 +1,10 @@
 # =================================================================================
 # Файл: bot/containers.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (25.08.2025)
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ (25.08.2025)
 # Описание:
-#   • Центральный DI-контейнер, управляющий жизненным циклом всех сервисов.
-# ИСПРАВЛЕНИЕ: Исправлен способ передачи BOT_TOKEN для устранения TokenValidationError.
+#   • ИСПРАВЛЕНО: Изменен способ передачи REDIS_URL. Теперь используется
+#     явный вызов config.provided.REDIS_URL(), чтобы гарантированно
+#     получить валидированную строку и избежать ошибок ValueError.
 # =================================================================================
 
 from dependency_injector import containers, providers
@@ -46,12 +47,14 @@ class Container(containers.DeclarativeContainer):
 
     config = providers.Singleton(Settings)
 
-    # ИСПРАВЛЕНО: Правильно извлекаем секретную строку из Pydantic-модели
     bot = providers.Singleton(Bot, token=config.provided.BOT_TOKEN.get_secret_value.call())
 
     redis_client = providers.Resource(
         Redis.from_url,
-        url=str(config.provided.REDIS_URL),
+        # ИЗМЕНЕНО: Явно вызываем провайдер, чтобы получить финальную строку URL,
+        # вместо неявного преобразования str(). Это гарантирует, что мы используем
+        # значение, прошедшее через валидатор в settings.py.
+        url=config.provided.REDIS_URL(),
         decode_responses=True,
     )
     http_client = providers.Resource(HttpClient, config=config.provided.endpoints)

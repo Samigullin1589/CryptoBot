@@ -1,10 +1,10 @@
 # =================================================================================
 # Файл: bot/config/settings.py
-# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25.08.2025)
+# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ СБОРКА (25.08.2025)
 # Описание:
-#   • ИСПРАВЛЕНО: Добавлен валидатор для REDIS_URL, который автоматически
-#     добавляет префикс "redis://", если он отсутствует. Это устраняет
-#     ошибку ValueError при подключении к Redis.
+#   • ИСПРАВЛЕНО: Тип REDIS_URL изменен с RedisDsn на простой str, чтобы
+#     избежать конфликтов при передаче значения в DI-контейнер.
+#     Валидатор, добавляющий префикс "redis://", сохранен для надежности.
 # =================================================================================
 
 from __future__ import annotations
@@ -12,7 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, RedisDsn, SecretStr, ValidationError, field_validator, ConfigDict
+# ИЗМЕНЕНО: Убран импорт RedisDsn, так как мы используем простой str
+from pydantic import BaseModel, Field, HttpUrl, SecretStr, ValidationError, field_validator, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -109,7 +110,6 @@ class EndpointsConfig(BaseModel):
     asicminervalue_url: Optional[HttpUrl] = "https://www.asicminervalue.com/"
     minerstat_api: Optional[HttpUrl] = "https://api.minerstat.com/v2"
 
-    # Новый эндпоинт для курсов валют (USD-база по умолчанию)
     currency_rate_api: Optional[HttpUrl] = "https://api.exchangerate-api.com/v4/latest/USD"
 
 
@@ -196,12 +196,7 @@ class MiningGameServiceConfig(BaseModel):
 # ----------------------------- Logging / Telemetry (доп.) ---------------------
 
 class LoggingConfig(BaseModel):
-    """
-    Дополнительная секция для гибкого логирования (необязательно).
-    Если в коде не используется — просто игнорируется.
-    """
     model_config = ConfigDict(protected_namespaces=())
-
     json_enabled: bool = False
     service_name: str = "ai-bot"
     debug_loggers: List[str] = []
@@ -210,13 +205,10 @@ class LoggingConfig(BaseModel):
 # ----------------------------- Settings (root) --------------------------------
 
 class Settings(BaseSettings):
-    """
-    Главный контейнер настроек. Все значения читаются из .env / окружения.
-    Используем env_nested_delimiter='__', чтобы прокидывать вложенные поля.
-    """
     # --- обязательные ключи/URL ---
     BOT_TOKEN: SecretStr
-    REDIS_URL: RedisDsn
+    # ИЗМЕНЕНО: Используем простой 'str' вместо 'RedisDsn' для надежности.
+    REDIS_URL: str
     GEMINI_API_KEY: SecretStr
 
     # --- опциональные ключи провайдеров/сервисов ---
@@ -241,7 +233,6 @@ class Settings(BaseSettings):
     ai: AIConfig = Field(default_factory=AIConfig)
     throttling: ThrottlingConfig = Field(default_factory=ThrottlingConfig)
     feature_flags: FeatureFlags = Field(default_factory=FeatureFlags)
-
     price_service: PriceServiceConfig = Field(default_factory=PriceServiceConfig)
     coin_list_service: CoinListServiceConfig = Field(default_factory=CoinListServiceConfig)
     news_service: NewsServiceConfig = Field(default_factory=NewsServiceConfig)
@@ -256,15 +247,9 @@ class Settings(BaseSettings):
     game: MiningGameServiceConfig = Field(default_factory=MiningGameServiceConfig)
 
     # --- валидаторы ---
-
-    # ИСПРАВЛЕНИЕ: Этот валидатор гарантирует, что у REDIS_URL есть схема "redis://".
     @field_validator("REDIS_URL", mode="before")
     @classmethod
     def assemble_redis_dsn(cls, v: Any) -> str:
-        """
-        Гарантирует, что Redis URL имеет правильную схему (redis://),
-        даже если в .env она не указана.
-        """
         if isinstance(v, str) and not v.startswith(("redis://", "rediss://", "unix://")):
             return f"redis://{v}"
         return v
@@ -272,11 +257,6 @@ class Settings(BaseSettings):
     @field_validator("admin_ids", mode="before")
     @classmethod
     def parse_admin_ids(cls, v: Any) -> List[int]:
-        """
-        ADMIN_USER_IDS в .env:
-          - "123,456,789"
-          - либо JSON-массив [123,456]
-        """
         if isinstance(v, list):
             try:
                 return [int(x) for x in v]
@@ -296,9 +276,7 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
     )
 
-
 # ----------------------------- load & announce --------------------------------
-
 try:
     settings = Settings()
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
