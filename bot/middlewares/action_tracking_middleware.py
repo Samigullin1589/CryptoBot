@@ -1,14 +1,13 @@
 # ===============================================================
-# Файл: bot/middlewares/action_tracking_middleware.py (НОВЫЙ ФАЙЛ)
-# Описание: Middleware для отслеживания действий пользователей.
-# Логирует команды и нажатия на инлайн-кнопки.
+# Файл: bot/middlewares/action_tracking_middleware.py
+# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
 # ===============================================================
 
 import logging
 from typing import Callable, Dict, Any, Awaitable
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, TelegramObject  # ✅ ИСПРАВЛЕНИЕ 1: добавлен TelegramObject
 
 from bot.services.admin_service import AdminService
 
@@ -21,9 +20,10 @@ class ActionTrackingMiddleware(BaseMiddleware):
     def __init__(self, admin_service: AdminService):
         self.admin_service = admin_service
 
+    # ✅ ИСПРАВЛЕНИЕ 2: Message -> TelegramObject в типе handler
     async def __call__(
         self,
-        handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]],
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
         event: Message | CallbackQuery,
         data: Dict[str, Any],
     ) -> Any:

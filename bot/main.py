@@ -1,10 +1,7 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
-# Описание:
-#   • ИСПРАВЛЕНО: Функция register_routers теперь отслеживает уже
-#     зарегистрированные роутеры и избегает их повторного добавления.
-#     Это устраняет ошибку 'RuntimeError: Router is already attached'.
+# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
+# Описание: Удалён дублирующий вызов container.wire()
 # ======================================================================================
 
 from __future__ import annotations
@@ -82,7 +79,6 @@ def register_routers(dp: Dispatcher) -> None:
         "bot.handlers.public.text_handler",
     ]
 
-    # ИСПРАВЛЕНИЕ: Создаем множество для хранения ID уже зарегистрированных роутеров.
     registered_routers = set()
     registered_routers_count = 0
 
@@ -92,8 +88,6 @@ def register_routers(dp: Dispatcher) -> None:
             routers = _collect_routers_from_module(module)
             if routers:
                 for router in routers:
-                    # Проверяем, что этот конкретный экземпляр роутера еще не был зарегистрирован.
-                    # id(router) возвращает уникальный идентификатор объекта в памяти.
                     if id(router) not in registered_routers:
                         dp.include_router(router)
                         registered_routers.add(id(router))
@@ -137,10 +131,8 @@ async def main() -> None:
     setup_logging(level=settings.log_level, format="text")
 
     container = Container()
-    container.wire(
-        modules=[__name__],
-        packages=["bot.handlers", "bot.middlewares", "bot.jobs"],
-    )
+    # ✅ ИСПРАВЛЕНО: удалён дублирующий container.wire()
+    # wiring уже настроен в wiring_config внутри Container
     
     bot = container.bot()
     dp = Dispatcher()

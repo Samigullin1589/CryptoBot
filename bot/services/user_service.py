@@ -1,7 +1,5 @@
 # bot/services/user_service.py
-# Дата обновления: 23.08.25
-# Версия: 2.1.0
-# Описание: Центральный сервис для управления данными пользователей.
+# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -11,6 +9,7 @@ from aiogram.types import User as TelegramUser
 from loguru import logger
 from pydantic import ValidationError
 from redis.asyncio import Redis
+from redis import WatchError  # ✅ ИСПРАВЛЕНИЕ 1: добавлен импорт
 
 from bot.config.settings import settings
 from bot.utils.keys import KeyFactory
@@ -26,7 +25,8 @@ class UserService:
         """Инициализирует сервис."""
         self.redis = redis_client
         self.keys = KeyFactory
-        self.config = settings.AI
+        # ✅ ИСПРАВЛЕНИЕ 2: settings.AI -> settings.ai
+        self.config = settings.ai
         logger.info("Сервис UserService инициализирован.")
 
     async def get_user(self, user_id: int) -> Optional[User]:
@@ -143,7 +143,8 @@ class UserService:
                 
                 logger.info(f"Списано {amount} с баланса user_id={user_id}. Причина: {reason}. Новый баланс: {new_balance}")
                 return True, new_balance
-            except redis.WatchError:
+            # ✅ ИСПРАВЛЕНИЕ 3: redis.WatchError -> WatchError
+            except WatchError:
                 logger.warning(f"Конфликт транзакции при списании баланса для user_id={user_id}.")
                 return False, 0.0
 
@@ -168,7 +169,8 @@ class UserService:
     async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict]:
         """Получает историю переписки с AI."""
         history_key = self.keys.conversation_history(user_id, chat_id)
-        raw_history = await self.redis.lrange(history_key, 0, self.config.HISTORY_MAX_SIZE * 2)
+        # ✅ ИСПРАВЛЕНИЕ 4: HISTORY_MAX_SIZE -> history_max_size
+        raw_history = await self.redis.lrange(history_key, 0, self.config.history_max_size * 2)
         return [json.loads(msg) for msg in reversed(raw_history)]
 
     async def add_to_conversation_history(self, user_id: int, chat_id: int, user_text: str, ai_answer: str):
@@ -180,5 +182,6 @@ class UserService:
         async with self.redis.pipeline(transaction=False) as pipe:
             pipe.lpush(history_key, json.dumps(model_message, ensure_ascii=False))
             pipe.lpush(history_key, json.dumps(user_message, ensure_ascii=False))
-            pipe.ltrim(history_key, 0, self.config.HISTORY_MAX_SIZE * 2 - 1)
+            # ✅ ИСПРАВЛЕНИЕ 5: HISTORY_MAX_SIZE -> history_max_size
+            pipe.ltrim(history_key, 0, self.config.history_max_size * 2 - 1)
             await pipe.execute()

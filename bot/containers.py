@@ -1,10 +1,6 @@
 # =================================================================================
 # Файл: bot/containers.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ (25.08.2025)
-# Описание:
-#   • ИСПРАВЛЕНО: Изменен способ передачи REDIS_URL. Теперь используется
-#     явный вызов config.provided.REDIS_URL(), чтобы гарантированно
-#     получить валидированную строку и избежать ошибок ValueError.
+# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
 # =================================================================================
 
 from dependency_injector import containers, providers
@@ -47,14 +43,13 @@ class Container(containers.DeclarativeContainer):
 
     config = providers.Singleton(Settings)
 
-    bot = providers.Singleton(Bot, token=config.provided.BOT_TOKEN.get_secret_value.call())
+    # ИСПРАВЛЕНО: убрали .call()
+    bot = providers.Singleton(Bot, token=config.provided.BOT_TOKEN.get_secret_value())
 
+    # ИСПРАВЛЕНО: убрали () у REDIS_URL
     redis_client = providers.Resource(
         Redis.from_url,
-        # ИЗМЕНЕНО: Явно вызываем провайдер, чтобы получить финальную строку URL,
-        # вместо неявного преобразования str(). Это гарантирует, что мы используем
-        # значение, прошедшее через валидатор в settings.py.
-        url=config.provided.REDIS_URL(),
+        url=config.provided.REDIS_URL,
         decode_responses=True,
     )
     http_client = providers.Resource(HttpClient, config=config.provided.endpoints)
