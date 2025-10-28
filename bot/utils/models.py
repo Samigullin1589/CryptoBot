@@ -1,7 +1,7 @@
 # =================================================================================
 # Файл: bot/utils/models.py (ВЕРСИЯ "Distinguished Engineer" - ИСПРАВЛЕННАЯ)
 # Описание: Централизованное хранилище Pydantic-моделей.
-# ИСПРАВЛЕНИЕ: Добавлены все недостающие модели.
+# ИСПРАВЛЕНИЕ: Achievement модель теперь соответствует конфигу achievements.yaml
 # =================================================================================
 from __future__ import annotations
 
@@ -124,14 +124,84 @@ class MarketListing(BaseModel):
     created_at: int
     asic_data: str
 
+
+# ═══════════════════════════════════════════════════════════════
+# ✅ ИСПРАВЛЕННАЯ МОДЕЛЬ ACHIEVEMENT
+# Теперь соответствует структуре achievements.yaml
+# ═══════════════════════════════════════════════════════════════
+
+class AchievementCondition(BaseModel):
+    """Условие получения достижения"""
+    type: str  # 'counter', 'streak', 'tiered', etc.
+    event: Optional[str] = None
+    threshold: Optional[int] = None
+    counter_key: Optional[str] = None
+    window_days: Optional[int] = None
+    tiers: Optional[List[Dict[str, Any]]] = None
+
+
+class AchievementNotify(BaseModel):
+    """Настройки уведомления о достижении"""
+    template_ru: str
+
+
 class Achievement(BaseModel):
+    """
+    Модель достижения
+    ✅ ИСПРАВЛЕНО: Поля соответствуют конфигу achievements.yaml
+    """
     id: str
-    name: str
-    description: str
-    reward_coins: float
-    trigger_event: str
+    category: str
+    rarity: str
+    icon: str
+    
+    # ✅ ИСПРАВЛЕНО: title вместо name
+    title: Dict[str, str]  # {'ru': 'Название'}
+    
+    # ✅ ИСПРАВЛЕНО: desc вместо description
+    desc: Dict[str, str]  # {'ru': 'Описание'}
+    
+    # ✅ ИСПРАВЛЕНО: points вместо reward_coins
+    points: int
+    
+    repeatable: bool = False
+    
+    # ✅ ИСПРАВЛЕНО: condition объект вместо trigger_event строки
+    condition: Optional[AchievementCondition] = None
+    
+    notify: Optional[AchievementNotify] = None
+    
+    # ✅ Добавлены свойства для обратной совместимости со старым кодом
+    @property
+    def name(self) -> str:
+        """Алиас для title['ru'] - для обратной совместимости"""
+        return self.title.get('ru', self.id)
+    
+    @property
+    def description(self) -> str:
+        """Алиас для desc['ru'] - для обратной совместимости"""
+        return self.desc.get('ru', '')
+    
+    @property
+    def reward_coins(self) -> int:
+        """Алиас для points - для обратной совместимости"""
+        return self.points
+    
+    @property
+    def trigger_event(self) -> Optional[str]:
+        """Алиас для condition.event - для обратной совместимости"""
+        return self.condition.event if self.condition else None
+    
+    # Старое поле type для совместимости
     type: str = "static"
+    
+    # Старое поле trigger_conditions для совместимости
     trigger_conditions: Optional[Dict[str, Any]] = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# ОСТАЛЬНЫЕ МОДЕЛИ (БЕЗ ИЗМЕНЕНИЙ)
+# ═══════════════════════════════════════════════════════════════
 
 class MiningSessionResult(BaseModel):
     asic_name: str
