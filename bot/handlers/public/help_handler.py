@@ -1,8 +1,9 @@
 # ======================================================================================
 # File: bot/handlers/help_handler.py
-# Version: "Distinguished Engineer" — Aug 17, 2025
+# Version: "Distinguished Engineer" — ИСПРАВЛЕНО (28.10.2025)
 # Description:
 #   /help — краткая справка по командам и подсказки по текстовому вводу.
+# ИСПРАВЛЕНО: parse_mode="HTML" заменён на ParseMode.HTML (enum)
 # ======================================================================================
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
+from aiogram.enums import ParseMode  # ← ДОБАВЛЕНО
 
 router = Router(name="help_public")
 
@@ -28,4 +30,13 @@ HELP_TEXT = (
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT, parse_mode="HTML", disable_web_page_preview=True)
+    """
+    Обработчик команды /help.
+    
+    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
+    """
+    await message.answer(
+        HELP_TEXT,
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        disable_web_page_preview=True
+    )

@@ -1,9 +1,9 @@
 # ======================================================================================
 # File: bot/handlers/menu_handler.py
-# Version: "Distinguished Engineer" — Aug 17, 2025
+# Version: "Distinguished Engineer" — ИСПРАВЛЕНО (28.10.2025)
 # Description:
 #   /menu и инлайн-меню с быстрыми действиями: цены, новости, справка.
-# ИСПРАВЛЕНИЕ: Путь импорта для get_main_menu_keyboard исправлен.
+# ИСПРАВЛЕНО: parse_mode="HTML" заменён на ParseMode.HTML (enum)
 # ======================================================================================
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from typing import Any, Optional
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.enums import ParseMode  # ← ДОБАВЛЕНО
 
 # ИСПРАВЛЕНО: Импорт теперь указывает на правильный файл `keyboards.py`
 from bot.keyboards.keyboards import get_main_menu_keyboard
@@ -124,25 +125,55 @@ def _fmt_price_local(p: float) -> str:
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
+    """
+    Обработчик команды /menu.
+    
+    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
+    """
     # Большое основное меню
-    await message.answer("<b>Главное меню</b>", parse_mode="HTML", reply_markup=get_main_menu_keyboard())
+    await message.answer(
+        "<b>Главное меню</b>",
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        reply_markup=get_main_menu_keyboard()
+    )
     # Быстрые кнопки под вторым сообщением
-    await message.answer("Быстрые действия:", parse_mode="HTML", reply_markup=_menu_kb())
+    await message.answer(
+        "Быстрые действия:",
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        reply_markup=_menu_kb()
+    )
 
 
 @router.callback_query(F.data == "menu:open")
 async def cb_open(call: CallbackQuery) -> None:
+    """
+    Открытие меню через callback.
+    
+    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
+    """
     await call.answer()
-    await call.message.edit_text("<b>Главное меню</b>", parse_mode="HTML", reply_markup=_menu_kb())  # type: ignore[union-attr]
+    await call.message.edit_text(  # type: ignore[union-attr]
+        "<b>Главное меню</b>",
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        reply_markup=_menu_kb()
+    )
 
 
 @router.callback_query(F.data.startswith("menu:price:"))
 async def cb_price_shortcut(call: CallbackQuery, deps) -> None:
+    """
+    Быстрый показ цены через callback.
+    
+    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
+    """
     await call.answer()
     parts = (call.data or "").split(":")
     # ожидаем menu:price:SYMBOL:QUOTE
     if len(parts) < 4:
-        await call.message.answer("Некорректный запрос цены.", parse_mode="HTML")  # type: ignore[union-attr]
+        await call.message.answer(  # type: ignore[union-attr]
+            "Некорректный запрос цены.",
+            parse_mode=ParseMode.HTML  # ← ИСПРАВЛЕНО
+        )
         return
     _, _, symbol, quote = parts[:4]
     symbol = (symbol or "BTC").upper()
@@ -150,7 +181,10 @@ async def cb_price_shortcut(call: CallbackQuery, deps) -> None:
 
     price = await _get_price_any(deps, symbol, quote)
     if price is None:
-        await call.message.answer("⚠️ Нет данных по цене сейчас. Повторите позже.", parse_mode="HTML")  # type: ignore[union-attr]
+        await call.message.answer(  # type: ignore[union-attr]
+            "⚠️ Нет данных по цене сейчас. Повторите позже.",
+            parse_mode=ParseMode.HTML  # ← ИСПРАВЛЕНО
+        )
         return
 
     try:
@@ -160,11 +194,20 @@ async def cb_price_shortcut(call: CallbackQuery, deps) -> None:
         price_text = _fmt_price_local(price)
 
     text = f"<b>{symbol}/{quote}</b>: <code>{price_text}</code>"
-    await call.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)  # type: ignore[union-attr]
+    await call.message.answer(  # type: ignore[union-attr]
+        text,
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        disable_web_page_preview=True
+    )
 
 
 @router.callback_query(F.data == "menu:news")
 async def cb_news_shortcut(call: CallbackQuery, deps) -> None:
+    """
+    Показ новостей через callback.
+    
+    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
+    """
     await call.answer()
     try:
         from bot.handlers.news_handler import _get_items, _render  # type: ignore
@@ -172,15 +215,28 @@ async def cb_news_shortcut(call: CallbackQuery, deps) -> None:
         text = _render(items, page=0)
     except Exception:
         text = "Пока новостей нет."
-    await call.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)  # type: ignore[union-attr]
+    await call.message.answer(  # type: ignore[union-attr]
+        text,
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        disable_web_page_preview=True
+    )
 
 
 @router.callback_query(F.data == "menu:help")
 async def cb_help_shortcut(call: CallbackQuery) -> None:
+    """
+    Показ справки через callback.
+    
+    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
+    """
     await call.answer()
     try:
         from bot.handlers.help_handler import HELP_TEXT  # type: ignore
         text = HELP_TEXT
     except Exception:
         text = "<b>Справка</b>\n/menu — главное меню\n/price — цена\n/news — новости"
-    await call.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)  # type: ignore[union-attr]
+    await call.message.answer(  # type: ignore[union-attr]
+        text,
+        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        disable_web_page_preview=True
+    )
