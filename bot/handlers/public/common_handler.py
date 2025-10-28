@@ -1,5 +1,5 @@
 # bot/handlers/public/common_handler.py
-# Версия: ФИНАЛЬНАЯ БЕЗ ЗАГЛУШЕК (28.10.2025)
+# Версия: ПРАВИЛЬНАЯ с get_text_response (28.10.2025)
 
 import asyncio
 import logging
@@ -52,11 +52,31 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
             logger.debug(f"Failed to get conversation history: {e}")
             history = []
 
-    # Запрос к ИИ
+    # ✅ ПРАВИЛЬНЫЙ ЗАПРОС К ИИ через get_text_response
     try:
-        ai_answer = await deps.ai_content_service.generate_text(
-            prompt=user_text,
-            history=history if history else None
+        # Формируем промпт с историей если есть
+        full_prompt = user_text
+        system_prompt = None
+        
+        if history:
+            # Добавляем историю в контекст
+            history_context = "\n".join([
+                f"Пользователь: {h['user']}\nАссистент: {h['assistant']}" 
+                for h in history[-5:]  # Последние 5 сообщений
+            ])
+            system_prompt = (
+                "Ты — AI-консультант по майнингу и криптовалютам. "
+                "Вот предыдущие сообщения в этом разговоре:\n\n"
+                f"{history_context}\n\n"
+                "Отвечай на основе контекста разговора."
+            )
+        else:
+            system_prompt = "Ты — AI-консультант по майнингу и криптовалютам."
+        
+        # ✅ ПРАВИЛЬНЫЙ МЕТОД: get_text_response
+        ai_answer = await deps.ai_content_service.get_text_response(
+            prompt=full_prompt,
+            system_prompt=system_prompt
         )
         
         ai_answer = ai_answer or "Не удалось получить ответ от AI."
@@ -74,6 +94,7 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
                 logger.debug(f"Failed to save to conversation history: {e}")
         
         await message.answer(f"Ваш вопрос:\n«{user_text}»\n\nОтвет AI-Консультанта:\n{ai_answer}")
+        
     except Exception as e:
         logger.error("AI answer failed: %s", e, exc_info=True)
         await message.answer("Произошла ошибка при обращении к AI.")
