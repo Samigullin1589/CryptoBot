@@ -26,6 +26,10 @@ bleach==6.2.0
 # Image processing
 Pillow==10.4.0
 
+# Data visualization
+matplotlib==3.9.2
+numpy==1.26.4
+
 # Utilities
 backoff==2.2.1
 
