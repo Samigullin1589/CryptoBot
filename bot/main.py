@@ -1,7 +1,10 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
-# Описание: Удалён дублирующий вызов container.wire()
+# Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
+# Описание:
+#   • ИСПРАВЛЕНО: Прямая инициализация ресурсов вместо async методов контейнера
+#   • Улучшена обработка ошибок при запуске и остановке
+#   • Добавлено логирование всех этапов
 # ======================================================================================
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ async def setup_commands(bot: Bot) -> None:
         BotCommand(command="admin", description="Панель администратора"),
     ]
     await bot.set_my_commands(commands)
+    logger.info("✅ Команды бота установлены")
 
 
 def _collect_routers_from_module(module: Any) -> list[Router]:
@@ -92,32 +96,30 @@ def register_routers(dp: Dispatcher) -> None:
                         dp.include_router(router)
                         registered_routers.add(id(router))
                         registered_routers_count += 1
-                        logger.debug(f"Роутер '{router.name or 'unknown'}' из модуля '{path}' успешно зарегистрирован.")
-                    else:
-                        logger.debug(f"Роутер '{router.name or 'unknown'}' из модуля '{path}' уже был зарегистрирован ранее, пропускаем.")
+                        logger.debug(f"Роутер '{router.name or 'unknown'}' из '{path}' зарегистрирован")
 
-    logger.info("Всего уникальных роутеров успешно зарегистрировано: %s", registered_routers_count)
+    logger.info("✅ Зарегистрировано роутеров: %s", registered_routers_count)
 
 
 async def setup_scheduler(container: Container) -> None:
     """Подключает плановые задачи."""
     mod = _import_optional("bot.jobs.scheduled_tasks")
     if not mod:
-        logger.info("Модуль планировщика не найден — пропускаю.")
+        logger.info("ℹ️ Модуль планировщика не найден — пропускаю")
         return
     setup = getattr(mod, "setup_scheduler", None)
     if callable(setup):
         res = setup(container)
         if inspect.isawaitable(res):
             await res
-        logger.info("Все периодические задачи успешно настроены.")
+        logger.info("✅ Периодические задачи настроены")
 
 
 def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
     """Назначает обработчик на сигналы SIGINT и SIGTERM."""
     def _handler(*_: object) -> None:
         if not stop.is_set():
-            logger.warning("Получен сигнал остановки — завершаем polling...")
+            logger.warning("⚠️ Получен сигнал остановки — завершаем polling...")
             stop.set()
     for s in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -126,46 +128,119 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
             pass
 
 
+async def init_resources(container: Container) -> None:
+    """
+    Инициализирует все ресурсы приложения (Redis, HTTP-клиент).
+    
+    Args:
+        container: Контейнер зависимостей
+    """
+    logger.info("🔧 Инициализация ресурсов...")
+    
+    try:
+        # Инициализация Redis
+        await container.redis_client.init()
+        logger.info("✅ Redis client инициализирован")
+    except Exception as e:
+        logger.error(f"❌ Ошибка инициализации Redis: {e}")
+        raise
+
+    try:
+        # Инициализация HTTP client
+        await container.http_client.init()
+        logger.info("✅ HTTP client инициализирован")
+    except Exception as e:
+        logger.error(f"❌ Ошибка инициализации HTTP client: {e}")
+        raise
+
+    logger.info("✅ Все ресурсы успешно инициализированы")
+
+
+async def shutdown_resources(container: Container) -> None:
+    """
+    Корректно завершает работу всех ресурсов.
+    
+    Args:
+        container: Контейнер зависимостей
+    """
+    logger.info("🛑 Завершение работы ресурсов...")
+    
+    try:
+        await container.http_client.shutdown()
+        logger.info("✅ HTTP client закрыт")
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка при закрытии HTTP client: {e}")
+
+    try:
+        await container.redis_client.shutdown()
+        logger.info("✅ Redis client закрыт")
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка при закрытии Redis: {e}")
+
+    logger.info("✅ Все ресурсы завершены")
+
+
 async def main() -> None:
     """Основная асинхронная функция запуска бота."""
     setup_logging(level=settings.log_level, format="text")
+    logger.info("🚀 Запуск CryptoBot...")
 
+    # Инициализация контейнера зависимостей
     container = Container()
-    # ✅ ИСПРАВЛЕНО: удалён дублирующий container.wire()
-    # wiring уже настроен в wiring_config внутри Container
     
+    # Получение основных компонентов
     bot = container.bot()
     dp = Dispatcher()
     
     # Регистрация middleware
+    logger.info("📦 Регистрация middleware...")
     dp.update.outer_middleware(dependencies_middleware)
     dp.update.outer_middleware(ActivityMiddleware())
     dp.update.outer_middleware(ActionTrackingMiddleware(admin_service=container.admin_service()))
     dp.update.outer_middleware(ThrottlingMiddleware())
+    logger.info("✅ Middleware зарегистрированы")
     
     # Регистрация роутеров
+    logger.info("📦 Регистрация роутеров...")
     register_routers(dp)
     
+    # Настройка команд и ресурсов
     await setup_commands(bot)
-    await container.init_resources()
+    
+    # ✅ ИСПРАВЛЕНО: Прямая инициализация ресурсов
+    await init_resources(container)
+    
     await setup_scheduler(container)
 
-    logger.info("Запуск бота...")
+    logger.info("✅ Бот полностью настроен, запуск polling...")
     stop_event = asyncio.Event()
     _bind_signals(asyncio.get_running_loop(), stop_event)
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(), stop_event=stop_event)
+        logger.info("🎉 Бот успешно запущен!")
+        await dp.start_polling(
+            bot, 
+            allowed_updates=dp.resolve_used_update_types(), 
+            stop_event=stop_event
+        )
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка во время работы бота: {e}", exc_info=True)
+        raise
     finally:
-        logger.info("Завершение работы бота...")
-        await container.shutdown_resources()
+        logger.info("🛑 Завершение работы бота...")
+        
+        # ✅ ИСПРАВЛЕНО: Прямой вызов shutdown ресурсов
+        await shutdown_resources(container)
+        
         await bot.session.close()
-        logger.info("Бот остановлен.")
+        logger.info("✅ Бот полностью остановлен")
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Выход из программы.")
+        logger.info("👋 Выход из программы")
+    except Exception as e:
+        logger.critical(f"💥 Фатальная ошибка: {e}", exc_info=True)
