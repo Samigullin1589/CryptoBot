@@ -1,6 +1,5 @@
 # bot/handlers/public/common_handler.py
-# Версия: ИСПРАВЛЕННАЯ (28.10.2025)
-# ИСПРАВЛЕНО: Метод get_consultant_answer → правильный метод из AIContentService
+# Версия: ФИНАЛЬНАЯ БЕЗ ЗАГЛУШЕК (28.10.2025)
 
 import asyncio
 import logging
@@ -45,7 +44,6 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
     history = []
     if hasattr(deps, "user_service") and message.from_user:
         try:
-            # Используем правильный метод для получения истории
             history = await deps.user_service.get_conversation_history(
                 message.from_user.id, 
                 message.chat.id
@@ -56,7 +54,6 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
 
     # Запрос к ИИ
     try:
-        # ✅ ИСПРАВЛЕНО: Используем правильный метод generate_text вместо get_consultant_answer
         ai_answer = await deps.ai_content_service.generate_text(
             prompt=user_text,
             history=history if history else None
@@ -64,7 +61,7 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
         
         ai_answer = ai_answer or "Не удалось получить ответ от AI."
         
-        # Сохраняем в историю если есть user_service
+        # Сохраняем в историю
         if hasattr(deps, "user_service") and message.from_user:
             try:
                 await deps.user_service.add_to_conversation_history(
@@ -84,7 +81,7 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
         await state.clear()
 
 
-# ------------------------- Команда /check (разрешена и в группах) -------------------------
+# ------------------------- Команда /check (БЕЗ ЗАГЛУШЕК!) -------------------------
 
 @router.message(Command("check"))
 async def cmd_check(message: Message, command: CommandObject, deps: Deps):
@@ -107,107 +104,83 @@ async def cmd_check(message: Message, command: CommandObject, deps: Deps):
 
     # Нормализуем: обрежем ссылку t.me и оставим username/id
     target = target.replace("https://t.me/", "").replace("http://t.me/", "").strip()
+    
+    # Определяем username или ID
+    username = None
+    user_id = None
+    
     if target.startswith("@"):
-        target_username = target[1:]
+        username = target[1:]
+    elif target.isdigit():
+        user_id = int(target)
     else:
-        target_username = target
+        username = target
 
     try:
-        await message.answer(f"Проверяю @{target_username}…")
+        await message.answer(f"Проверяю @{username or user_id}…")
     except Exception:
         pass
 
-    # Если подключены сервисы безопасности/верификации — пытаемся вызвать
-    svc = getattr(deps, "verification_service", None) or getattr(deps, "security_service", None)
+    # 🎯 ГЛАВНОЕ: Проверяем через verification_service
+    svc = getattr(deps, "verification_service", None)
     result_text = None
-    if svc:
-        for name in ("check_user", "verify_user", "check", "verify"):
-            if hasattr(svc, name):
-                try:
-                    call = getattr(svc, name)
-                    res = call(username=target_username)
-                    res = await res if asyncio.iscoroutine(res) else res
+    
+    if svc and hasattr(svc, "check_user"):
+        try:
+            # Вызываем метод check_user
+            result_text = await svc.check_user(username=username, user_id=user_id)
+        except Exception as e:
+            logger.error(f"Ошибка при вызове verification_service.check_user: {e}", exc_info=True)
+            result_text = None
 
-                    # Строка — отдаем как есть
-                    if isinstance(res, str):
-                        result_text = res
-                        break
-
-                    # Словарь — собираем удобный формат
-                    if isinstance(res, dict):
-                        # ожидаемые поля, но не требуемые
-                        verified = bool(res.get("verified") or res.get("safe") or res.get("ok"))
-                        score = res.get("score")
-                        reason = res.get("reason") or res.get("details")
-                        profile = res.get("profile") or {}
-                        uid = profile.get("id") or res.get("user_id")
-                        name = profile.get("name") or res.get("name")
-                        uname = profile.get("username") or target_username
-                        country = profile.get("country") or "-"
-                        passport_ok = profile.get("passport_ok")
-                        deposit = profile.get("deposit")
-
-                        header = "Команда /check\nВерифицированный" if verified else "Команда /check\nНе верифицированный"
-                        curator = "Бот-куратор @НашБот\n--------------------"
-                        status_line = "✅ ПРОВЕРЕННЫЙ ПОСТАВЩИК ✅" if verified else "⚠️ НЕ ПРОВЕРЕН ⚠️\nПри переводе предоплаты есть риск потерять денежные средства"
-                        passport_line = "✅ Проверен ✅" if passport_ok else "⚠️ НЕ ПРОВЕРЕН ⚠️"
-                        deposit_line = f"${deposit}" if isinstance(deposit, (int, float, str)) and str(deposit) else "Отсутствует"
-
-                        lines = [
-                            header,
-                            "",
-                            curator,
-                            "Статус :",
-                            status_line,
-                            "",
-                            "Пользователь",
-                            f"Идентификатор пользователя: {uid or '-'}",
-                            f"Имя: {name or '-'}",
-                            f"Имя пользователя:\n@{uname}" if uname else "Имя пользователя:\n-",
-                            "",
-                            f"Страна: {country}",
-                            f"Паспорт : {passport_line}",
-                            f"Депозит : {deposit_line}",
-                        ]
-
-                        # добавим краткие детали, если есть
-                        if score is not None or reason:
-                            tail = []
-                            if score is not None:
-                                tail.append(f"рейтинг: {score}")
-                            if reason:
-                                tail.append(f"детали: {reason}")
-                            lines += ["", "—", "", ("; ".join(tail))]
-
-                        result_text = "\n".join(lines)
-                        break
-
-                    # Иное — нейтральный ответ
-                    result_text = "Готово."
-                    break
-
-                except TypeError:
-                    # возможно метод принимает user_id
-                    try:
-                        user_id = int(target_username)
-                        res = getattr(svc, name)(user_id=user_id)
-                        res = await res if asyncio.iscoroutine(res) else res
-                        result_text = res if isinstance(res, str) else "Готово."
-                        break
-                    except Exception as e:
-                        logger.debug("verification call (id) failed: %s", e)
-                except Exception as e:
-                    logger.debug("verification call failed: %s", e)
-
+    # ⚠️ FALLBACK: Если сервис недоступен или вернул None
     if not result_text:
-        result_text = "Проверка выполнена (заглушка). Подключите реализацию в security/verification сервисе к команде /check."
+        # Пытаемся найти пользователя хотя бы через user_service
+        user_service = getattr(deps, "user_service", None)
+        if user_service:
+            try:
+                user = None
+                if username:
+                    user = await user_service.get_user_by_username(username)
+                elif user_id:
+                    user = await user_service.get_user(user_id)
+                
+                if user:
+                    # Форматируем базовый ответ
+                    vd = user.verification_data
+                    header = "✅ ПРОВЕРЕННЫЙ ПОСТАВЩИК ✅" if vd.is_verified else "⚠️ НЕ ПРОВЕРЕН ⚠️\nПри переводе предоплаты есть риск потерять денежные средства"
+                    passport_line = "✅ Проверен ✅" if vd.passport_verified else "⚠️ НЕ ПРОВЕРЕН ⚠️"
+                    deposit_line = f"${vd.deposit:,.0f}".replace(",", " ") if vd.deposit > 0 else "Отсутствует"
+                    
+                    result_text = (
+                        f"Команда /check\n"
+                        f"{'Верифицированный' if vd.is_verified else 'Не верифицированный'}\n\n"
+                        f"Бот-куратор @НашБот\n"
+                        f"--------------------\n"
+                        f"Статус :\n{header}\n\n"
+                        f"Пользователь\n"
+                        f"Идентификатор пользователя: {user.id}\n"
+                        f"Имя: {user.first_name}\n"
+                        f"Имя пользователя:\n@{user.username or '-'}\n\n"
+                        f"Страна: -\n"
+                        f"Паспорт : {passport_line}\n"
+                        f"Депозит : {deposit_line}"
+                    )
+                else:
+                    result_text = f"❌ Пользователь @{username or user_id} не найден в базе данных."
+            except Exception as e:
+                logger.error(f"Ошибка при получении пользователя из user_service: {e}")
+                result_text = None
+    
+    # Если всё провалилось - критическая ошибка
+    if not result_text:
+        result_text = "❌ Ошибка: сервис верификации недоступен. Обратитесь к администратору."
 
     await message.answer(result_text)
 
 
 # ------------------------- Вспомогательные утилиты -------------------------
 
-# Более строгий токен монеты: латиница/цифры/дефис, 2–10 символов (типично BTC, ETH, ALEO)
 _COIN_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9\-]{1,9}$")
 
 
