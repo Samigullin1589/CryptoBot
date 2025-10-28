@@ -101,7 +101,7 @@ def register_routers(dp: Dispatcher) -> None:
     logger.info("✅ Зарегистрировано роутеров: %s", registered_routers_count)
 
 
-async def setup_scheduler(container: Container) -> None:
+async def setup_scheduler(container: Container, dp: Dispatcher) -> None:
     """Подключает плановые задачи."""
     mod = _import_optional("bot.jobs.scheduled_tasks")
     if not mod:
@@ -109,7 +109,16 @@ async def setup_scheduler(container: Container) -> None:
         return
     setup = getattr(mod, "setup_scheduler", None)
     if callable(setup):
-        res = setup(container)
+        # Проверяем сигнатуру функции
+        sig = inspect.signature(setup)
+        params = list(sig.parameters.keys())
+        
+        # Вызываем с правильными аргументами
+        if len(params) == 2:
+            res = setup(container, dp)
+        else:
+            res = setup(container)
+            
         if inspect.isawaitable(res):
             await res
         logger.info("✅ Периодические задачи настроены")
@@ -207,7 +216,7 @@ async def main() -> None:
     # ✅ ИСПРАВЛЕНО: Правильная инициализация Resource провайдеров
     await init_resources(container)
     
-    await setup_scheduler(container)
+    await setup_scheduler(container, dp)
 
     logger.info("✅ Бот полностью настроен, запуск polling...")
     stop_event = asyncio.Event()
