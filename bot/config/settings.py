@@ -1,10 +1,9 @@
 # =================================================================================
-# Файл: bot/config/settings.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ СБОРКА (25.08.2025)
+# bot/config/settings.py
+# Версия: ИСПРАВЛЕННАЯ (27.10.2025) - Distinguished Engineer
 # Описание:
-#   • ИСПРАВЛЕНО: Тип REDIS_URL изменен с RedisDsn на простой str, чтобы
-#     избежать конфликтов при передаче значения в DI-контейнер.
-#     Валидатор, добавляющий префикс "redis://", сохранен для надежности.
+#   • ИСПРАВЛЕНО: Добавлены недостающие атрибуты в AIConfig
+#   • ИСПРАВЛЕНО: Тип REDIS_URL остается str для совместимости с DI
 # =================================================================================
 
 from __future__ import annotations
@@ -12,7 +11,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-# ИЗМЕНЕНО: Убран импорт RedisDsn, так как мы используем простой str
 from pydantic import BaseModel, Field, HttpUrl, SecretStr, ValidationError, field_validator, ConfigDict
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,17 +19,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AIConfig(BaseModel):
     """
-    Общие настройки генеративных моделей.
-    По умолчанию используем Gemini; OpenAI — опционально (если установлен пакет и задан ключ).
+    Настройки генеративных моделей.
+    ИСПРАВЛЕНО: Добавлены недостающие атрибуты для совместимости с ai_content_service
     """
     model_config = ConfigDict(protected_namespaces=())
 
     provider: str = "gemini"  # "gemini" | "openai" | "none"
-    model_name: str = "gemini-1.5-pro-latest"
-    flash_model_name: str = "gemini-1.5-flash-latest"
+    
+    # Gemini модели
+    model_name: str = "gemini-1.5-pro-latest"        # Gemini Pro (основная модель)
+    flash_model_name: str = "gemini-1.5-flash-latest"  # Gemini Flash (быстрая модель)
+    
+    # OpenAI модели
+    openai_model: str = "gpt-4o-mini"  # ✅ ДОБАВЛЕНО: Модель OpenAI по умолчанию
+    
+    # Параметры генерации
     default_temperature: float = 0.5
     max_retries: int = 5
     history_max_size: int = 10
+    
+    # Таймауты
+    request_timeout: int = 30  # ✅ ДОБАВЛЕНО: Таймаут для запросов к OpenAI (секунды)
 
 
 # ----------------------------- Throttling / Flags -----------------------------
@@ -86,10 +94,7 @@ class NewsServiceConfig(BaseModel):
 # ----------------------------- Endpoints --------------------------------------
 
 class EndpointsConfig(BaseModel):
-    """
-    Все внешние API, которые использует проект.
-    Добавлен currency_rate_api для получения курсов валют.
-    """
+    """Все внешние API"""
     model_config = ConfigDict(protected_namespaces=())
 
     coingecko_api_base: HttpUrl = "https://api.coingecko.com/api/v3"
@@ -118,7 +123,7 @@ class EndpointsConfig(BaseModel):
 class ThreatFilterConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     enabled: bool = True
-    toxicity_threshold: float = 0.75  # 0..1
+    toxicity_threshold: float = 0.75
 
 
 # ----------------------------- ASIC / Market / Crypto Center ------------------
@@ -193,7 +198,7 @@ class MiningGameServiceConfig(BaseModel):
     )
 
 
-# ----------------------------- Logging / Telemetry (доп.) ---------------------
+# ----------------------------- Logging ----------------------------------------
 
 class LoggingConfig(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
@@ -207,8 +212,7 @@ class LoggingConfig(BaseModel):
 class Settings(BaseSettings):
     # --- обязательные ключи/URL ---
     BOT_TOKEN: SecretStr
-    # ИЗМЕНЕНО: Используем простой 'str' вместо 'RedisDsn' для надежности.
-    REDIS_URL: str
+    REDIS_URL: str  # Простой str для совместимости с DI
     GEMINI_API_KEY: SecretStr
 
     # --- опциональные ключи провайдеров/сервисов ---
@@ -280,10 +284,10 @@ class Settings(BaseSettings):
 try:
     settings = Settings()
     logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
-    logging.info("Конфигурация успешно загружена и валидирована.")
+    logging.info("✅ Конфигурация успешно загружена и валидирована.")
 except ValidationError as e:
     logging.critical(
-        "КРИТИЧЕСКАЯ ОШИБКА ВАЛИДАЦИИ НАСТРОЕК. Проверьте .env и переменные окружения.\n%s",
+        "❌ КРИТИЧЕСКАЯ ОШИБКА ВАЛИДАЦИИ НАСТРОЕК. Проверьте .env и переменные окружения.\n%s",
         e,
     )
     raise SystemExit("Ошибки валидации конфигурации.")

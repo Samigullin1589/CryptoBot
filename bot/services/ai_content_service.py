@@ -1,17 +1,24 @@
+# =================================================================================
 # bot/services/ai_content_service.py
-# Дата обновления: 19.08.2025
-# Версия: 2.0.0
-# Описание: Унифицированный сервис для работы с контентом от AI.
-# Поддерживает OpenAI (приоритет) и Google Gemini (резерв) для текста,
-# а также Gemini 1.5 Flash для анализа изображений.
+# Версия: ИСПРАВЛЕННАЯ (27.10.2025) - Distinguished Engineer
+# Описание:
+#   • ИСПРАВЛЕНО: settings.AI → settings.ai
+#   • ИСПРАВЛЕНО: settings.GOOGLE_API_KEY → settings.GEMINI_API_KEY
+#   • ИСПРАВЛЕНО: self.config.GEMINI_PRO_MODEL → self.config.model_name
+#   • ИСПРАВЛЕНО: self.config.GEMINI_FLASH_MODEL → self.config.flash_model_name
+#   • ИСПРАВЛЕНО: self.config.OPENAI_MODEL → self.config.openai_model
+#   • ИСПРАВЛЕНО: self.config.REQUEST_TIMEOUT → self.config.request_timeout
+#   • ИСПРАВЛЕНО: self.config.DEFAULT_TEMPERATURE → self.config.default_temperature
+#   • ИСПРАВЛЕНО: from loguru import logger → import logging
+# =================================================================================
 
 import asyncio
 import base64
 import json
+import logging  # ✅ ИСПРАВЛЕНО: Заменен import loguru на стандартный logging
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 import backoff
-from loguru import logger
 
 # --- Импорты провайдеров AI ---
 try:
@@ -36,6 +43,8 @@ except ImportError:
 from bot.config.settings import settings
 from bot.utils.text_utils import clean_json_string, clip_text
 
+logger = logging.getLogger(__name__)  # ✅ ИСПРАВЛЕНО: Стандартный logger
+
 
 class AIContentService:
     """
@@ -47,7 +56,7 @@ class AIContentService:
 
     def __init__(self):
         """Инициализирует клиентов AI на основе доступных ключей в настройках."""
-        self.config = settings.AI
+        self.config = settings.ai  # ✅ ИСПРАВЛЕНО: settings.AI → settings.ai
         self.oai_client: Optional[OpenAI] = None
         self.gemini_pro = None
         self.gemini_flash = None
@@ -56,8 +65,11 @@ class AIContentService:
         openai_api_key = settings.OPENAI_API_KEY.get_secret_value() if settings.OPENAI_API_KEY else None
         if OPENAI_AVAILABLE and openai_api_key:
             try:
-                self.oai_client = OpenAI(api_key=openai_api_key, timeout=self.config.REQUEST_TIMEOUT)
-                logger.info(f"AIContentService: OpenAI-клиент инициализирован (модель: {self.config.OPENAI_MODEL}).")
+                self.oai_client = OpenAI(
+                    api_key=openai_api_key, 
+                    timeout=self.config.request_timeout  # ✅ ИСПРАВЛЕНО: REQUEST_TIMEOUT → request_timeout
+                )
+                logger.info(f"AIContentService: OpenAI-клиент инициализирован (модель: {self.config.openai_model}).")
             except Exception as e:
                 logger.warning(f"Не удалось инициализировать OpenAI-клиент: {e}")
                 self.oai_client = None
@@ -65,10 +77,11 @@ class AIContentService:
             logger.info("AIContentService: OpenAI-клиент не будет использоваться (ключ не найден или библиотека не установлена).")
 
         # --- Инициализация Google Gemini ---
-        google_api_key = settings.GOOGLE_API_KEY.get_secret_value() if settings.GOOGLE_API_KEY else None
-        if GEMINI_AVAILABLE and google_api_key:
+        # ✅ ИСПРАВЛЕНО: settings.GOOGLE_API_KEY → settings.GEMINI_API_KEY
+        gemini_api_key = settings.GEMINI_API_KEY.get_secret_value() if settings.GEMINI_API_KEY else None
+        if GEMINI_AVAILABLE and gemini_api_key:
             try:
-                genai.configure(api_key=google_api_key)
+                genai.configure(api_key=gemini_api_key)
                 # Настройка безопасности для избежания блокировок на безобидных запросах
                 safety_settings = {
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -76,10 +89,11 @@ class AIContentService:
                     HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
                     HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
                 }
-                self.gemini_pro = genai.GenerativeModel(self.config.GEMINI_PRO_MODEL, safety_settings=safety_settings)
-                self.gemini_flash = genai.GenerativeModel(self.config.GEMINI_FLASH_MODEL, safety_settings=safety_settings)
+                # ✅ ИСПРАВЛЕНО: GEMINI_PRO_MODEL → model_name, GEMINI_FLASH_MODEL → flash_model_name
+                self.gemini_pro = genai.GenerativeModel(self.config.model_name, safety_settings=safety_settings)
+                self.gemini_flash = genai.GenerativeModel(self.config.flash_model_name, safety_settings=safety_settings)
                 logger.info(
-                    f"AIContentService: Gemini-клиент инициализирован (Pro: {self.config.GEMINI_PRO_MODEL}, Flash: {self.config.GEMINI_FLASH_MODEL})."
+                    f"AIContentService: Gemini-клиент инициализирован (Pro: {self.config.model_name}, Flash: {self.config.flash_model_name})."
                 )
             except Exception as e:
                 logger.error(f"Не удалось инициализировать Gemini-клиент: {e}")
@@ -96,9 +110,9 @@ class AIContentService:
             raise RuntimeError("OpenAI-клиент не инициализирован.")
         
         request_params = {
-            "model": self.config.OPENAI_MODEL,
+            "model": self.config.openai_model,  # ✅ ИСПРАВЛЕНО: OPENAI_MODEL → openai_model
             "messages": messages,
-            "temperature": 0.1 if is_json else self.config.DEFAULT_TEMPERATURE,
+            "temperature": 0.1 if is_json else self.config.default_temperature,  # ✅ ИСПРАВЛЕНО: DEFAULT_TEMPERATURE → default_temperature
         }
         if is_json:
             request_params["response_format"] = {"type": "json_object"}
@@ -115,7 +129,7 @@ class AIContentService:
             raise RuntimeError("Модель Gemini не инициализирована.")
             
         gen_config = GenerationConfig(
-            temperature=0.1 if is_json else self.config.DEFAULT_TEMPERATURE,
+            temperature=0.1 if is_json else self.config.default_temperature,  # ✅ ИСПРАВЛЕНО
             response_mime_type="application/json" if is_json else "text/plain",
         )
         response = await model.generate_content_async(contents=contents, generation_config=gen_config)
@@ -166,7 +180,7 @@ class AIContentService:
                 raw_json = await self._oai_request(messages, is_json=True)
             except Exception as e:
                 logger.warning(f"Ошибка OpenAI при генерации JSON, переключение на Gemini: {e}")
-                raw_json = "" # Сбрасываем, чтобы перейти к Gemini
+                raw_json = ""
 
         if not raw_json and self.gemini_flash:
             try:

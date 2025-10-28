@@ -1,8 +1,12 @@
 # =================================================================================
-# Файл: bot/containers.py
-# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
+# bot/containers.py
+# Версия: ИСПРАВЛЕННАЯ (27.10.2025) - Distinguished Engineer
+# Описание:
+#   • ДОБАВЛЕНО: Методы init_resources() и shutdown_resources()
+#   • Исправлены импорты
 # =================================================================================
 
+import logging
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
 from aiogram import Bot
@@ -29,6 +33,8 @@ from bot.services.moderation_service import ModerationService
 from bot.services.security_service import SecurityService
 from bot.services.image_vision_service import ImageVisionService
 
+logger = logging.getLogger(__name__)
+
 
 class Container(containers.DeclarativeContainer):
     """
@@ -43,10 +49,8 @@ class Container(containers.DeclarativeContainer):
 
     config = providers.Singleton(Settings)
 
-    # ИСПРАВЛЕНО: убрали .call()
     bot = providers.Singleton(Bot, token=config.provided.BOT_TOKEN.get_secret_value())
 
-    # ИСПРАВЛЕНО: убрали () у REDIS_URL
     redis_client = providers.Resource(
         Redis.from_url,
         url=config.provided.REDIS_URL,
@@ -73,3 +77,51 @@ class Container(containers.DeclarativeContainer):
     admin_service = providers.Singleton(AdminService, redis_client=redis_client, bot=bot)
     moderation_service = providers.Singleton(ModerationService, redis_client=redis_client, bot=bot)
     security_service = providers.Singleton(SecurityService, ai_content_service=ai_content_service, image_vision_service=image_vision_service, moderation_service=moderation_service, redis_client=redis_client, bot=bot)
+
+    # =============================================================================
+    # ✅ ДОБАВЛЕНО: Методы для инициализации и завершения ресурсов
+    # =============================================================================
+
+    async def init_resources(self) -> None:
+        """
+        Инициализирует все ресурсы приложения (Redis, HTTP-клиент).
+        Вызывается при старте бота.
+        """
+        try:
+            # Инициализация Redis connection
+            await self.redis_client.init()
+            logger.info("✅ Redis client успешно инициализирован.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации Redis: {e}")
+            raise
+
+        try:
+            # Инициализация HTTP client (если требуется)
+            await self.http_client.init()
+            logger.info("✅ HTTP client успешно инициализирован.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации HTTP client: {e}")
+            raise
+
+        logger.info("✅ Все ресурсы успешно инициализированы.")
+
+    async def shutdown_resources(self) -> None:
+        """
+        Корректно завершает работу всех ресурсов (Redis, HTTP-клиент).
+        Вызывается при остановке бота.
+        """
+        try:
+            # Закрытие HTTP client
+            await self.http_client.shutdown()
+            logger.info("✅ HTTP client успешно закрыт.")
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при закрытии HTTP client: {e}")
+
+        try:
+            # Закрытие Redis connection
+            await self.redis_client.shutdown()
+            logger.info("✅ Redis client успешно закрыт.")
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка при закрытии Redis: {e}")
+
+        logger.info("✅ Все ресурсы успешно завершены.")

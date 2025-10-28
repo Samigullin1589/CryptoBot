@@ -1,48 +1,72 @@
-# ===============================================================
-# Файл: render.yaml (ПРОДАКШН-ВЕРСИЯ, АВГУСТ 2025)
-# Описание: Конфигурация Render Blueprints: worker + Key Value (Redis).
-# Документация: https://render.com/docs/blueprint-spec
-# ===============================================================
+# =================================================================================
+# render.yaml
+# Дата: 27.10.2025
+# Описание: Конфигурация для Render deployment
+# =================================================================================
 
 services:
-  # --- Фоновый worker: сам бот (aiogram 3) ---
-  - type: worker
-    runtime: python
-    name: cryptobot-worker
-    plan: starter
+  - type: web
+    name: telegram-crypto-bot
+    env: python
+    region: frankfurt  # Или другой регион по выбору
+    plan: free         # Можно изменить на starter/standard для production
+    
     buildCommand: |
-      pip install --upgrade pip
-      pip install -r requirements.txt
-    startCommand: |
-      python -m bot.main
+      pip install --upgrade pip setuptools wheel
+      pip install -r requirements.txt --break-system-packages
+    
+    startCommand: python -m bot.main
+    
+    # Health check для автоматического перезапуска
+    healthCheckPath: /health
+    
+    # Переменные окружения (значения устанавливаются в Render Dashboard)
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.1
+      # --- Обязательные ---
       - key: BOT_TOKEN
-        sync: false
-      - key: ADMIN_USER_IDS
-        sync: false
-      - key: TZ
-        value: "UTC"
-      - key: LOG_LEVEL
-        value: INFO
+        sync: false  # Секретное значение, устанавливается вручную
+      
       - key: REDIS_URL
-        fromService:
-          name: cryptobot-kv
-          type: keyvalue
-          property: connectionString
-      - key: OPENAI_API_KEY
-        sync: false
+        sync: false  # Формат: redis://host:port или redis://user:pass@host:port
+      
       - key: GEMINI_API_KEY
-        sync: false
-      - key: CRYPTOCOMPARE_API_KEY
-        sync: false
+        sync: false  # Google Gemini API key
+      
+      - key: ADMIN_USER_IDS
+        value: "123456789"  # Замените на реальные Telegram user IDs через запятую
+      
+      # --- Опциональные ---
+      - key: OPENAI_API_KEY
+        sync: false  # Опционально для OpenAI
+      
       - key: COINGECKO_API_KEY
-        sync: false
-
-  # --- Key Value (современная замена типа redis) ---
-  - type: keyvalue
-    name: cryptobot-kv
-    plan: free
-    ipAllowList: []
-    maxmemoryPolicy: allkeys-lru
+        sync: false  # Опционально для CoinGecko Pro
+      
+      - key: CRYPTOCOMPARE_API_KEY
+        sync: false  # Опционально для CryptoCompare
+      
+      - key: ADMIN_CHAT_ID
+        sync: false  # Telegram chat ID для админ-уведомлений
+      
+      - key: NEWS_CHAT_ID
+        sync: false  # Telegram chat ID для новостей
+      
+      # --- Системные ---
+      - key: PYTHON_VERSION
+        value: "3.10"
+      
+      - key: IS_WEB_PROCESS
+        value: "false"  # Polling mode (не webhook)
+      
+      - key: PORT
+        value: "10000"
+      
+      - key: LOG_LEVEL
+        value: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+      
+      # --- AI настройки ---
+      - key: AI__PROVIDER
+        value: "gemini"  # gemini или openai
+      
+      - key: AI__DEFAULT_TEMPERATURE
+        value: "0.5"
