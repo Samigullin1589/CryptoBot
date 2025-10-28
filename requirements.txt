@@ -20,6 +20,9 @@ dependency-injector==4.41.0
 # Logging
 loguru==0.7.3
 
+# HTML sanitization
+bleach==6.2.0
+
 # Utilities
 backoff==2.2.1
 
