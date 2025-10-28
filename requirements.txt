@@ -1,18 +1,24 @@
-# Core bot framework
+# =============================================================================
+# requirements.txt
+# Версия: PRODUCTION (28.10.2025) - Distinguished Engineer
+# Проверено: Все версии совместимы с Python 3.10+ и Render
+# =============================================================================
+
+# Core Bot Framework
 aiogram==3.22.0
+aiohttp==3.11.10
 
 # Database & Cache
 asyncpg==0.30.0
 redis==5.2.1
 aiocache==0.12.3
 
-# HTTP clients
-aiohttp==3.11.10
+# HTTP Clients
 httpx==0.27.2
 
-# Validation (compatible with aiogram 3.22.0)
+# Validation (совместимо с aiogram 3.22.0)
 pydantic==2.11.1
-pydantic-settings==2.3.4
+pydantic-settings==2.6.1
 
 # Dependency Injection
 dependency-injector==4.41.0
@@ -20,37 +26,39 @@ dependency-injector==4.41.0
 # Logging
 loguru==0.7.3
 
-# HTML sanitization
+# HTML Sanitization
 bleach==6.2.0
 
-# Image processing
+# Image Processing
 Pillow==10.4.0
 
-# Data visualization
+# Data Visualization
 matplotlib==3.9.2
 numpy==1.26.4
 
 # Utilities
 backoff==2.2.1
+python-dotenv==1.0.1
+pyyaml==6.0.2
+tenacity==9.0.0
 
 # AI/ML
 google-generativeai==0.8.3
 openai==1.55.3
 
-# Parsing
+# Parsing & Scraping
 beautifulsoup4==4.12.3
 lxml==5.3.0
 feedparser==6.0.11
 python-dateutil==2.9.0.post0
 rapidfuzz==3.10.1
 
-# Configuration
-python-dotenv==1.0.1
-pyyaml==6.0.2
-tenacity==9.0.0
-
-# Task scheduling
+# Task Scheduling
 apscheduler==3.10.4
 
 # Security
 cryptography==43.0.3
+
+# Web Server (для webhook)
+aiohttp-retry==2.9.0
+gunicorn==23.0.0  # Для production (опционально)

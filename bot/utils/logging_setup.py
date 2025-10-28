@@ -1,67 +1,132 @@
-# ===============================================================
-# Файл: bot/utils/logging_setup.py (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Настраивает умное логирование для всего приложения.
-# Поддерживает как текстовый, так и структурированный JSON-формат.
-# ===============================================================
+# =============================================================================
+# Файл: bot/utils/logging_setup.py
+# Версия: PRODUCTION-READY (28.10.2025) - Distinguished Engineer
+# Описание: 
+#   • Умная настройка логирования через loguru
+#   • Поддержка JSON-формата для structured logging
+#   • Фильтрация шумных библиотек
+#   • Интеграция с Python logging
+# =============================================================================
 
 import logging
 import sys
-import json
 from typing import Literal
 
-# --- JSON Formatter для структурированного логирования ---
+from loguru import logger
 
-class JsonFormatter(logging.Formatter):
-    """
-    Кастомный форматер для вывода логов в виде одной JSON-строки.
-    Это стандарт для современных production-систем.
-    """
-    def format(self, record):
-        log_record = {
-            "timestamp": self.formatTime(record, self.datefmt),
-            "level": record.levelname,
-            "name": record.name,
-            "message": record.getMessage(),
-        }
-        if record.exc_info:
-            log_record['exc_info'] = self.formatException(record.exc_info)
-        return json.dumps(log_record, ensure_ascii=False)
 
-# --- Главная функция настройки ---
+# =============================================================================
+# LOGURU INTERCEPTOR
+# =============================================================================
 
-def setup_logging(level: str = "INFO", format: Literal["text", "json"] = "text"):
+class InterceptHandler(logging.Handler):
     """
-    Настраивает конфигурацию логирования для всего приложения.
-
-    :param level: Уровень логирования (например, "INFO", "DEBUG").
-    :param format: Формат вывода ('text' или 'json').
+    Перехватчик стандартных логов Python и перенаправление в loguru.
+    Это нужно для библиотек, которые используют стандартный logging.
     """
-    log_level = logging.getLevelName(level.upper())
     
-    # Сбрасываем все предыдущие конфигурации
-    root_logger = logging.getLogger()
-    if root_logger.hasHandlers():
-        root_logger.handlers.clear()
-
-    # Выбираем форматер в зависимости от настроек
-    if format == "json":
-        formatter = JsonFormatter()
-    else:
-        formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Перехват и отправка лога в loguru.
+        
+        Args:
+            record: Запись лога из стандартного logging
+        """
+        # Получаем уровень loguru из стандартного logging
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+        
+        # Находим правильный caller
+        frame, depth = sys._getframe(6), 6
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+        
+        logger.opt(depth=depth, exception=record.exc_info).log(
+            level, record.getMessage()
         )
 
-    # Настраиваем обработчик для вывода в консоль
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
+
+# =============================================================================
+# SETUP FUNCTION
+# =============================================================================
+
+def setup_logging(
+    level: str = "INFO",
+    format: Literal["text", "json"] = "text"
+) -> None:
+    """
+    Настраивает систему логирования для всего приложения.
     
-    # Применяем настройки к корневому логгеру
-    root_logger.addHandler(stream_handler)
-    root_logger.setLevel(log_level)
+    Args:
+        level: Уровень логирования ("DEBUG", "INFO", "WARNING", "ERROR")
+        format: Формат вывода ("text" или "json")
+    """
+    # Удаляем стандартные обработчики loguru
+    logger.remove()
+    
+    # Выбираем формат
+    if format == "json":
+        # JSON формат для structured logging (продакшен)
+        log_format = (
+            '{{"timestamp":"{time:YYYY-MM-DD HH:mm:ss.SSS}","level":"{level}",'
+            '"name":"{name}","function":"{function}","line":{line},'
+            '"message":"{message}"}}'
+        )
+        colorize = False
+    else:
+        # Человекочитаемый формат (разработка)
+        log_format = (
+            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+            "<level>{level: <8}</level> | "
+            "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
+            "<level>{message}</level>"
+        )
+        colorize = True
+    
+    # Добавляем обработчик для stdout
+    logger.add(
+        sys.stdout,
+        format=log_format,
+        level=level.upper(),
+        colorize=colorize,
+        backtrace=True,
+        diagnose=True,
+    )
+    
+    # Перехватываем стандартный logging и направляем в loguru
+    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+    
+    # Настраиваем уровни для шумных библиотек
+    for logger_name in [
+        "aiogram",
+        "aiohttp",
+        "asyncio",
+        "apscheduler",
+        "httpx",
+        "httpcore",
+    ]:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    
+    logger.info(
+        f"✅ Logging configured: level={level.upper()}, format={format}"
+    )
 
-    # Приглушаем слишком "болтливые" библиотеки
-    logging.getLogger("aiohttp").setLevel(logging.WARNING)
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-    logging.info(f"Logging successfully configured with level {level.upper()} in {format} format.")
+# =============================================================================
+# CONVENIENCE FUNCTIONS
+# =============================================================================
+
+def get_logger(name: str):
+    """
+    Получение логгера для модуля.
+    
+    Args:
+        name: Имя логгера (обычно __name__)
+        
+    Returns:
+        Логгер loguru
+    """
+    return logger.bind(name=name)
