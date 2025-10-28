@@ -1,7 +1,7 @@
 # bot/services/crypto_center_service.py
-# Дата обновления: 23.08.2025
-# Версия: 2.1.0
-# Описание: Сервис-оркестратор для Крипто-Центра.
+# Дата обновления: 28.10.2025
+# Версия: 2.1.1
+# Описание: ИСПРАВЛЕНО - Правильные имена настроек + добавлен asyncio
 
 import asyncio
 import json
@@ -30,7 +30,8 @@ class CryptoCenterService:
         self.redis = redis_client
         self.ai_service = ai_service
         self.news_service = news_service
-        self.config = settings.CRYPTO_CENTER
+        # ✅ ИСПРАВЛЕНО: settings.CRYPTO_CENTER → settings.crypto_center
+        self.config = settings.crypto_center
         self.keys = KeyFactory
         logger.info("Сервис CryptoCenterService инициализирован.")
 
@@ -67,7 +68,12 @@ class CryptoCenterService:
         if isinstance(ai_result, list):
             try:
                 validated_items = [model.model_validate(item) for item in ai_result]
-                await self.redis.set(cache_key, json.dumps([item.model_dump() for item in validated_items]), ex=self.config.ALPHA_CACHE_TTL_SECONDS)
+                # ✅ ИСПРАВЛЕНО: self.config.ALPHA_CACHE_TTL_SECONDS → self.config.alpha_cache_ttl_seconds
+                await self.redis.set(
+                    cache_key, 
+                    json.dumps([item.model_dump() for item in validated_items]), 
+                    ex=self.config.alpha_cache_ttl_seconds
+                )
                 return validated_items
             except (ValidationError, TypeError) as e:
                 logger.error(f"AI вернул данные для {alpha_type}, но они не прошли валидацию: {e}")
@@ -94,12 +100,16 @@ class CryptoCenterService:
             pass
 
         articles = await self.news_service.get_all_latest_news(limit=5)
-        if not articles: return []
+        if not articles: 
+            return []
 
         async def summarize_article(article: NewsArticle):
             clean_text = BeautifulSoup(article.body or "", 'html.parser').get_text(separator=' ', strip=True)
             if clean_text:
-                summary = await self.ai_service.get_text_response(clean_text, system_prompt="Суммируй новость в 3-4 коротких тезисах.")
+                summary = await self.ai_service.get_text_response(
+                    clean_text, 
+                    system_prompt="Суммируй новость в 3-4 коротких тезисах."
+                )
                 if summary and "К сожалению" not in summary:
                     article.ai_summary = summary
             return article
@@ -107,7 +117,12 @@ class CryptoCenterService:
         summarized_articles = await asyncio.gather(*(summarize_article(art) for art in articles))
         
         try:
-            await self.redis.set(cache_key, json.dumps([a.model_dump(mode='json') for a in summarized_articles]), ex=self.config.FEED_CACHE_TTL_SECONDS)
+            # ✅ ИСПРАВЛЕНО: self.config.FEED_CACHE_TTL_SECONDS → self.config.feed_cache_ttl_seconds
+            await self.redis.set(
+                cache_key, 
+                json.dumps([a.model_dump(mode='json') for a in summarized_articles]), 
+                ex=self.config.feed_cache_ttl_seconds
+            )
         except Exception as e:
             logger.error(f"Не удалось сохранить кэш новостной ленты: {e}")
             

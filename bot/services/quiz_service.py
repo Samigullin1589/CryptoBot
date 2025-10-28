@@ -1,8 +1,7 @@
 # bot/services/quiz_service.py
-# Дата обновления: 20.08.2025
-# Версия: 2.0.0
-# Описание: Сервис для генерации вопросов для крипто-викторины с использованием
-# AI и отказоустойчивым механизмом резервных вопросов.
+# Дата обновления: 28.10.2025
+# Версия: 2.0.1
+# Описание: ИСПРАВЛЕНО - Правильные имена настроек (строчные буквы)
 
 import json
 import random
@@ -32,7 +31,8 @@ class QuizService:
         :param ai_content_service: Сервис для взаимодействия с AI-моделями.
         """
         self.ai_service = ai_content_service
-        self.config = settings.QUIZ
+        # ✅ ИСПРАВЛЕНО: settings.QUIZ → settings.quiz
+        self.config = settings.quiz
         self.fallback_questions: List[QuizQuestion] = self._load_fallback_questions()
         logger.info("Сервис QuizService инициализирован.")
 
@@ -41,7 +41,8 @@ class QuizService:
         Загружает и валидирует резервные вопросы из локального JSON-файла.
         Невалидные вопросы отбраковываются с записью предупреждения в лог.
         """
-        fallback_path = Path(__file__).parent.parent.parent / self.config.FALLBACK_QUESTIONS_PATH
+        # ✅ ИСПРАВЛЕНО: self.config.FALLBACK_QUESTIONS_PATH → self.config.fallback_questions_path
+        fallback_path = Path(__file__).parent.parent.parent / self.config.fallback_questions_path
         if not fallback_path.exists():
             logger.error(f"Файл с резервными вопросами не найден: {fallback_path}")
             return []
