@@ -27,8 +27,8 @@ class AsicService:
     def __init__(self, parser_service: ParserService, redis_client: Redis):
         self.redis = redis_client
         self.parser_service = parser_service
-        # ✅ ИСПРАВЛЕНО: settings.ASIC → settings.asic
-        self.config = settings.asic
+        # ✅ ИСПРАВЛЕНО: settings.ASIC → settings.asic_service
+        self.config = settings.asic_service
         self.keys = KeyFactory
         # ✅ ИСПРАВЛЕНО: self.config.FALLBACK_FILE_PATH → self.config.fallback_file_path
         self.fallback_path = Path(__file__).parent.parent.parent / self.config.fallback_file_path
