@@ -1,45 +1,43 @@
-# =================================================================================
-# requirements.txt
-# Дата: 27.10.2025
-# Описание: Зависимости с фиксированными стабильными версиями
-# Совместимость: Python 3.10+, Render
-# Статус: ✅ Все версии проверены через web_search на актуальность
-# =================================================================================
+# Core bot framework
+aiogram==3.22.0
 
-# --- Core Framework (проверено 27.10.2025) ---
-aiogram==3.22.0                    # Telegram Bot API (релиз: 17.08.2025)
-pydantic==2.12.3                   # Data validation (релиз: 17.10.2025)
-pydantic-settings==2.11.0          # Settings management (релиз: 24.09.2025)
+# Database & Cache
+asyncpg==0.30.0
+redis==5.2.1
+aiocache==0.12.3
 
-# --- Dependency Injection ---
-dependency-injector==4.42.0        # DI container
+# HTTP clients
+aiohttp==3.11.10
+httpx==0.27.2
 
-# --- Database / Cache (проверено 27.10.2025) ---
-redis==7.0.0                       # Redis client с redis.asyncio (релиз: 22.10.2025)
+# Validation (FIXED: compatible with aiogram 3.22.0)
+pydantic==2.11.1
+pydantic-settings==2.3.4
 
-# --- HTTP / Networking ---
-aiohttp==3.10.11                   # Async HTTP client
-httpx==0.27.2                      # Alternative HTTP client
-backoff==2.2.1                     # Retry logic with exponential backoff
+# Utilities
+backoff==2.2.1
 
-# --- AI / LLM Providers ---
-google-generativeai==0.8.3         # Google Gemini API client
-openai==1.55.3                     # OpenAI API client (опционально)
+# AI/ML
+google-generativeai==0.8.3
+openai==1.55.3
 
-# --- Data Processing & Parsing ---
-beautifulsoup4==4.12.3             # HTML parsing
-lxml==5.3.0                        # Fast XML/HTML parser
-feedparser==6.0.11                 # RSS/Atom feed parser
-python-dateutil==2.9.0.post0       # Date parsing utilities
-rapidfuzz==3.10.1                  # Fuzzy string matching
+# Parsing
+beautifulsoup4==4.12.3
+lxml==5.3.0
+feedparser==6.0.11
+python-dateutil==2.9.0.post0
+rapidfuzz==3.10.1
 
-# --- Utilities ---
-python-dotenv==1.0.1               # .env file support
-pyyaml==6.0.2                      # YAML configuration files
-tenacity==9.0.0                    # Advanced retry/wait logic
+# Configuration
+python-dotenv==1.0.1
+pyyaml==6.0.2
+tenacity==9.0.0
 
-# --- Task Scheduling ---
-apscheduler==3.10.4                # Background task scheduler
+# Task scheduling
+apscheduler==3.10.4
 
-# --- Security ---
-cryptography==43.0.3               # Cryptographic recipes
+# Security
+cryptography==43.0.3
+
+# Optional: if you need Pillow for images
+# Pillow==10.4.0
