@@ -23,6 +23,9 @@ loguru==0.7.3
 # HTML sanitization
 bleach==6.2.0
 
+# Image processing
+Pillow==10.4.0
+
 # Utilities
 backoff==2.2.1
 
