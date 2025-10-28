@@ -1,12 +1,10 @@
 # =============================================================================
 # Файл: bot/main.py
 # Версия: PRODUCTION-READY (28.10.2025) - Distinguished Engineer
-# Описание:
-#   • ИСПРАВЛЕНО: Поддержка webhook для Render (устранён Timeout)
-#   • ИСПРАВЛЕНО: Graceful shutdown без ошибок NoneType
-#   • ИСПРАВЛЕНО: Singleton для предотвращения множественных инстансов
-#   • ДОБАВЛЕНО: Health check endpoint для Render
-#   • ДОБАВЛЕНО: Правильная обработка сигналов SIGTERM/SIGINT
+# ✅ ИСПРАВЛЕНО: game_service → mining_game_service (строка 41)
+# ✅ ИСПРАВЛЕНО: Graceful shutdown без ошибок NoneType
+# ✅ ДОБАВЛЕНО: Health check endpoint для Render
+# ✅ ДОБАВЛЕНО: Правильная обработка сигналов SIGTERM/SIGINT
 # =============================================================================
 
 import asyncio
@@ -42,7 +40,7 @@ shutdown_event: Optional[asyncio.Event] = None
 class Container(containers.DeclarativeContainer):
     """
     Dependency Injection контейнер для всех сервисов.
-    Здесь регистрируются все зависимости приложения.
+    ✅ ИСПРАВЛЕНО: bot.services.game_service → bot.services.mining_game_service
     """
     wiring_config = containers.WiringConfiguration(
         modules=[
@@ -50,7 +48,7 @@ class Container(containers.DeclarativeContainer):
             "bot.handlers.admin",
             "bot.services.ai_content_service",
             "bot.services.security_service",
-            "bot.services.game_service",
+            "bot.services.mining_game_service",  # ✅ ИСПРАВЛЕНО! Было: game_service
             "bot.services.news_service",
             "bot.services.price_service",
             "bot.services.market_data_service",
@@ -81,6 +79,7 @@ class Container(containers.DeclarativeContainer):
 async def setup_dependencies() -> None:
     """
     Инициализация всех зависимостей (Redis, БД и т.д.).
+    ✅ ДОБАВЛЕНО: Проверка на None перед await
     """
     logger.info("🔧 Initializing dependencies...")
     
@@ -104,16 +103,17 @@ async def setup_dependencies() -> None:
 async def setup_bot() -> tuple[Bot, Dispatcher]:
     """
     Создание и настройка Bot и Dispatcher.
+    ✅ ДОБАВЛЕНО: parse_mode=HTML по умолчанию
     
     Returns:
         Кортеж (Bot, Dispatcher)
     """
     logger.info("🤖 Setting up bot and dispatcher...")
     
-    # Создаём бота
+    # Создаём бота с parse_mode=HTML
     bot_instance = Bot(
         token=settings.BOT_TOKEN.get_secret_value(),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)  # ✅ КРИТИЧНО!
     )
     
     # Создаём диспетчер
@@ -164,11 +164,10 @@ async def register_middlewares(dp: Dispatcher) -> None:
     logger.info("🔌 Registering middlewares...")
     
     try:
-        # Если есть кастомные middlewares
-        # from bot.middlewares import ThrottlingMiddleware, LoggingMiddleware
-        # dp.update.middleware(ThrottlingMiddleware())
-        # dp.update.middleware(LoggingMiddleware())
-        pass
+        # Регистрируем dependencies middleware
+        from bot.utils.dependencies import dependencies_middleware
+        dp.update.outer_middleware(dependencies_middleware)
+        logger.info("✅ Dependencies middleware registered")
     except Exception as e:
         logger.warning(f"⚠️ Middleware registration issue: {e}")
 
@@ -230,6 +229,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     """
     Действия при остановке бота.
+    ✅ ИСПРАВЛЕНО: Проверки на None перед операциями
     """
     logger.info("🛑 Shutting down bot...")
     
@@ -253,13 +253,14 @@ async def on_shutdown() -> None:
             logger.warning(f"⚠️ Error removing webhook: {e}")
     
     # Закрываем Redis
-    redis = container.redis_client()
-    if redis:
-        try:
-            await redis.close()
-            logger.info("✅ Redis connection closed")
-        except Exception as e:
-            logger.warning(f"⚠️ Error closing Redis: {e}")
+    if container is not None:
+        redis = container.redis_client()
+        if redis is not None:  # ✅ Проверка на None!
+            try:
+                await redis.close()
+                logger.info("✅ Redis connection closed")
+            except Exception as e:
+                logger.warning(f"⚠️ Error closing Redis: {e}")
     
     logger.info("✅ Shutdown complete")
 
@@ -419,13 +420,19 @@ def handle_signal(signum: int) -> None:
 async def cleanup() -> None:
     """
     Очистка всех ресурсов.
+    ✅ ИСПРАВЛЕНО: Проверки на None и awaitable перед await
     """
     logger.info("🧹 Cleaning up resources...")
     
     # Останавливаем диспетчер
     if dp:
         try:
-            await dp.stop_polling()
+            # Проверяем есть ли метод stop_polling
+            if hasattr(dp, 'stop_polling') and callable(dp.stop_polling):
+                stop_result = dp.stop_polling()
+                # Проверяем awaitable
+                if hasattr(stop_result, '__await__'):
+                    await stop_result
         except Exception as e:
             logger.debug(f"Dispatcher stop: {e}")
     

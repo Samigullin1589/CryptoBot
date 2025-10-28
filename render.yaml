@@ -1,26 +1,28 @@
 # =================================================================================
-# render.yaml
-# Дата: 27.10.2025
-# Описание: Конфигурация для Render deployment
+# render.yaml - ВАРИАНТ A: BACKGROUND WORKER (РЕКОМЕНДУЕТСЯ)
+# Дата: 28.10.2025
+# Описание: Telegram бот в режиме long polling (не требует порта)
+# ✅ ИСПРАВЛЕНО: type: worker вместо web
+# ✅ ИСПРАВЛЕНО: IS_WEB_PROCESS: false
 # =================================================================================
 
 services:
-  - type: web
-    name: telegram-crypto-bot
-    env: python
-    region: frankfurt  # Или другой регион по выбору
-    plan: free         # Можно изменить на starter/standard для production
+  # ==================== TELEGRAM BOT WORKER ====================
+  - type: worker  # ✅ КРИТИЧНО! Worker, не web
+    name: telegram-crypto-bot-worker
+    runtime: python
+    region: frankfurt  # Или другой регион
+    plan: free  # Или starter/standard для production
     
+    # Build command
     buildCommand: |
       pip install --upgrade pip setuptools wheel
-      pip install -r requirements.txt --break-system-packages
+      pip install -r requirements.txt
     
+    # Start command  
     startCommand: python -m bot.main
     
-    # Health check для автоматического перезапуска
-    healthCheckPath: /health
-    
-    # Переменные окружения (значения устанавливаются в Render Dashboard)
+    # Переменные окружения
     envVars:
       # --- Обязательные ---
       - key: BOT_TOKEN
@@ -53,13 +55,10 @@ services:
       
       # --- Системные ---
       - key: PYTHON_VERSION
-        value: "3.10"
+        value: "3.11"
       
       - key: IS_WEB_PROCESS
-        value: "false"  # Polling mode (не webhook)
-      
-      - key: PORT
-        value: "10000"
+        value: "false"  # ✅ Polling mode (НЕ webhook)
       
       - key: LOG_LEVEL
         value: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -70,3 +69,16 @@ services:
       
       - key: AI__DEFAULT_TEMPERATURE
         value: "0.5"
+    
+    # Auto deploy при push
+    autoDeploy: true
+
+# =================================================================================
+# ПРИМЕЧАНИЯ:
+# 
+# 1. Worker не требует health check и не открывает порты
+# 2. Логи доступны в Render Dashboard → Logs
+# 3. Для мониторинга используйте админ-уведомления в Telegram
+# 4. Free plan: засыпает после 15 мин неактивности, 750 часов/месяц
+# 5. Для production рекомендуется Starter plan ($7/мес)
+# =================================================================================
