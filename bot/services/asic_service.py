@@ -1,7 +1,7 @@
 # bot/services/asic_service.py
-# Дата обновления: 23.08.2025
-# Версия: 2.1.0
-# Описание: Высокопроизводительный сервис для управления базой данных ASIC-майнеров.
+# Дата обновления: 28.10.2025
+# Версия: 2.1.1
+# Описание: ИСПРАВЛЕНО - Правильные имена настроек (строчные буквы)
 
 import asyncio
 import json
@@ -27,9 +27,11 @@ class AsicService:
     def __init__(self, parser_service: ParserService, redis_client: Redis):
         self.redis = redis_client
         self.parser_service = parser_service
-        self.config = settings.ASIC
+        # ✅ ИСПРАВЛЕНО: settings.ASIC → settings.asic
+        self.config = settings.asic
         self.keys = KeyFactory
-        self.fallback_path = Path(__file__).parent.parent.parent / self.config.FALLBACK_FILE_PATH
+        # ✅ ИСПРАВЛЕНО: self.config.FALLBACK_FILE_PATH → self.config.fallback_file_path
+        self.fallback_path = Path(__file__).parent.parent.parent / self.config.fallback_file_path
         logger.info("Сервис AsicService инициализирован.")
 
     async def update_asic_list_from_sources(self) -> int:
@@ -81,30 +83,49 @@ class AsicService:
         for source_list in sources:
             for asic in source_list:
                 norm_name = normalize_asic_name(asic.name)
-                if not norm_name: continue
+                if not norm_name: 
+                    continue
 
-                match = process.extractOne(norm_name, master_asics.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.MERGE_SCORE_CUTOFF) if master_asics else None
+                # ✅ ИСПРАВЛЕНО: self.config.MERGE_SCORE_CUTOFF → self.config.merge_score_cutoff
+                match = process.extractOne(
+                    norm_name, 
+                    master_asics.keys(), 
+                    scorer=fuzz.WRatio, 
+                    score_cutoff=self.config.merge_score_cutoff
+                ) if master_asics else None
 
                 if match:
                     existing = master_asics[match[0]]
-                    if (not existing.power or existing.power == 0) and asic.power: existing.power = asic.power
-                    if not existing.algorithm and asic.algorithm: existing.algorithm = asic.algorithm
-                    if asic.profitability is not None: existing.profitability = asic.profitability
+                    if (not existing.power or existing.power == 0) and asic.power: 
+                        existing.power = asic.power
+                    if not existing.algorithm and asic.algorithm: 
+                        existing.algorithm = asic.algorithm
+                    if asic.profitability is not None: 
+                        existing.profitability = asic.profitability
                 else:
                     master_asics[norm_name] = asic
         return master_asics
 
     async def _enrich_asics_with_specs(self, asics: List[AsicMiner]) -> List[AsicMiner]:
         specs_db = await self.parser_service.fetch_minerstat_hardware_specs()
-        if not specs_db: return asics
+        if not specs_db: 
+            return asics
         
         for asic in asics:
             if not asic.power or not asic.algorithm:
-                match = process.extractOne(normalize_asic_name(asic.name), specs_db.keys(), scorer=fuzz.WRatio, score_cutoff=self.config.ENRICH_SCORE_CUTOFF)
+                # ✅ ИСПРАВЛЕНО: self.config.ENRICH_SCORE_CUTOFF → self.config.enrich_score_cutoff
+                match = process.extractOne(
+                    normalize_asic_name(asic.name), 
+                    specs_db.keys(), 
+                    scorer=fuzz.WRatio, 
+                    score_cutoff=self.config.enrich_score_cutoff
+                )
                 if match:
                     specs = specs_db[match[0]]
-                    if not asic.power and specs.get('power'): asic.power = int(specs['power'])
-                    if not asic.algorithm and specs.get('algorithm'): asic.algorithm = specs['algorithm']
+                    if not asic.power and specs.get('power'): 
+                        asic.power = int(specs['power'])
+                    if not asic.algorithm and specs.get('algorithm'): 
+                        asic.algorithm = specs['algorithm']
         return asics
 
     async def _store_asics_in_redis(self, asics: List[AsicMiner]):
@@ -112,14 +133,19 @@ class AsicService:
         pipe = self.redis.pipeline()
         pipe.delete(temp_key)
 
-        mapping = {self.keys.asic_hash(normalize_asic_name(a.name)): (a.profitability or 0.0) for a in asics}
+        mapping = {
+            self.keys.asic_hash(normalize_asic_name(a.name)): (a.profitability or 0.0) 
+            for a in asics
+        }
         
         for asic in asics:
             key = self.keys.asic_hash(normalize_asic_name(asic.name))
             pipe.hset(key, mapping=asic.model_dump(mode='json', exclude_none=True))
-            pipe.expire(key, self.config.CACHE_TTL_SECONDS)
+            # ✅ ИСПРАВЛЕНО: self.config.CACHE_TTL_SECONDS → self.config.cache_ttl_seconds
+            pipe.expire(key, self.config.cache_ttl_seconds)
 
-        if mapping: pipe.zadd(temp_key, mapping=mapping)
+        if mapping: 
+            pipe.zadd(temp_key, mapping=mapping)
         pipe.set(self.keys.asics_last_update(), datetime.now(timezone.utc).isoformat())
         pipe.rename(temp_key, self.keys.asics_sorted_set())
         
@@ -127,9 +153,11 @@ class AsicService:
         logger.info(f"Данные по {len(asics)} ASIC сохранены в Redis.")
 
     def _load_fallback_asics(self) -> List[AsicMiner]:
-        if not self.fallback_path.exists(): return []
+        if not self.fallback_path.exists(): 
+            return []
         try:
-            with open(self.fallback_path, 'r', encoding='utf-8') as f: data = json.load(f)
+            with open(self.fallback_path, 'r', encoding='utf-8') as f: 
+                data = json.load(f)
             return [AsicMiner.model_validate(item) for item in data]
         except Exception as e:
             logger.exception(f"Не удалось загрузить резервный файл ASIC: {e}")
@@ -139,37 +167,62 @@ class AsicService:
         try:
             def _write_sync():
                 with open(self.fallback_path, 'w', encoding='utf-8') as f:
-                    json.dump([a.model_dump(mode='json') for a in asics], f, ensure_ascii=False, indent=2)
+                    json.dump(
+                        [a.model_dump(mode='json') for a in asics], 
+                        f, 
+                        ensure_ascii=False, 
+                        indent=2
+                    )
             await asyncio.to_thread(_write_sync)
         except Exception as e:
             logger.error(f"Не удалось создать резервную копию ASIC: {e}")
 
-    async def get_top_asics(self, electricity_cost: float, count: int = 50) -> Tuple[List[AsicMiner], Optional[datetime]]:
+    async def get_top_asics(
+        self, 
+        electricity_cost: float, 
+        count: int = 50
+    ) -> Tuple[List[AsicMiner], Optional[datetime]]:
         if not await self.redis.exists(self.keys.asics_sorted_set()):
             await self.update_asic_list_from_sources()
 
         keys = await self.redis.zrevrange(self.keys.asics_sorted_set(), 0, count - 1)
-        if not keys: return [], None
+        if not keys: 
+            return [], None
 
         pipe = self.redis.pipeline()
-        for key in keys: pipe.hgetall(key)
+        for key in keys: 
+            pipe.hgetall(key)
         results = await pipe.execute()
 
         asics = []
         for data in results:
-            if not data: continue
+            if not data: 
+                continue
             asic = AsicMiner.model_validate(data)
-            net_profit, daily_cost, gross_profit = self._calculate_net_profit(asic.profitability or 0.0, asic.power or 0, electricity_cost)
-            asic.net_profit, asic.electricity_cost_per_day, asic.gross_profit = net_profit, daily_cost, gross_profit
+            net_profit, daily_cost, gross_profit = self._calculate_net_profit(
+                asic.profitability or 0.0, 
+                asic.power or 0, 
+                electricity_cost
+            )
+            asic.net_profit = net_profit
+            asic.electricity_cost_per_day = daily_cost
+            asic.gross_profit = gross_profit
             asics.append(asic)
         
         asics.sort(key=lambda a: a.net_profit or -999, reverse=True)
 
         last_update_iso = await self.redis.get(self.keys.asics_last_update())
-        return asics, datetime.fromisoformat(last_update_iso) if last_update_iso else None
+        last_update = datetime.fromisoformat(last_update_iso) if last_update_iso else None
+        
+        return asics, last_update
 
     @staticmethod
-    def _calculate_net_profit(gross_profit: float, power_watts: int, electricity_cost: float) -> Tuple[float, float, float]:
-        if power_watts <= 0 or electricity_cost < 0: return gross_profit, 0.0, gross_profit
+    def _calculate_net_profit(
+        gross_profit: float, 
+        power_watts: int, 
+        electricity_cost: float
+    ) -> Tuple[float, float, float]:
+        if power_watts <= 0 or electricity_cost < 0: 
+            return gross_profit, 0.0, gross_profit
         daily_cost = (power_watts / 1000) * 24 * electricity_cost
         return gross_profit - daily_cost, daily_cost, gross_profit
