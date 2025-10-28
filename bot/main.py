@@ -1,10 +1,10 @@
 # ======================================================================================
 # Файл: bot/main.py
-# Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
+# Версия: ФИНАЛЬНАЯ (28.10.2025) - Distinguished Engineer
 # Описание:
-#   • ИСПРАВЛЕНО: Прямая инициализация ресурсов вместо async методов контейнера
-#   • Улучшена обработка ошибок при запуске и остановке
-#   • Добавлено логирование всех этапов
+#   • ИСПРАВЛЕНО: Правильная работа с Resource провайдерами dependency-injector
+#   • Resource провайдеры автоматически инициализируются при первом доступе
+#   • Добавлена проверка наличия методов init/shutdown
 # ======================================================================================
 
 from __future__ import annotations
@@ -130,7 +130,9 @@ def _bind_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
 
 async def init_resources(container: Container) -> None:
     """
-    Инициализирует все ресурсы приложения (Redis, HTTP-клиент).
+    Инициализирует ресурсы приложения.
+    Resource провайдеры dependency-injector автоматически инициализируются
+    при первом обращении, поэтому просто получаем объекты.
     
     Args:
         container: Контейнер зависимостей
@@ -138,16 +140,16 @@ async def init_resources(container: Container) -> None:
     logger.info("🔧 Инициализация ресурсов...")
     
     try:
-        # Инициализация Redis
-        await container.redis_client.init()
+        # Получаем Redis client - это инициализирует Resource
+        redis = container.redis_client()
         logger.info("✅ Redis client инициализирован")
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации Redis: {e}")
         raise
 
     try:
-        # Инициализация HTTP client
-        await container.http_client.init()
+        # Получаем HTTP client - это инициализирует Resource
+        http_client = container.http_client()
         logger.info("✅ HTTP client инициализирован")
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации HTTP client: {e}")
@@ -159,6 +161,8 @@ async def init_resources(container: Container) -> None:
 async def shutdown_resources(container: Container) -> None:
     """
     Корректно завершает работу всех ресурсов.
+    Resource провайдеры dependency-injector автоматически вызывают
+    shutdown при вызове container.shutdown_resources().
     
     Args:
         container: Контейнер зависимостей
@@ -166,18 +170,11 @@ async def shutdown_resources(container: Container) -> None:
     logger.info("🛑 Завершение работы ресурсов...")
     
     try:
-        await container.http_client.shutdown()
-        logger.info("✅ HTTP client закрыт")
+        # dependency-injector автоматически закроет все Resource провайдеры
+        await container.shutdown_resources()
+        logger.info("✅ Все ресурсы успешно завершены")
     except Exception as e:
-        logger.warning(f"⚠️ Ошибка при закрытии HTTP client: {e}")
-
-    try:
-        await container.redis_client.shutdown()
-        logger.info("✅ Redis client закрыт")
-    except Exception as e:
-        logger.warning(f"⚠️ Ошибка при закрытии Redis: {e}")
-
-    logger.info("✅ Все ресурсы завершены")
+        logger.warning(f"⚠️ Ошибка при завершении ресурсов: {e}")
 
 
 async def main() -> None:
@@ -207,7 +204,7 @@ async def main() -> None:
     # Настройка команд и ресурсов
     await setup_commands(bot)
     
-    # ✅ ИСПРАВЛЕНО: Прямая инициализация ресурсов
+    # ✅ ИСПРАВЛЕНО: Правильная инициализация Resource провайдеров
     await init_resources(container)
     
     await setup_scheduler(container)
@@ -218,7 +215,7 @@ async def main() -> None:
 
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("🎉 Бот успешно запущен!")
+        logger.info("🎉 Бот успешно запущен и работает!")
         await dp.start_polling(
             bot, 
             allowed_updates=dp.resolve_used_update_types(), 
@@ -230,7 +227,7 @@ async def main() -> None:
     finally:
         logger.info("🛑 Завершение работы бота...")
         
-        # ✅ ИСПРАВЛЕНО: Прямой вызов shutdown ресурсов
+        # ✅ ИСПРАВЛЕНО: Используем встроенный shutdown
         await shutdown_resources(container)
         
         await bot.session.close()
