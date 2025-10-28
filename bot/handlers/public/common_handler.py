@@ -1,4 +1,6 @@
 # bot/handlers/public/common_handler.py
+# Версия: ИСПРАВЛЕННАЯ (28.10.2025)
+# ИСПРАВЛЕНО: Метод get_consultant_answer → правильный метод из AIContentService
 
 import asyncio
 import logging
@@ -40,19 +42,40 @@ async def handle_ai_question(message: Message, state: FSMContext, deps: Deps):
     user_text = (message.text or "").strip()
 
     # История (если есть сервис)
-    history = None
-    history_provider = getattr(deps, "history_service", None)
-    if history_provider and hasattr(history_provider, "get_history_for_user"):
+    history = []
+    if hasattr(deps, "user_service") and message.from_user:
         try:
-            h = history_provider.get_history_for_user(message.from_user.id if message.from_user else 0)
-            history = await h if asyncio.iscoroutine(h) else h
-        except Exception:
-            history = None
+            # Используем правильный метод для получения истории
+            history = await deps.user_service.get_conversation_history(
+                message.from_user.id, 
+                message.chat.id
+            )
+        except Exception as e:
+            logger.debug(f"Failed to get conversation history: {e}")
+            history = []
 
     # Запрос к ИИ
     try:
-        ai_answer = await deps.ai_content_service.get_consultant_answer(user_text, history)
+        # ✅ ИСПРАВЛЕНО: Используем правильный метод generate_text вместо get_consultant_answer
+        ai_answer = await deps.ai_content_service.generate_text(
+            prompt=user_text,
+            history=history if history else None
+        )
+        
         ai_answer = ai_answer or "Не удалось получить ответ от AI."
+        
+        # Сохраняем в историю если есть user_service
+        if hasattr(deps, "user_service") and message.from_user:
+            try:
+                await deps.user_service.add_to_conversation_history(
+                    message.from_user.id,
+                    message.chat.id,
+                    user_text,
+                    ai_answer
+                )
+            except Exception as e:
+                logger.debug(f"Failed to save to conversation history: {e}")
+        
         await message.answer(f"Ваш вопрос:\n«{user_text}»\n\nОтвет AI-Консультанта:\n{ai_answer}")
     except Exception as e:
         logger.error("AI answer failed: %s", e, exc_info=True)
