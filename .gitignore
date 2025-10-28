@@ -1,51 +1,35 @@
-# ===============================================================
-# Файл: .gitignore (ПРОДАКШН-ВЕРСИЯ 2025)
-# Описание: Стандартный файл для исключения ненужных и 
-# секретных файлов из системы контроля версий Git.
-# ===============================================================
-
-# Файлы виртуального окружения
-venv/
-.venv/
-env/
-.env/
-*/venv/
-*/.venv/
-env.bak/
-venv.bak/
-
-# Файлы кэша Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
 
-# Файлы настроек IDE
-.idea/
+# Environment variables
+.env
+.env.local
+
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# Локальные настройки и секреты
-.env
-*.env
-.env.*
-!.env.example
-config.ini
-settings.local.py
-secrets.toml
-
-# Логи
+# Logs
 *.log
 logs/
 
-# Базы данных
-*.sqlite3
+# Database
 *.db
-*.db-journal
+*.sqlite
 
-# Зависимости (их нужно хранить в requirements.txt)
-/deps/
-
-# Файлы операционной системы
+# OS
 .DS_Store
 Thumbs.db
+
+# Render
+.render/
