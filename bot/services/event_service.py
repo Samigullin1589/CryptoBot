@@ -1,8 +1,7 @@
 # bot/services/event_service.py
-# Дата обновления: 20.08.2025
-# Версия: 2.0.0
-# Описание: Сервис для управления статическими и динамическими игровыми
-# событиями (баффами, акциями) с кэшированием в Redis.
+# Дата обновления: 28.10.2025
+# Версия: 2.0.1
+# Описание: ИСПРАВЛЕНО - Правильные имена настроек (строчные буквы)
 
 import asyncio
 import json
@@ -36,9 +35,11 @@ class EventService:
     def __init__(self):
         """Инициализирует сервис, получая зависимости и конфигурацию."""
         self.redis: Redis = get_redis_client()
-        self.config = settings.EVENTS
+        # ✅ ИСПРАВЛЕНО: settings.EVENTS → settings.events
+        self.config = settings.events
         self.keys = KeyFactory
-        self._static_config_path = Path(__file__).parent.parent.parent / self.config.CONFIG_PATH
+        # ✅ ИСПРАВЛЕНО: self.config.CONFIG_PATH → self.config.config_path
+        self._static_config_path = Path(__file__).parent.parent.parent / self.config.config_path
         logger.info("Сервис EventService инициализирован.")
 
     async def _load_static_events_if_changed(self):
@@ -124,7 +125,8 @@ class EventService:
         Рассчитывает итоговый множитель для указанной игровой области (домена).
         Перемножает множители всех активных событий, подходящих под домен.
         """
-        base_multiplier = self.config.DEFAULT_MULTIPLIER
+        # ✅ ИСПРАВЛЕНО: self.config.DEFAULT_MULTIPLIER → self.config.default_multiplier
+        base_multiplier = self.config.default_multiplier
         active_events = await self.get_active_events()
         
         final_multiplier = base_multiplier

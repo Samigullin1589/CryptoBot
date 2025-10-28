@@ -1,7 +1,7 @@
 # bot/services/security_service.py
-# Дата обновления: 23.08.2025
-# Версия: 2.2.0
-# Описание: Комплексный сервис безопасности с полноценным AI-анализом.
+# Дата обновления: 28.10.2025
+# Версия: 2.2.1
+# Описание: ИСПРАВЛЕНО - Правильные имена настроек (строчные буквы)
 
 import re
 import asyncio
@@ -45,12 +45,14 @@ class SecurityService:
         self.ai_service = ai_content_service
         self.image_vision_service = image_vision_service
         self.moderation_service = moderation_service
-        self.config = settings.SECURITY
+        # ✅ ИСПРАВЛЕНО: settings.SECURITY → settings.threat_filter
+        self.config = settings.threat_filter
         self.keys = KeyFactory
         logger.info("Сервис SecurityService инициализирован.")
 
     def is_enabled(self) -> bool:
-        return self.config.ENABLED
+        # ✅ ИСПРАВЛЕНО: self.config.ENABLED → self.config.enabled
+        return self.config.enabled
 
     async def analyze_message(self, message: tg.Message) -> Verdict:
         """
@@ -84,18 +86,25 @@ class SecurityService:
         try:
             pipe = self.redis.pipeline()
             pipe.incrby(offense_key, weight)
-            pipe.expire(offense_key, self.config.WINDOW_SECONDS)
+            # ✅ ИСПРАВЛЕНО: self.config.WINDOW_SECONDS → self.config.window_seconds
+            pipe.expire(offense_key, self.config.window_seconds)
             new_count = (await pipe.execute())[0]
         except Exception as e:
             logger.error(f"Не удалось обновить счетчик нарушений для user_id={user_id}: {e}")
             new_count = weight
 
-        if new_count >= self.config.BAN_THRESHOLD: decision = "ban"
-        elif new_count >= self.config.MUTE_THRESHOLD: decision = "mute"
-        elif new_count >= self.config.WARN_THRESHOLD: decision = "warn"
-        else: decision = "none"
+        # ✅ ИСПРАВЛЕНО: все пороги теперь строчными
+        if new_count >= self.config.ban_threshold: 
+            decision = "ban"
+        elif new_count >= self.config.mute_threshold: 
+            decision = "mute"
+        elif new_count >= self.config.warn_threshold: 
+            decision = "warn"
+        else: 
+            decision = "none"
             
-        return Escalation(count=new_count, decision=decision, mute_seconds=self.config.MUTE_SECONDS)
+        # ✅ ИСПРАВЛЕНО: self.config.MUTE_SECONDS → self.config.mute_seconds
+        return Escalation(count=new_count, decision=decision, mute_seconds=self.config.mute_seconds)
 
     async def enforce_decision(self, message: tg.Message, verdict: Verdict):
         """
@@ -133,9 +142,14 @@ class SecurityService:
             try:
                 domain = urlparse(f"http://{url.replace('https://', '').replace('http://', '')}").hostname
                 if not domain: continue
-                if any(denied in domain for denied in self.config.DENY_DOMAINS):
+                # ✅ ИСПРАВЛЕНО: доступ к deny_domains и allow_domains
+                # Предполагаем что в ThreatFilterConfig есть поля deny_domains и allow_domains
+                deny_domains = getattr(self.config, 'deny_domains', [])
+                allow_domains = getattr(self.config, 'allow_domains', [])
+                
+                if any(denied in domain for denied in deny_domains):
                     return Verdict(ok=False, reasons=[f"denied_domain:{domain}"], weight=5)
-                if not any(allowed in domain for allowed in self.config.ALLOW_DOMAINS):
+                if allow_domains and not any(allowed in domain for allowed in allow_domains):
                     return Verdict(ok=False, reasons=[f"suspicious_link:{domain}"], weight=2)
             except Exception:
                 continue

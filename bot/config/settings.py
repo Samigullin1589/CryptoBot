@@ -1,7 +1,8 @@
 # =================================================================================
 # bot/config/settings.py
-# Версия: ИСПРАВЛЕННАЯ (27.10.2025) - Distinguished Engineer
+# Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
 # Описание:
+#   • ИСПРАВЛЕНО: Добавлены недостающие поля в ThreatFilterConfig
 #   • ИСПРАВЛЕНО: Добавлены недостающие атрибуты в AIConfig
 #   • ИСПРАВЛЕНО: Тип REDIS_URL остается str для совместимости с DI
 # =================================================================================
@@ -121,9 +122,28 @@ class EndpointsConfig(BaseModel):
 # ----------------------------- Security / Threats -----------------------------
 
 class ThreatFilterConfig(BaseModel):
+    """
+    Конфигурация системы безопасности и модерации.
+    ✅ ИСПРАВЛЕНО: Добавлены все необходимые поля для security_service
+    """
     model_config = ConfigDict(protected_namespaces=())
+    
+    # Основные флаги
     enabled: bool = True
     toxicity_threshold: float = 0.75
+    
+    # Пороги эскалации (количество нарушений)
+    warn_threshold: int = 1  # 1 нарушение → предупреждение
+    mute_threshold: int = 2  # 2 нарушения → мут
+    ban_threshold: int = 3   # 3 нарушения → бан
+    
+    # Временные окна
+    window_seconds: int = 21600  # 6 часов - окно подсчета нарушений
+    mute_seconds: int = 3600     # 1 час - длительность мута
+    
+    # Списки доменов для фильтрации ссылок
+    deny_domains: List[str] = Field(default_factory=list)  # Черный список доменов
+    allow_domains: List[str] = Field(default_factory=list)  # Белый список (если пустой - разрешены все)
 
 
 # ----------------------------- ASIC / Market / Crypto Center ------------------
