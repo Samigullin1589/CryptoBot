@@ -1,11 +1,4 @@
-# ======================================================================================
-# File: bot/handlers/price_handler.py
-# Version: "Distinguished Engineer" — Aug 17, 2025
-# Description:
-#   /price [SYMBOL] [QUOTE] + быстрые кнопки.
-#   Универсальный фолбэк к твоим сервисам, чтобы не было «Нет данных».
-# ======================================================================================
-
+# src/bot/handlers/public/price_handler.py
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +7,9 @@ from typing import List, Optional, Any
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from loguru import logger
+
+from bot.keyboards.callback_factories import MenuCallback
 
 router = Router(name="price_public")
 
@@ -39,54 +35,61 @@ async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
         if asyncio.iscoroutine(res):
             res = await res
         return res
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to call {method}: {e}")
         return None
 
 
-async def _get_price_any(deps, symbol: str, quote: str) -> Optional[float]:
+async def _get_price_any(deps, symbol: str, quote: str = "USD") -> Optional[float]:
+    """Универсальный метод получения цены из разных сервисов"""
     symbol_u, quote_u = symbol.upper(), quote.upper()
-    svc_candidates = [getattr(deps, "price_service", None), getattr(deps, "market_data_service", None)]
-    methods = [
-        (("get_price",), {"symbol": symbol_u, "vs": quote_u}),
-        (("get_price",), {"ticker": symbol_u, "vs": quote_u}),
-        (("get_spot", "spot", "price"), {"symbol": symbol_u, "vs": quote_u}),
-        (("get_ticker", "ticker"), {"symbol": symbol_u}),
-        (("fetch_price", "fetch_spot"), {"symbol": symbol_u, "vs": quote_u}),
-        (("get_pair",), {"pair": f"{symbol_u}{quote_u}"}),
-    ]
-    for svc in svc_candidates:
-        for names, kw in methods:
-            for name in names:
-                val = await _try_call(svc, name, **kw)
-                if isinstance(val, (int, float)):
-                    return float(val)
-                if isinstance(val, dict):
-                    for k in ("price", "spot", "last", "close", "value"):
-                        v = val.get(k)
-                        if isinstance(v, (int, float)):
-                            return float(v)
-                    cell = (val.get(symbol_u) or val.get(symbol_u.lower()))
-                    if isinstance(cell, dict):
-                        v = cell.get(quote_u) or cell.get(quote_u.lower())
-                        if isinstance(v, (int, float)):
-                            return float(v)
-
-    # через coin_id
-    cls = getattr(deps, "coin_list_service", None)
-    mds = getattr(deps, "market_data_service", None)
-    if cls and mds:
-        for m in ("find_coin_id", "get_id_by_ticker", "get_id_by_symbol", "resolve_id", "by_ticker"):
-            coin_id = await _try_call(cls, m, symbol_u)
-            if isinstance(coin_id, str) and coin_id:
-                for name in ("get_price_by_id", "price_by_id", "get_spot_by_id", "fetch_price_by_id"):
-                    val = await _try_call(mds, name, coin_id=coin_id, vs=quote_u)
-                    if isinstance(val, (int, float)):
-                        return float(val)
-                    if isinstance(val, dict):
-                        v = (val.get("price") or val.get("spot") or val.get("last"))
-                        if isinstance(v, (int, float)):
-                            return float(v)
-                break
+    
+    # Маппинг символов в coin_id для CoinGecko
+    SYMBOL_TO_COIN_ID = {
+        "BTC": "bitcoin",
+        "ETH": "ethereum",
+        "USDT": "tether",
+        "BNB": "binancecoin",
+        "SOL": "solana",
+        "XRP": "ripple",
+        "ADA": "cardano",
+        "DOGE": "dogecoin",
+        "DOT": "polkadot",
+        "TRX": "tron",
+        "MATIC": "matic-network",
+        "LTC": "litecoin",
+        "AVAX": "avalanche-2",
+        "LINK": "chainlink",
+        "UNI": "uniswap",
+        "ATOM": "cosmos",
+    }
+    
+    # Пробуем через price_service
+    price_service = getattr(deps, "price_service", None)
+    if price_service:
+        coin_id = SYMBOL_TO_COIN_ID.get(symbol_u)
+        if coin_id:
+            try:
+                price = await price_service.get_price(coin_id)
+                if price is not None:
+                    return float(price)
+            except Exception as e:
+                logger.debug(f"price_service.get_price failed for {coin_id}: {e}")
+    
+    # Пробуем через market_data_service
+    market_service = getattr(deps, "market_data_service", None)
+    if market_service:
+        coin_id = SYMBOL_TO_COIN_ID.get(symbol_u)
+        if coin_id:
+            try:
+                prices = await market_service.get_prices([coin_id])
+                if prices and coin_id in prices:
+                    price = prices[coin_id]
+                    if price is not None:
+                        return float(price)
+            except Exception as e:
+                logger.debug(f"market_data_service.get_prices failed for {coin_id}: {e}")
+    
     return None
 
 
@@ -100,16 +103,39 @@ def _kb_top(symbols: List[str], quote: str) -> InlineKeyboardMarkup:
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text=f"🔄 Обновить {quote}", callback_data=f"price:refresh:{quote}")])
+    rows.append([InlineKeyboardButton(text=f"🔄 Обновить", callback_data=f"price:refresh:{quote}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def show_price_menu(message_or_call, deps, quote: str = "USD"):
+    """Показывает меню с ценами топовых криптовалют"""
+    top_symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "DOT", "TRX", "MATIC", "LTC", "AVAX"]
+    
+    text = f"💰 <b>Цены криптовалют в {quote}</b>\n\nВыберите монету для просмотра цены:"
+    keyboard = _kb_top(top_symbols, quote)
+    
+    if isinstance(message_or_call, CallbackQuery):
+        try:
+            await message_or_call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+        except Exception as e:
+            logger.error(f"Error editing message: {e}")
+            await message_or_call.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await message_or_call.answer(text, parse_mode="HTML", reply_markup=keyboard)
 
 
 @router.message(Command("price"))
 async def cmd_price(message: Message, deps) -> None:
+    """Обработчик команды /price"""
     parts = (message.text or "").split()
-    symbol = parts[1].upper() if len(parts) >= 2 else "BTC"
-    default_quote = getattr(getattr(deps.settings, "price_service", object()), "default_quote", "USDT")
-    quote = parts[2].upper() if len(parts) >= 3 else str(default_quote).upper()
+    
+    if len(parts) == 1:
+        # Просто /price - показываем меню
+        await show_price_menu(message, deps)
+        return
+    
+    symbol = parts[1].upper()
+    quote = parts[2].upper() if len(parts) >= 3 else "USD"
 
     price = await _get_price_any(deps, symbol, quote)
     if price is None:
@@ -117,29 +143,51 @@ async def cmd_price(message: Message, deps) -> None:
         return
 
     text = f"<b>{symbol}/{quote}</b>: <code>{_fmt_price(price)}</code>"
-    top = await _try_call(getattr(deps, "price_service", None), "_get_top_symbols") or ["BTC", "ETH", "BNB", "SOL", "XRP"]
-    await message.answer(text, parse_mode="HTML", reply_markup=_kb_top(list(top), quote))
+    top_symbols = ["BTC", "ETH", "BNB", "SOL", "XRP"]
+    await message.answer(text, parse_mode="HTML", reply_markup=_kb_top(top_symbols, quote))
+
+
+@router.callback_query(MenuCallback.filter(F.action == "price"))
+async def menu_price_handler(call: CallbackQuery, deps) -> None:
+    """Обработчик кнопки 'Курс' из главного меню"""
+    await call.answer()
+    await show_price_menu(call, deps)
 
 
 @router.callback_query(F.data.startswith("price:"))
 async def cb_price(call: CallbackQuery, deps) -> None:
+    """Обработчик callback для выбора конкретной монеты"""
     await call.answer()
-    parts = (call.data or "").split(":")
-    if len(parts) < 3:
-        await call.message.answer("Некорректный запрос.")  # type: ignore[union-attr]
+    
+    if not call.data:
+        return
+    
+    parts = call.data.split(":")
+    
+    if len(parts) < 2:
+        await call.answer("Некорректный запрос", show_alert=True)
         return
 
     if parts[1] == "refresh":
-        quote = (parts[2] if len(parts) > 2 else "USDT").upper()
-        top = await _try_call(getattr(deps, "price_service", None), "_get_top_symbols") or ["BTC", "ETH", "BNB", "SOL", "XRP"]
-        await call.message.edit_reply_markup(reply_markup=_kb_top(list(top), quote))  # type: ignore[union-attr]
+        quote = parts[2].upper() if len(parts) > 2 else "USD"
+        await show_price_menu(call, deps, quote)
         return
 
     symbol = parts[1].upper()
-    quote = (parts[2] if len(parts) > 2 else "USDT").upper()
+    quote = parts[2].upper() if len(parts) > 2 else "USD"
+    
     price = await _get_price_any(deps, symbol, quote)
     if price is None:
-        await call.message.edit_text("⚠️ Нет данных сейчас. Повторите позже.")  # type: ignore[union-attr]
+        await call.answer(f"⚠️ Не удалось получить цену {symbol}", show_alert=True)
         return
-    text = f"<b>{symbol}/{quote}</b>: <code>{_fmt_price(price)}</code>"
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=call.message.reply_markup)  # type: ignore[union-attr]
+    
+    text = f"💰 <b>{symbol}/{quote}</b>\n\n<code>${_fmt_price(price)}</code>"
+    
+    try:
+        await call.message.edit_text(
+            text, 
+            parse_mode="HTML", 
+            reply_markup=call.message.reply_markup
+        )
+    except Exception as e:
+        logger.error(f"Error editing price message: {e}")
