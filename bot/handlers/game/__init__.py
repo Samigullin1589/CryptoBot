@@ -1,14 +1,5 @@
-# ===============================================================
-# Файл: bot/handlers/game/__init__.py
-# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
-# Описание:
-#   • ИСПРАВЛЕНО: Удалена логика агрегации роутеров, которая вызывала
-#     ошибку ImportError. Файл теперь просто экспортирует роутер
-#     из соответствующего обработчика.
-# ===============================================================
+# src/bot/handlers/game/__init__.py
+from .game_handler import game_router
+from .mining_game_handler import game_router as mining_router
 
-from .mining_game_handler import game_router
-
-# Экспортируем роутер, чтобы его можно было импортировать
-# из других модулей, если потребуется.
-__all__ = ["game_router"]
+__all__ = ["game_router", "mining_router"]
