@@ -134,7 +134,7 @@ class AchievementCondition(BaseModel):
     """Условие получения достижения"""
     type: str  # 'counter', 'streak', 'tiered', etc.
     event: Optional[str] = None
-    threshold: Optional[int] = None
+    threshold: Optional[int | float] = None  # ✅ ИСПРАВЛЕНО: Принимает int и float
     counter_key: Optional[str] = None
     window_days: Optional[int] = None
     tiers: Optional[List[Dict[str, Any]]] = None

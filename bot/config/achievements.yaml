@@ -384,7 +384,7 @@ achievements:
     condition:
       type: value_reach
       event: mining.hashrate.total
-      threshold: 1.0
+      threshold: 1
     notify:
       template_ru: "⚡ Хешрейт 1 TH/s! (+45 XP)"
 
@@ -401,7 +401,7 @@ achievements:
     condition:
       type: value_reach
       event: mining.hashrate.total
-      threshold: 10.0
+      threshold: 10
     notify:
       template_ru: "⚡⚡⚡ 10 TH/s — мощно! (+110 XP)"
 
