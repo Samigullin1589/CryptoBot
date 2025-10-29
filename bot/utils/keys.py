@@ -1,9 +1,4 @@
-# =================================================================================
-# Файл: bot/utils/keys.py (ВЕРСИЯ "Distinguished Engineer" - ФИНАЛЬНАЯ РАСШИРЕННАЯ)
-# Описание: Централизованная фабрика для генерации всех ключей Redis.
-# ИСПРАВЛЕНИЕ: Добавлены ключи для индекса username <-> user_id.
-# =================================================================================
-
+# src/bot/utils/keys.py
 class KeyFactory:
     """Генерирует стандартизированные ключи для Redis."""
 
@@ -21,7 +16,7 @@ class KeyFactory:
         """HASH для сопоставления username -> user_id."""
         return "map:username_to_id"
 
-    # --- Профиль интересов ... и другие ключи ...
+    # --- Профиль интересов ... и другие ключи ---
     @staticmethod
     def user_interest_profile(user_id: int) -> str:
         return f"user:interest_profile:{user_id}"
@@ -97,3 +92,8 @@ class KeyFactory:
     @staticmethod
     def asics_update_lock() -> str:
         return "lock:asics_update"
+    
+    @staticmethod
+    def get_coin_price_key(coin_id: str) -> str:
+        """Ключ для кэша цены монеты."""
+        return f"price:coin:{coin_id}"
