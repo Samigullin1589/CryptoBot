@@ -1,8 +1,10 @@
+# =================================================================================
 # bot/services/mining_game_service.py
-# Дата обновления: 23.08.2025
-# Версия: 2.1.0
-# Описание: Основной сервис, управляющий игровой логикой "виртуального майнинга".
+# Версия: 2.2.0 - PRODUCTION READY (29.10.2025)
+# Описание: Полностью исправленный сервис с недостающими методами
+# =================================================================================
 
+import asyncio
 import json
 import time
 from typing import Dict, List, Optional, Tuple
@@ -26,6 +28,12 @@ class MiningGameService:
     """
     Управляет всей доменной логикой игры "виртуальный майнинг".
     Отвечает за старт/стоп сессий, покупку/выбор тарифов и ведение статистики.
+    
+    ИСПРАВЛЕНО (29.10.2025):
+    - Добавлен импорт asyncio
+    - Добавлен метод get_farm_and_stats_info()
+    - Добавлен метод get_user_asics()
+    - Добавлен метод start_session()
     """
 
     def __init__(
@@ -35,16 +43,162 @@ class MiningGameService:
         achievement_service: AchievementService,
         redis_client: Redis,
     ):
-        """
-        Инициализирует сервис с необходимыми зависимостями.
-        """
+        """Инициализирует сервис с необходимыми зависимостями."""
         self.redis = redis_client
         self.user_service = user_service
         self.asic_service = asic_service
         self.achievement_service = achievement_service
         self.config: MiningGameServiceConfig = settings.game
         self.keys = KeyFactory
-        logger.info("Сервис MiningGameService инициализирован.")
+        logger.info("✅ Сервис MiningGameService инициализирован.")
+
+    # =============================================================================
+    # НОВЫЕ МЕТОДЫ (ДОБАВЛЕНО 29.10.2025)
+    # =============================================================================
+
+    async def get_farm_and_stats_info(self, user_id: int) -> Tuple[str, str]:
+        """
+        Возвращает информацию о ферме и статистике пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            
+        Returns:
+            Кортеж (farm_info, stats_info) - текстовые описания
+        """
+        try:
+            # Получаем активную сессию
+            session = await self.get_active_session(user_id)
+            
+            # Получаем статистику
+            stats = await self.get_user_game_stats(user_id)
+            
+            # Получаем список ASIC
+            user_asics = await self.get_user_asics(user_id)
+            
+            # Формируем информацию о ферме
+            if session:
+                asic_data = json.loads(session.asic_json)
+                asic_name = asic_data.get('name', 'Unknown')
+                
+                # Рассчитываем прогресс
+                now = time.time()
+                total_duration = session.ends_at - session.started_at
+                elapsed = now - session.started_at
+                progress = min(100, int((elapsed / total_duration) * 100))
+                
+                remaining = max(0, int((session.ends_at - now) / 60))
+                
+                farm_info = (
+                    f"⛏ <b>Активная сессия майнинга</b>\n\n"
+                    f"Оборудование: <b>{asic_name}</b>\n"
+                    f"Прогресс: {progress}%\n"
+                    f"Осталось: {remaining} мин.\n"
+                )
+            else:
+                asic_count = len(user_asics)
+                farm_info = (
+                    f"🏭 <b>Ваша майнинг-ферма</b>\n\n"
+                    f"Оборудование в ангаре: {asic_count}\n"
+                    f"Статус: Нет активной сессии\n"
+                )
+            
+            # Формируем статистику
+            total_sessions = stats.sessions_total or 0
+            total_mined = stats.mined_total or 0.0
+            total_spent = stats.spent_total or 0.0
+            
+            stats_info = (
+                f"📊 <b>Статистика</b>\n\n"
+                f"Сессий проведено: {total_sessions}\n"
+                f"Всего добыто: {total_mined:,.2f} монет\n"
+                f"Всего потрачено: {total_spent:,.2f} монет\n"
+            )
+            
+            return farm_info, stats_info
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении информации о ферме для user_id={user_id}: {e}")
+            return (
+                "⚠️ Не удалось загрузить информацию о ферме.",
+                "⚠️ Не удалось загрузить статистику."
+            )
+
+    async def get_user_asics(self, user_id: int) -> List[AsicMiner]:
+        """
+        Возвращает список ASIC майнеров пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            
+        Returns:
+            Список объектов AsicMiner
+        """
+        try:
+            # Получаем список ID ASIC из Redis
+            asic_ids_key = self.keys.user_asics(user_id)
+            asic_ids = await self.redis.smembers(asic_ids_key)
+            
+            if not asic_ids:
+                return []
+            
+            # Получаем данные о каждом ASIC
+            user_asics = []
+            for asic_id in asic_ids:
+                asic_id_str = asic_id.decode('utf-8') if isinstance(asic_id, bytes) else asic_id
+                
+                # Получаем информацию об ASIC из asic_service
+                asic = await self.asic_service.get_asic_by_id(asic_id_str)
+                if asic:
+                    user_asics.append(asic)
+            
+            return user_asics
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении ASIC для user_id={user_id}: {e}")
+            return []
+
+    async def start_session(self, user_id: int, asic_id: str) -> str:
+        """
+        Запускает майнинг сессию с указанным ASIC.
+        
+        Args:
+            user_id: ID пользователя
+            asic_id: ID ASIC майнера
+            
+        Returns:
+            Сообщение о результате запуска
+        """
+        try:
+            # Проверяем, есть ли активная сессия
+            active_session = await self.get_active_session(user_id)
+            if active_session:
+                return "❌ У вас уже есть активная сессия майнинга. Дождитесь её завершения."
+            
+            # Получаем ASIC
+            asic = await self.asic_service.get_asic_by_id(asic_id)
+            if not asic:
+                return "❌ ASIC не найден."
+            
+            # Проверяем, что ASIC принадлежит пользователю
+            user_asics_key = self.keys.user_asics(user_id)
+            has_asic = await self.redis.sismember(user_asics_key, asic_id)
+            
+            if not has_asic:
+                return "❌ Этот ASIC не находится в вашем ангаре."
+            
+            # Запускаем сессию
+            result_msg, success = await self.purchase_and_start_session(user_id, asic)
+            
+            return result_msg
+            
+        except Exception as e:
+            logger.exception(f"Ошибка при запуске сессии для user_id={user_id}, asic_id={asic_id}: {e}")
+            return "❌ Произошла ошибка при запуске сессии. Попробуйте позже."
+
+    # =============================================================================
+    # ОРИГИНАЛЬНЫЕ МЕТОДЫ
+    # =============================================================================
 
     async def get_active_session(self, user_id: int) -> Optional[MiningSession]:
         """Возвращает активную майнинг-сессию пользователя, если она есть."""
@@ -126,7 +280,8 @@ class MiningGameService:
             return msg, True
         except Exception as e:
             logger.exception(f"Ошибка при создании сессии в Redis для user_id={user_id}: {e}")
-            await self.user_service.credit_balance(user_id, price, reason="Возврат средств после сбоя старта сессии")
+            if price > 0:
+                await self.user_service.credit_balance(user_id, price, reason="Возврат средств после сбоя старта сессии")
             return "Не удалось запустить сессию из-за ошибки базы данных. Средства возвращены.", False
 
     async def get_electricity_tariffs(self) -> List[ElectricityTariff]:
@@ -143,11 +298,11 @@ class MiningGameService:
             self.redis.hget(profile_key, "current_tariff")
         )
         
-        owned = list(owned_raw or [])
+        owned = [t.decode('utf-8') if isinstance(t, bytes) else t for t in (owned_raw or [])]
         if self.config.default_electricity_tariff not in owned:
             owned.append(self.config.default_electricity_tariff)
             
-        current = current_raw or self.config.default_electricity_tariff
+        current = (current_raw.decode('utf-8') if isinstance(current_raw, bytes) else current_raw) or self.config.default_electricity_tariff
         return sorted(owned), current
 
     async def _get_current_tariff_object(self, user_id: int) -> ElectricityTariff:
