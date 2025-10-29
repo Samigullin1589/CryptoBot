@@ -1,10 +1,4 @@
-# =================================================================================
-# Файл: bot/utils/dependencies.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ ВЕРСИЯ (22.08.2025)
-# Описание:
-#   • Определяет dataclass `Deps` для удобного доступа к сервисам.
-#   • Содержит middleware, которая внедряет `Deps` в каждый обработчик.
-# =================================================================================
+# src/bot/utils/dependencies.py
 
 from __future__ import annotations
 from dataclasses import dataclass
@@ -13,6 +7,7 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 from dependency_injector.wiring import Provide, inject
+from redis.asyncio import Redis
 
 from bot.containers import Container
 from bot.services.admin_service import AdminService
@@ -30,11 +25,15 @@ from bot.services.mining_service import MiningService
 from bot.services.security_service import SecurityService
 from bot.services.moderation_service import ModerationService
 from bot.config.settings import Settings
+from bot.utils.keys import KeyFactory
+
 
 @dataclass
 class Deps:
     """Контейнер для зависимостей, передаваемый в хэндлеры."""
     settings: Settings
+    redis: Redis
+    keys: type[KeyFactory]
     admin_service: AdminService
     user_service: UserService
     price_service: PriceService
@@ -57,6 +56,7 @@ async def dependencies_middleware(
     event: TelegramObject,
     data: Dict[str, Any],
     settings: Settings = Provide[Container.config],
+    redis: Redis = Provide[Container.redis],
     admin_service: AdminService = Provide[Container.admin_service],
     user_service: UserService = Provide[Container.user_service],
     price_service: PriceService = Provide[Container.price_service],
@@ -75,6 +75,8 @@ async def dependencies_middleware(
     """Middleware для внедрения всех зависимостей в data."""
     data["deps"] = Deps(
         settings=settings,
+        redis=redis,
+        keys=KeyFactory,
         admin_service=admin_service,
         user_service=user_service,
         price_service=price_service,

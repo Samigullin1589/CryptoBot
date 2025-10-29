@@ -1,5 +1,4 @@
-# bot/services/user_service.py
-# Версия: ИСПРАВЛЕННАЯ (19.10.2025)
+# src/bot/services/user_service.py
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -9,7 +8,7 @@ from aiogram.types import User as TelegramUser
 from loguru import logger
 from pydantic import ValidationError
 from redis.asyncio import Redis
-from redis import WatchError  # ✅ ИСПРАВЛЕНИЕ 1: добавлен импорт
+from redis import WatchError
 
 from bot.config.settings import settings
 from bot.utils.keys import KeyFactory
@@ -25,7 +24,6 @@ class UserService:
         """Инициализирует сервис."""
         self.redis = redis_client
         self.keys = KeyFactory
-        # ✅ ИСПРАВЛЕНИЕ 2: settings.AI -> settings.ai
         self.config = settings.ai
         logger.info("Сервис UserService инициализирован.")
 
@@ -40,8 +38,11 @@ class UserService:
             return None
         
         try:
+            # Десериализуем вложенные JSON-поля
+            if 'verification_data' in user_data_dict and user_data_dict['verification_data']:
+                user_data_dict['verification_data'] = json.loads(user_data_dict['verification_data'])
             return User.model_validate(user_data_dict)
-        except ValidationError as e:
+        except (ValidationError, json.JSONDecodeError) as e:
             logger.error(f"Ошибка валидации данных для пользователя {user_id}: {e}. Данные: {user_data_dict}")
             return None
 
@@ -51,6 +52,10 @@ class UserService:
         """
         user_key = self.keys.user_profile(user.id)
         user_data_to_save = user.model_dump(mode='json')
+        
+        # Сериализуем вложенные объекты в JSON-строки
+        if 'verification_data' in user_data_to_save and user_data_to_save['verification_data']:
+            user_data_to_save['verification_data'] = json.dumps(user_data_to_save['verification_data'])
 
         async with self.redis.pipeline(transaction=True) as pipe:
             pipe.delete(user_key)
@@ -143,7 +148,6 @@ class UserService:
                 
                 logger.info(f"Списано {amount} с баланса user_id={user_id}. Причина: {reason}. Новый баланс: {new_balance}")
                 return True, new_balance
-            # ✅ ИСПРАВЛЕНИЕ 3: redis.WatchError -> WatchError
             except WatchError:
                 logger.warning(f"Конфликт транзакции при списании баланса для user_id={user_id}.")
                 return False, 0.0
@@ -169,7 +173,6 @@ class UserService:
     async def get_conversation_history(self, user_id: int, chat_id: int) -> List[Dict]:
         """Получает историю переписки с AI."""
         history_key = self.keys.conversation_history(user_id, chat_id)
-        # ✅ ИСПРАВЛЕНИЕ 4: HISTORY_MAX_SIZE -> history_max_size
         raw_history = await self.redis.lrange(history_key, 0, self.config.history_max_size * 2)
         return [json.loads(msg) for msg in reversed(raw_history)]
 
@@ -182,6 +185,5 @@ class UserService:
         async with self.redis.pipeline(transaction=False) as pipe:
             pipe.lpush(history_key, json.dumps(model_message, ensure_ascii=False))
             pipe.lpush(history_key, json.dumps(user_message, ensure_ascii=False))
-            # ✅ ИСПРАВЛЕНИЕ 5: HISTORY_MAX_SIZE -> history_max_size
             pipe.ltrim(history_key, 0, self.config.history_max_size * 2 - 1)
             await pipe.execute()

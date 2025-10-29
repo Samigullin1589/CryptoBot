@@ -1,8 +1,4 @@
-# =================================================================================
-# bot/services/mining_game_service.py
-# Версия: 2.2.0 - PRODUCTION READY (29.10.2025)
-# Описание: Полностью исправленный сервис с недостающими методами
-# =================================================================================
+# src/bot/services/mining_game_service.py
 
 import asyncio
 import json
@@ -28,12 +24,6 @@ class MiningGameService:
     """
     Управляет всей доменной логикой игры "виртуальный майнинг".
     Отвечает за старт/стоп сессий, покупку/выбор тарифов и ведение статистики.
-    
-    ИСПРАВЛЕНО (29.10.2025):
-    - Добавлен импорт asyncio
-    - Добавлен метод get_farm_and_stats_info()
-    - Добавлен метод get_user_asics()
-    - Добавлен метод start_session()
     """
 
     def __init__(
@@ -52,36 +42,17 @@ class MiningGameService:
         self.keys = KeyFactory
         logger.info("✅ Сервис MiningGameService инициализирован.")
 
-    # =============================================================================
-    # НОВЫЕ МЕТОДЫ (ДОБАВЛЕНО 29.10.2025)
-    # =============================================================================
-
     async def get_farm_and_stats_info(self, user_id: int) -> Tuple[str, str]:
-        """
-        Возвращает информацию о ферме и статистике пользователя.
-        
-        Args:
-            user_id: ID пользователя
-            
-        Returns:
-            Кортеж (farm_info, stats_info) - текстовые описания
-        """
+        """Возвращает информацию о ферме и статистике пользователя."""
         try:
-            # Получаем активную сессию
             session = await self.get_active_session(user_id)
-            
-            # Получаем статистику
             stats = await self.get_user_game_stats(user_id)
-            
-            # Получаем список ASIC
             user_asics = await self.get_user_asics(user_id)
             
-            # Формируем информацию о ферме
             if session:
                 asic_data = json.loads(session.asic_json)
                 asic_name = asic_data.get('name', 'Unknown')
                 
-                # Рассчитываем прогресс
                 now = time.time()
                 total_duration = session.ends_at - session.started_at
                 elapsed = now - session.started_at
@@ -103,7 +74,6 @@ class MiningGameService:
                     f"Статус: Нет активной сессии\n"
                 )
             
-            # Формируем статистику
             total_sessions = stats.sessions_total or 0
             total_mined = stats.mined_total or 0.0
             total_spent = stats.spent_total or 0.0
@@ -125,29 +95,17 @@ class MiningGameService:
             )
 
     async def get_user_asics(self, user_id: int) -> List[AsicMiner]:
-        """
-        Возвращает список ASIC майнеров пользователя.
-        
-        Args:
-            user_id: ID пользователя
-            
-        Returns:
-            Список объектов AsicMiner
-        """
+        """Возвращает список ASIC майнеров пользователя."""
         try:
-            # Получаем список ID ASIC из Redis
             asic_ids_key = self.keys.user_asics(user_id)
             asic_ids = await self.redis.smembers(asic_ids_key)
             
             if not asic_ids:
                 return []
             
-            # Получаем данные о каждом ASIC
             user_asics = []
             for asic_id in asic_ids:
                 asic_id_str = asic_id.decode('utf-8') if isinstance(asic_id, bytes) else asic_id
-                
-                # Получаем информацию об ASIC из asic_service
                 asic = await self.asic_service.get_asic_by_id(asic_id_str)
                 if asic:
                     user_asics.append(asic)
@@ -159,35 +117,22 @@ class MiningGameService:
             return []
 
     async def start_session(self, user_id: int, asic_id: str) -> str:
-        """
-        Запускает майнинг сессию с указанным ASIC.
-        
-        Args:
-            user_id: ID пользователя
-            asic_id: ID ASIC майнера
-            
-        Returns:
-            Сообщение о результате запуска
-        """
+        """Запускает майнинг сессию с указанным ASIC."""
         try:
-            # Проверяем, есть ли активная сессия
             active_session = await self.get_active_session(user_id)
             if active_session:
                 return "❌ У вас уже есть активная сессия майнинга. Дождитесь её завершения."
             
-            # Получаем ASIC
             asic = await self.asic_service.get_asic_by_id(asic_id)
             if not asic:
                 return "❌ ASIC не найден."
             
-            # Проверяем, что ASIC принадлежит пользователю
             user_asics_key = self.keys.user_asics(user_id)
             has_asic = await self.redis.sismember(user_asics_key, asic_id)
             
             if not has_asic:
                 return "❌ Этот ASIC не находится в вашем ангаре."
             
-            # Запускаем сессию
             result_msg, success = await self.purchase_and_start_session(user_id, asic)
             
             return result_msg
@@ -195,10 +140,6 @@ class MiningGameService:
         except Exception as e:
             logger.exception(f"Ошибка при запуске сессии для user_id={user_id}, asic_id={asic_id}: {e}")
             return "❌ Произошла ошибка при запуске сессии. Попробуйте позже."
-
-    # =============================================================================
-    # ОРИГИНАЛЬНЫЕ МЕТОДЫ
-    # =============================================================================
 
     async def get_active_session(self, user_id: int) -> Optional[MiningSession]:
         """Возвращает активную майнинг-сессию пользователя, если она есть."""
@@ -218,10 +159,7 @@ class MiningGameService:
         return UserGameStats.model_validate(stats_data or {})
 
     async def purchase_and_start_session(self, user_id: int, selected_asic: AsicMiner) -> Tuple[str, bool]:
-        """
-        Атомарно покупает и запускает майнинг-сессию.
-        Возвращает кортеж (сообщение_для_пользователя, флаг_успеха).
-        """
+        """Атомарно покупает и запускает майнинг-сессию."""
         lock_key = f"lock:session:{user_id}"
         try:
             async with RedisLock(self.redis, lock_key, timeout=5):

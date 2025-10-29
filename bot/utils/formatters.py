@@ -1,15 +1,10 @@
-# =================================================================================
-# Файл: bot/utils/formatters.py (ВЕРСИЯ "Distinguished Engineer" - ПОЛНАЯ РЕАЛИЗАЦИЯ)
-# Описание: Вспомогательные функции для форматирования данных в текст.
-# ИСПРАВЛЕНИЕ: Полностью переписан без заглушек. Обновлены все функции
-#              для работы с новыми структурами данных.
-# =================================================================================
-from typing import Any
+# src/bot/utils/formatters.py
+
+from typing import Any, Union
 from datetime import datetime, timezone
 
 from bot.utils.models import AsicMiner, NewsArticle, Coin, CalculationResult
 
-# --- Форматтеры для раздела ASIC ---
 def format_asic_list(asics: list[AsicMiner], page: int, total_pages: int) -> str:
     if not asics:
         return "Нет доступных ASIC для отображения."
@@ -59,7 +54,6 @@ def format_asic_passport(asic: AsicMiner, electricity_cost: float) -> str:
         f"<b><u>Тех. характеристики:</u></b>\n{specs_text}\n"
     )
 
-# --- Форматтеры для раздела новостей ---
 def format_news_list(articles: list[NewsArticle], page: int, total_pages: int) -> str:
     if not articles:
         return "Нет доступных новостей."
@@ -71,13 +65,12 @@ def format_news_list(articles: list[NewsArticle], page: int, total_pages: int) -
         time_str = dt_object.strftime('%d.%m.%Y %H:%M')
         body.append(
             f"▪️ <a href='{article.url}'>{article.title}</a>\n"
-            f"  <I>({article.source} - {time_str})</I>"
+            f"  <i>({article.source} - {time_str})</i>"
         )
     
     footer = f"\n\n📄 Страница {page + 1} из {total_pages}"
     return header + "\n".join(body) + footer
 
-# --- Форматтеры для раздела курсов ---
 def format_price_info(coin: Coin, price_data: dict[str, Any]) -> str:
     price = price_data.get('price')
     price_str = f"{price:,.4f}".rstrip('0').rstrip('.') if price else "N/A"
@@ -86,9 +79,11 @@ def format_price_info(coin: Coin, price_data: dict[str, Any]) -> str:
         f"<b>Цена:</b> ${price_str}"
     )
 
-# --- Форматтеры для рыночных данных ---
-def format_halving_info(halving_data: dict[str, Any]) -> str:
+def format_halving_info(halving_data: Union[dict[str, Any], Any]) -> str:
     """Форматирует информацию о халвинге Bitcoin."""
+    if hasattr(halving_data, 'model_dump'):
+        halving_data = halving_data.model_dump()
+    
     progress = halving_data.get('progressPercent', 0)
     remaining_blocks = halving_data.get('remainingBlocks', 0)
     estimated_date = halving_data.get('estimated_date', 'неизвестно')
@@ -100,8 +95,11 @@ def format_halving_info(halving_data: dict[str, Any]) -> str:
         f"Ориентировочная дата халвинга: <b>{estimated_date}</b>"
     )
 
-def format_network_status(network_data: dict[str, Any]) -> str:
+def format_network_status(network_data: Union[dict[str, Any], Any]) -> str:
     """Форматирует информацию о состоянии сети Bitcoin."""
+    if hasattr(network_data, 'model_dump'):
+        network_data = network_data.model_dump()
+    
     hashrate_ehs = network_data.get('hashrate_ehs', 0.0)
     difficulty_change = network_data.get('difficulty_change', 0.0)
     estimated_retarget_date = network_data.get('estimated_retarget_date', 'N/A')
@@ -115,7 +113,6 @@ def format_network_status(network_data: dict[str, Any]) -> str:
         f"<i>(Ориентировочно {estimated_retarget_date})</i>"
     )
 
-# --- Форматтер для калькулятора ---
 def format_calculation_result(result: CalculationResult) -> str:
     net_profit_weekly = result.net_profit_usd_daily * 7
     net_profit_monthly = result.net_profit_usd_daily * 30.44

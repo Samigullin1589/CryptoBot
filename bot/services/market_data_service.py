@@ -1,14 +1,4 @@
 # src/bot/services/market_data_service.py
-# =================================================================================
-# Файл: bot/services/market_data_service.py
-# Версия: "Distinguished Engineer" — ФИНАЛЬНАЯ СБОРКА
-# Описание:
-#   • Объединяет вашу превосходную логику (отказоустойчивость,
-#     агрегация данных, Pydantic-валидация) с правильным паттерном DI.
-#   • Зависимости (redis, http_client, config и т.д.) теперь передаются
-#     через конструктор, что делает сервис полностью тестируемым.
-#   • Убраны устаревшие импорты (get_redis_client, http_session).
-# =================================================================================
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -23,7 +13,6 @@ from bot.services.coin_list_service import CoinListService
 from bot.utils.http_client import HttpClient
 from bot.utils.keys import KeyFactory
 
-# --- Pydantic модели для валидации ответов API ---
 
 class FearAndGreedData(BaseModel):
     value: str
@@ -107,8 +96,6 @@ class MarketDataService:
 
     async def _get_prices_coingecko(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
         """Получает цены от CoinGecko."""
-        # Логика получения цен от CoinGecko...
-        # (Предполагается, что http_client управляет API ключами)
         params = {'ids': ','.join(coin_ids), 'vs_currencies': 'usd'}
         data = await self.http_client.get(
             f"{self.http_client.config.coingecko_api_base}{self.http_client.config.simple_price_endpoint}",
@@ -120,10 +107,8 @@ class MarketDataService:
                 result[cid] = float(price_data['usd']) if 'usd' in price_data else None
         return result
 
-
     async def _get_prices_cryptocompare(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
         """Получает цены от CryptoCompare."""
-        # Логика получения цен от CryptoCompare...
         symbols_to_fetch, id_to_symbol_map = [], {}
         for cid in coin_ids:
             symbol = await self.coin_list_service.get_symbol_by_coin_id(cid)
@@ -159,7 +144,6 @@ class MarketDataService:
     async def get_halving_info(self) -> Optional[HalvingInfo]:
         """Рассчитывает информацию о следующем халвинге Bitcoin."""
         try:
-            # Константы для расчета
             HALVING_INTERVAL = 210000
             AVG_BLOCK_TIME_MINUTES = 10
 
@@ -179,6 +163,27 @@ class MarketDataService:
             )
         except (ValueError, Exception) as e:
             logger.error(f"Не удалось вычислить данные о халвинге: {e}")
+            return None
+
+    async def get_btc_network_status(self) -> Optional[NetworkStatus]:
+        """Получает статус сети Bitcoin."""
+        try:
+            data = await self.http_client.get(str(self.http_client.config.mempool_space_difficulty_adjustment))
+            if not data:
+                return None
+            
+            hashrate_ehs = data.get('currentHashrate', 0) / 1e18
+            difficulty_change = data.get('difficultyChange', 0)
+            estimated_retarget_timestamp = data.get('estimatedRetargetDate', 0) / 1000
+            estimated_retarget_date = datetime.fromtimestamp(estimated_retarget_timestamp, tz=timezone.utc).strftime('%d.%m.%Y')
+            
+            return NetworkStatus(
+                hashrate_ehs=hashrate_ehs,
+                difficulty_change=difficulty_change,
+                estimated_retarget_date=estimated_retarget_date
+            )
+        except Exception as e:
+            logger.error(f"Не удалось получить статус сети BTC: {e}")
             return None
 
     async def get_top_n_coins(self, limit: int) -> List[Dict[str, Any]]:
@@ -201,7 +206,6 @@ class MarketDataService:
         if data:
             try:
                 validated_data = [TopCoin.model_validate(item).model_dump() for item in data]
-                # Кешируем полный ответ, если запросили достаточно много
                 if limit >= self.config.top_n_coins:
                     await self.redis.set(cache_key, json.dumps(validated_data), ex=3600)
                 return validated_data

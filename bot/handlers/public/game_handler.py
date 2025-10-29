@@ -1,7 +1,5 @@
-# =================================================================================
-# Файл: bot/handlers/public/game_handler.py (ИСПРАВЛЕННЫЙ)
-# Описание: Исправлен импорт `get_hangar_keyboard`.
-# =================================================================================
+# src/bot/handlers/public/game_handler.py
+
 import logging
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -10,9 +8,6 @@ from aiogram.types import CallbackQuery
 from bot.utils.dependencies import Deps
 from bot.states.game_states import MiningGameStates
 from bot.keyboards.callback_factories import MenuCallback, GameCallback
-# ===============================================================
-# ИСПРАВЛЕНИЕ ЗДЕСЬ: `get_hangar_keyboard` и `get_game_main_menu_keyboard` импортируются из `mining_keyboards`
-# ===============================================================
 from bot.keyboards.mining_keyboards import get_mining_menu_keyboard, get_hangar_keyboard
 
 router = Router(name=__name__)
@@ -22,7 +17,10 @@ async def show_game_menu(call: CallbackQuery, deps: Deps, state: FSMContext):
     """Отображает главное меню игры, обновляя информацию."""
     await state.set_state(MiningGameStates.main_menu)
     farm_info, stats_info = await deps.mining_game_service.get_farm_and_stats_info(call.from_user.id)
-    session_data = await deps.redis.hgetall(deps.keys.active_session(call.from_user.id))
+    
+    from bot.utils.keys import KeyFactory
+    session_key = KeyFactory.active_session(call.from_user.id)
+    session_data = await deps.user_service.redis.hgetall(session_key)
     is_session_active = bool(session_data)
 
     text = f"{farm_info}\n\n{stats_info}"
@@ -78,6 +76,5 @@ async def handle_start_session_action(call: CallbackQuery, callback_data: GameCa
 
     result_text = await deps.mining_game_service.start_session(call.from_user.id, asic_id)
 
-    # После запуска возвращаемся в главное меню игры
     await call.message.answer(result_text, disable_web_page_preview=True)
     await show_game_menu(call, deps, state)

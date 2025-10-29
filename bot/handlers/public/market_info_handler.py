@@ -1,9 +1,5 @@
-# =================================================================================
-# Файл: bot/handlers/public/market_info_handler.py (ВЕРСЯ "Distinguished Engineer" - РЕФАКТОРИНГ)
-# Описание: Обрабатывает запросы на получение общих рыночных данных.
-# ИСПРАВЛЕНИЕ: Добавлены фильтры MenuCallback для прямого отклика на кнопки меню.
-#              Исправлены вызовы сервисных методов.
-# =================================================================================
+# src/bot/handlers/public/market_info_handler.py
+
 import logging
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, BufferedInputFile
@@ -28,8 +24,8 @@ async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMCon
         if not data:
             raise ValueError("API индекса страха и жадности не вернул данных.")
 
-        value = int(data['value'])
-        classification = data['value_classification']
+        value = int(data.value)
+        classification = data.value_classification
 
         image_bytes = generate_fng_image(value, classification)
         photo = BufferedInputFile(image_bytes, filename="fng_index.png")
@@ -56,7 +52,7 @@ async def handle_halving_info(call: CallbackQuery, deps: Deps, state: FSMContext
         if not data:
             raise ValueError("API для халвинга не вернул валидных данных.")
 
-        text = format_halving_info(data)
+        text = format_halving_info(data.model_dump())
         await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
     except Exception as e:
         logger.error(f"Ошибка получения данных о халвинге: {e}", exc_info=True)
@@ -67,13 +63,12 @@ async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
     await call.answer()
     temp_message = await call.message.edit_text("⏳ Загружаю статус сети и запрашиваю анализ у AI...")
     try:
-        # ИСПРАВЛЕНО: Вызов правильного метода
         data = await deps.market_data_service.get_btc_network_status()
         if not data:
             raise ValueError("Сервис не вернул данные о статусе сети BTC.")
 
-        text = format_network_status(data)
-        hashrate_ehs = data.get('hashrate_ehs', 0.0)
+        text = format_network_status(data.model_dump())
+        hashrate_ehs = data.hashrate_ehs
         ai_question = (f"Хешрейт сети Bitcoin сейчас ~{hashrate_ehs:.0f} EH/s. Кратко, в 1-2 предложениях, объясни простым языком, что это значит.")
         ai_explanation = await deps.ai_content_service.get_consultant_answer(ai_question, history=[])
 

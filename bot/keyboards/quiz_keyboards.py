@@ -1,8 +1,5 @@
-# ===============================================================
-# Файл: bot/keyboards/quiz_keyboards.py
-# Описание: Генераторы клавиатур для викторины.
-# ИСПРАВЛЕНИЕ: Переход на использование фабрик CallbackData.
-# ===============================================================
+# src/bot/keyboards/quiz_keyboards.py
+
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardMarkup
 from .callback_factories import QuizCallback, MenuCallback
@@ -14,7 +11,10 @@ def get_quiz_options_keyboard(options: list, correct_index: int) -> InlineKeyboa
     builder = InlineKeyboardBuilder()
     for i, option_text in enumerate(options):
         is_correct = 1 if i == correct_index else 0
-        builder.button(text=option_text, callback_data=QuizCallback(action="answer", is_correct=is_correct).pack())
+        builder.button(
+            text=str(option_text), 
+            callback_data=QuizCallback(action="answer", is_correct=is_correct).pack()
+        )
     builder.adjust(1)
     return builder.as_markup()
 
