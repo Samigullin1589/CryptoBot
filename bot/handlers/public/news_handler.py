@@ -1,13 +1,4 @@
-# ======================================================================================
-# File: bot/handlers/news_handler.py
-# Version: "Distinguished Engineer" — Aug 17, 2025
-# Description:
-#   /news с кешем и постраничной навигацией.
-#   • Исправлен синтаксис декоратора (была лишняя скобка)
-#   • Безопасные фолбэки к методам NewsService
-#   • Всегда call.answer() -> нет «вечной загрузки»
-# ======================================================================================
-
+# src/bot/handlers/public/news_handler.py
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +7,8 @@ from typing import List, Dict, Any, Optional
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.exceptions import TelegramBadRequest
+from loguru import logger
 
 router = Router(name="news_public")
 
@@ -57,7 +50,8 @@ async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
         if asyncio.iscoroutine(res):
             res = await res
         return res
-    except Exception:
+    except Exception as e:
+        logger.debug(f"Failed to call {method}: {e}")
         return None
 
 
@@ -65,27 +59,20 @@ async def _get_items(deps) -> List[Dict[str, Any]]:
     svc = getattr(deps, "news_service", None)
     if not svc:
         return []
-    calls = [
-        ("get_cached", {}),
-        ("get_all_latest_news", {}),
-        ("get_latest", {"limit": 50}),
-        ("fetch", {"limit": 50}),
-        ("headlines", {"limit": 50}),
-        ("refresh_cache", {}),
-    ]
-    for name, kw in calls:
-        data = await _try_call(svc, name, **kw)
-        if not data:
-            continue
-        items: List[Dict[str, Any]] = []
-        if isinstance(data, dict):
-            data = data.get("items") or data.get("news") or data.get("results") or []
-        if isinstance(data, (list, tuple)):
-            for it in data:
-                if isinstance(it, dict):
-                    items.append(it)
-        if items:
+    
+    try:
+        data = await svc.get_all_latest_news(limit=50)
+        if data:
+            items: List[Dict[str, Any]] = []
+            for article in data:
+                if hasattr(article, 'model_dump'):
+                    items.append(article.model_dump())
+                elif isinstance(article, dict):
+                    items.append(article)
             return items
+    except Exception as e:
+        logger.error(f"Error getting news: {e}")
+    
     return []
 
 
@@ -103,35 +90,37 @@ async def cmd_news(message: Message, deps) -> None:
 @router.callback_query(F.data.startswith("news:"))
 async def cb_news(call: CallbackQuery, deps) -> None:
     await call.answer()
+    
+    if not call.message:
+        return
+    
     data = (call.data or "").split(":")
     items = await _get_items(deps)
+    page = 0
 
     if len(data) >= 3 and data[1] == "page":
         try:
             page = max(0, int(data[2]))
         except ValueError:
             page = 0
+    elif len(data) >= 2 and data[1] == "refresh":
+        page = 0
+    
+    new_text = _render(items, page=page)
+    new_markup = _page_kb(page)
+    
+    # Проверяем, изменилось ли содержимое
+    try:
         await call.message.edit_text(
-            _render(items, page=page),
+            new_text,
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=_page_kb(page),
-        )  # type: ignore[union-attr]
-        return
-
-    if len(data) >= 2 and data[1] == "refresh":
-        await call.message.edit_text(
-            _render(items, page=0),
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=_page_kb(0),
-        )  # type: ignore[union-attr]
-        return
-
-    # неизвестное действие — просто перерисуем первую страницу
-    await call.message.edit_text(
-        _render(items, page=0),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=_page_kb(0),
-    )  # type: ignore[union-attr]
+            reply_markup=new_markup,
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e):
+            # Сообщение не изменилось, это не ошибка
+            logger.debug("Message content unchanged, skipping edit")
+        else:
+            logger.error(f"Error editing message: {e}")
+            raise
