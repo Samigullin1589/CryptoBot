@@ -9,6 +9,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from loguru import logger
 
 from bot.keyboards.callback_factories import PriceCallback
+from bot.utils.dependencies import Deps
 
 router = Router(name="price_public")
 
@@ -71,70 +72,122 @@ def get_price_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-async def get_price_from_service(deps, coin_id: str) -> Optional[float]:
+async def get_price_from_service(deps: Deps, coin_id: str) -> Optional[float]:
     """Получает цену из price_service"""
     try:
         price_service = getattr(deps, "price_service", None)
-        if price_service:
+        if not price_service:
+            logger.warning("price_service not available in deps")
+            return None
+            
+        if hasattr(price_service, "get_price"):
             price = await price_service.get_price(coin_id)
             if price is not None:
                 return float(price)
+        else:
+            logger.warning(f"price_service has no get_price method")
+            
     except Exception as e:
-        logger.error(f"Error getting price for {coin_id}: {e}")
+        logger.error(f"Error getting price for {coin_id}: {e}", exc_info=True)
+    
     return None
 
 
 @router.message(Command("price"))
-async def cmd_price(message: Message, deps) -> None:
+async def cmd_price(message: Message, deps: Deps) -> None:
     """Обработчик команды /price"""
-    text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
-    await message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+    try:
+        text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
+        await message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+        logger.info(f"User {message.from_user.id} opened price menu via /price")
+    except Exception as e:
+        logger.error(f"Error in cmd_price: {e}", exc_info=True)
+        await message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
 
 
 @router.callback_query(PriceCallback.filter(F.action == "open"))
-async def price_menu_handler(call: CallbackQuery, deps) -> None:
+async def price_menu_handler(call: CallbackQuery, deps: Deps) -> None:
     """Обработчик открытия меню цен из главного меню"""
-    await call.answer()
-    text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
-    
     try:
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+        await call.answer()
+        
+        text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
+        
+        await call.message.edit_text(
+            text, 
+            parse_mode="HTML", 
+            reply_markup=get_price_keyboard()
+        )
+        
+        logger.info(f"User {call.from_user.id} opened price menu")
+        
     except Exception as e:
-        logger.error(f"Error editing message: {e}")
-        await call.message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+        logger.error(f"Error in price_menu_handler: {e}", exc_info=True)
+        
+        try:
+            await call.answer("⚠️ Произошла ошибка", show_alert=True)
+        except Exception:
+            pass
+        
+        try:
+            text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
+            await call.message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+        except Exception as e2:
+            logger.error(f"Failed to send fallback message: {e2}")
 
 
 @router.callback_query(PriceCallback.filter(F.action == "show"))
-async def price_show_handler(call: CallbackQuery, deps, callback_data: PriceCallback) -> None:
+async def price_show_handler(call: CallbackQuery, deps: Deps, callback_data: PriceCallback) -> None:
     """Показывает цену конкретной монеты"""
-    await call.answer()
-    
-    coin_id = callback_data.coin_id
-    symbol = None
-    for sym, cid in SYMBOL_TO_COIN_ID.items():
-        if cid == coin_id:
-            symbol = sym
-            break
-    
-    if not symbol:
-        symbol = coin_id.upper()
-    
-    price = await get_price_from_service(deps, coin_id)
-    
-    if price is None:
-        await call.answer(f"⚠️ Не удалось получить цену {symbol}", show_alert=True)
-        return
-    
-    text = f"💰 <b>{symbol}/USD</b>\n\n<code>${_fmt_price(price)}</code>"
-    
     try:
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+        await call.answer()
+        
+        coin_id = callback_data.coin_id
+        if not coin_id:
+            await call.answer("⚠️ Не указана монета", show_alert=True)
+            return
+        
+        symbol = None
+        for sym, cid in SYMBOL_TO_COIN_ID.items():
+            if cid == coin_id:
+                symbol = sym
+                break
+        
+        if not symbol:
+            symbol = coin_id.upper()
+        
+        price = await get_price_from_service(deps, coin_id)
+        
+        if price is None:
+            await call.answer(f"⚠️ Не удалось получить цену {symbol}", show_alert=True)
+            return
+        
+        text = f"💰 <b>{symbol}/USD</b>\n\n<code>${_fmt_price(price)}</code>"
+        
+        await call.message.edit_text(
+            text, 
+            parse_mode="HTML", 
+            reply_markup=get_price_keyboard()
+        )
+        
+        logger.info(f"User {call.from_user.id} viewed price for {symbol}")
+        
     except Exception as e:
-        logger.error(f"Error editing message: {e}")
+        logger.error(f"Error in price_show_handler: {e}", exc_info=True)
+        
+        try:
+            await call.answer("⚠️ Произошла ошибка", show_alert=True)
+        except Exception:
+            pass
 
 
 @router.callback_query(PriceCallback.filter(F.action == "refresh"))
-async def price_refresh_handler(call: CallbackQuery, deps) -> None:
+async def price_refresh_handler(call: CallbackQuery, deps: Deps) -> None:
     """Обновляет меню цен"""
-    await call.answer("🔄 Обновление...")
-    await price_menu_handler(call, deps)
+    try:
+        await call.answer("🔄 Обновление...")
+        await price_menu_handler(call, deps)
+        
+    except Exception as e:
+        logger.error(f"Error in price_refresh_handler: {e}", exc_info=True)
+        await call.answer("⚠️ Ошибка обновления", show_alert=True)
