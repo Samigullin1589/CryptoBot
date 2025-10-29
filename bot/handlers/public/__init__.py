@@ -1,19 +1,10 @@
-# =============================================================================
-# Файл: bot/handlers/public/__init__.py
-# Версия: PRODUCTION-READY (29.10.2025) - Distinguished Engineer
-# Описание:
-#   • ИСПРАВЛЕНО: Добавлена регистрация всех роутеров в public_router
-#   • ИСПРАВЛЕНО: Импорт всех handlers из модулей
-#   • Теперь все команды будут обрабатываться
-# =============================================================================
-
+# src/bot/handlers/public/__init__.py
 from aiogram import Router
 
 # Создаем единый роутер для публичной части
 public_router = Router(name="public_handlers")
 
 # ==================== ИМПОРТ ВСЕХ HANDLERS ====================
-# Импортируем роутеры из всех handler файлов
 try:
     from .start_handler import router as start_router
     public_router.include_router(start_router)
@@ -39,10 +30,10 @@ except ImportError as e:
     print(f"⚠️ Warning: Could not import asic_handler: {e}")
 
 try:
-    from .command_handler import router as command_router
+    from .command_handler_extended import router as command_router
     public_router.include_router(command_router)
 except ImportError as e:
-    print(f"⚠️ Warning: Could not import command_handler: {e}")
+    print(f"⚠️ Warning: Could not import command_handler_extended: {e}")
 
 try:
     from .crypto_center_handler import router as crypto_center_router
@@ -110,7 +101,6 @@ try:
 except ImportError as e:
     print(f"⚠️ Warning: Could not import verification_public_handler: {e}")
 
-# Экспортируем public_router для использования в main.py
 __all__ = ["public_router"]
 
 print(f"✅ Public router configured with {len(public_router.sub_routers)} handlers")
