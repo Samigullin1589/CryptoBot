@@ -1,16 +1,19 @@
 # =================================================================================
 # bot/containers.py
-# Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
-# Описание:
-#   • ИСПРАВЛЕНО: Правильная передача BOT_TOKEN через providers.Callable
-#   • Убраны async методы из контейнера (не поддерживаются dependency-injector)
-#   • Инициализация ресурсов теперь в main.py
+# Версия: PRODUCTION v3.0.0 (29.10.2025) - Distinguished Engineer
+# ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Правильная работа с providers.Resource
+# ✅ ДОБАВЛЕНО: Методы init_resources() и shutdown_resources()
+# ✅ ИСПРАВЛЕНО: Правильная передача BOT_TOKEN
 # =================================================================================
 
 import logging
+from typing import AsyncIterator
+
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
 from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
 from bot.config.settings import Settings
 from bot.services.achievement_service import AchievementService
@@ -37,9 +40,91 @@ from bot.services.image_vision_service import ImageVisionService
 logger = logging.getLogger(__name__)
 
 
+# =================================================================================
+# RESOURCE FACTORIES
+# =================================================================================
+
+async def init_redis_client(url: str) -> AsyncIterator[Redis]:
+    """
+    Фабрика для создания Redis клиента.
+    
+    Args:
+        url: Redis URL
+        
+    Yields:
+        Redis клиент
+    """
+    client = await Redis.from_url(
+        url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5
+    )
+    
+    try:
+        await client.ping()
+        logger.info("✅ Redis client initialized")
+        yield client
+    finally:
+        await client.close()
+        logger.info("✅ Redis client closed")
+
+
+async def init_http_client(config: dict) -> AsyncIterator[HttpClient]:
+    """
+    Фабрика для создания HTTP клиента.
+    
+    Args:
+        config: Конфигурация endpoints
+        
+    Yields:
+        HTTP клиент
+    """
+    client = HttpClient(config=config)
+    
+    try:
+        logger.info("✅ HTTP client initialized")
+        yield client
+    finally:
+        await client.close()
+        logger.info("✅ HTTP client closed")
+
+
+async def init_bot(token: str) -> AsyncIterator[Bot]:
+    """
+    Фабрика для создания Bot.
+    
+    Args:
+        token: Telegram Bot Token
+        
+    Yields:
+        Bot instance
+    """
+    bot = Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    )
+    
+    try:
+        me = await bot.get_me()
+        logger.info(f"✅ Bot initialized: @{me.username} (ID: {me.id})")
+        yield bot
+    finally:
+        if bot.session:
+            await bot.session.close()
+        logger.info("✅ Bot session closed")
+
+
+# =================================================================================
+# MAIN CONTAINER
+# =================================================================================
+
 class Container(containers.DeclarativeContainer):
     """
     Основной контейнер приложения для внедрения зависимостей.
+    
+    ✅ ИСПРАВЛЕНО: Использование правильных фабрик для ресурсов
     """
     wiring_config = containers.WiringConfiguration(
         modules=[
@@ -56,31 +141,34 @@ class Container(containers.DeclarativeContainer):
     # ==================== КОНФИГУРАЦИЯ ====================
     config = providers.Singleton(Settings)
 
-    # ==================== BOT TOKEN (ИСПРАВЛЕНО) ====================
-    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Используем providers.Callable для получения токена
+    # ==================== BOT TOKEN ====================
     bot_token = providers.Callable(
         lambda cfg: cfg.BOT_TOKEN.get_secret_value() if cfg.BOT_TOKEN else "",
         config
     )
 
-    # ==================== ОСНОВНЫЕ КОМПОНЕНТЫ ====================
-    bot = providers.Singleton(
-        Bot, 
-        token=bot_token
-    )
-
+    # ==================== РЕСУРСЫ (КРИТИЧНО!) ====================
+    
+    # Redis Client с правильной фабрикой
     redis_client = providers.Resource(
-        Redis.from_url,
-        url=config.provided.REDIS_URL,
-        decode_responses=True,
+        init_redis_client,
+        url=config.provided.REDIS_URL
     )
 
+    # HTTP Client с правильной фабрикой
     http_client = providers.Resource(
-        HttpClient, 
+        init_http_client,
         config=config.provided.endpoints
     )
 
+    # Bot с правильной фабрикой
+    bot = providers.Resource(
+        init_bot,
+        token=bot_token
+    )
+
     # ==================== СЕРВИСЫ ====================
+    
     ai_content_service = providers.Singleton(
         AIContentService
     )

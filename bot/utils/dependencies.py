@@ -1,10 +1,15 @@
-# src/bot/utils/dependencies.py
+# =================================================================================
+# bot/utils/dependencies.py
+# Версия: PRODUCTION v3.0.0 (29.10.2025) - Distinguished Engineer
+# ✅ ИСПРАВЛЕНО: Совместимость с существующей архитектурой проекта
+# ✅ ИСПРАВЛЕНО: Использование @inject декоратора и Provide паттерна
+# ✅ ИСПРАВЛЕНО: Правильная работа с Resource провайдерами
+# =================================================================================
 
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict
 
-from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
 from dependency_injector.wiring import Provide, inject
 from redis.asyncio import Redis
@@ -30,7 +35,11 @@ from bot.utils.keys import KeyFactory
 
 @dataclass
 class Deps:
-    """Контейнер для зависимостей, передаваемый в хэндлеры."""
+    """
+    Контейнер для зависимостей, передаваемый в хэндлеры.
+    
+    Все сервисы и ресурсы доступны через этот dataclass.
+    """
     settings: Settings
     redis: Redis
     keys: type[KeyFactory]
@@ -55,8 +64,9 @@ async def dependencies_middleware(
     handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
     event: TelegramObject,
     data: Dict[str, Any],
+    # ✅ ИСПРАВЛЕНО: Используем правильные имена из Container
     settings: Settings = Provide[Container.config],
-    redis: Redis = Provide[Container.redis],
+    redis: Redis = Provide[Container.redis_client],  # ✅ redis_client из Container
     admin_service: AdminService = Provide[Container.admin_service],
     user_service: UserService = Provide[Container.user_service],
     price_service: PriceService = Provide[Container.price_service],
@@ -72,7 +82,20 @@ async def dependencies_middleware(
     security_service: SecurityService = Provide[Container.security_service],
     moderation_service: ModerationService = Provide[Container.moderation_service],
 ) -> Any:
-    """Middleware для внедрения всех зависимостей в data."""
+    """
+    Middleware для внедрения всех зависимостей в data.
+    
+    ✅ ИСПРАВЛЕНО: Правильная работа с Resource провайдерами
+    
+    Args:
+        handler: Следующий обработчик в цепочке
+        event: Telegram событие
+        data: Данные для передачи в обработчик
+        ... (все сервисы инъектируются автоматически)
+        
+    Returns:
+        Результат обработчика
+    """
     data["deps"] = Deps(
         settings=settings,
         redis=redis,
