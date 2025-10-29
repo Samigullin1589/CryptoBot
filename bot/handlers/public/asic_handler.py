@@ -1,134 +1,137 @@
-# =================================================================================
-# Файл: bot/handlers/public/asic_handler.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (Aug 21, 2025)
-# Описание: Полнофункциональный обработчик для раздела ASIC с использованием
-#            строго типизированных CallbackData.
-# =================================================================================
-import logging
-from datetime import datetime, timezone
-from typing import Union
+# src/bot/handlers/public/text_handler.py
+from __future__ import annotations
 
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.fsm.context import FSMContext
+import re
+from aiogram import Router
+from aiogram.filters import Command
+from aiogram.types import Message
+from loguru import logger
 
-from bot.utils.dependencies import Deps
-from bot.states.asic_states import AsicExplorerStates
-from bot.keyboards.callback_factories import MenuCallback, AsicCallback
-from bot.keyboards.asic_keyboards import get_top_asics_keyboard, get_asic_passport_keyboard
-from bot.utils.formatters import format_asic_passport
-from bot.utils.ui_helpers import edit_or_send_message
+router = Router(name="text_public")
 
-logger = logging.getLogger(__name__)
-router = Router(name="asic_handler")
+_PAIR_RE = re.compile(r"^\s*([a-zA-Z]{2,10})\s*[/\s,-]?\s*([a-zA-Z]{2,10})?\s*$")
 
-# --- УНИВЕРСАЛЬНАЯ ФУНКЦИЯ ОТОБРАЖЕНИЯ СПИСКА ---
-
-async def show_top_asics_page(update: Union[Message, CallbackQuery], state: FSMContext, deps: Deps):
-    """Отображает страницу с топом ASIC-майнеров, используя FSM для хранения страницы."""
-    await edit_or_send_message(update, "⏳ Загружаю актуальный список ASIC...")
-
-    await state.set_state(AsicExplorerStates.showing_top)
-
-    fsm_data = await state.get_data()
-    page = fsm_data.get("page", 1)
-
-    user_profile, _ = await deps.user_service.get_or_create_user(update.from_user)
-    electricity_cost = user_profile.electricity_cost
-
-    top_miners, last_update_time = await deps.asic_service.get_top_asics(electricity_cost)
-
-    if not top_miners:
-        error_text = "😕 Не удалось получить данные о майнерах. База данных пуста или источники недоступны. Попробуйте позже."
-        await edit_or_send_message(update, error_text)
-        return
-
-    minutes_ago_str = "N/A"
-    if last_update_time:
-        minutes_ago = int((datetime.now(timezone.utc) - last_update_time).total_seconds() / 60)
-        minutes_ago_str = str(minutes_ago)
-
-    text = (f"🏆 <b>Топ доходных ASIC</b>\n"
-            f"<i>Ваша цена э/э: ${electricity_cost:.4f}/кВт·ч. Обновлено {minutes_ago_str} мин. назад.</i>")
-
-    keyboard = get_top_asics_keyboard(top_miners, page)
-    await edit_or_send_message(update, text, keyboard)
+# Маппинг тикеров в CoinGecko ID
+SYMBOL_TO_COIN_ID = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "USDT": "tether",
+    "BNB": "binancecoin",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "TRX": "tron",
+    "MATIC": "matic-network",
+    "LTC": "litecoin",
+    "AVAX": "avalanche-2",
+    "LINK": "chainlink",
+    "UNI": "uniswap",
+    "ATOM": "cosmos",
+}
 
 
-# --- ОБРАБОТЧИКИ ---
-
-@router.callback_query(MenuCallback.filter(F.action == "asics"))
-async def top_asics_start(call: CallbackQuery, state: FSMContext, deps: Deps):
-    """Входная точка для просмотра топа ASIC из главного меню."""
-    await call.answer()
-    await state.set_state(AsicExplorerStates.showing_top)
-    await state.update_data(page=1)
-    await show_top_asics_page(call, state, deps)
+def _norm_symbol(s: str) -> str:
+    return s.strip().upper()
 
 
-@router.callback_query(AsicCallback.filter(F.action == "page"), AsicExplorerStates.showing_top)
-async def top_asics_paginator(call: CallbackQuery, state: FSMContext, deps: Deps, callback_data: AsicCallback):
-    """Обрабатывает пагинацию и возврат к списку ASIC."""
-    await call.answer()
-    page = callback_data.page if callback_data.page is not None else 1
-    await state.update_data(page=page)
-    await show_top_asics_page(call, state, deps)
-
-
-@router.callback_query(AsicCallback.filter(F.action == "passport"), AsicExplorerStates.showing_top)
-async def asic_passport_handler(call: CallbackQuery, state: FSMContext, deps: Deps, callback_data: AsicCallback):
-    """Отображает паспорт ASIC-майнера."""
-    await call.answer()
-    normalized_name = callback_data.asic_id
-
-    if not normalized_name:
-        logger.warning("Получен passport callback без asic_id.")
-        return
-
-    fsm_data = await state.get_data()
-    page = fsm_data.get("page", 1)
-
-    user_profile, _ = await deps.user_service.get_or_create_user(call.from_user)
-    asic = await deps.asic_service.find_asic_by_normalized_name(normalized_name, user_profile.electricity_cost)
-
-    if not asic:
-        await call.answer("😕 Модель не найдена в базе.", show_alert=True)
-        return
-
-    await state.set_state(AsicExplorerStates.showing_passport)
-    text = format_asic_passport(asic, user_profile.electricity_cost)
-    await call.message.edit_text(text, reply_markup=get_asic_passport_keyboard(page))
-
-
-@router.callback_query(AsicCallback.filter(F.action == "set_cost"), AsicExplorerStates.showing_top)
-async def prompt_for_electricity_cost(call: CallbackQuery, state: FSMContext):
-    """Запрашивает у пользователя стоимость электроэнергии."""
-    await state.set_state(AsicExplorerStates.prompt_electricity_cost)
-    await call.answer()
-    await call.message.edit_text(
-        "💡 <b>Введите стоимость 1 кВт·ч в USD.</b>\n\n"
-        "Например: <code>0.05</code> (это 5 центов). "
-        "Эта цена будет сохранена в вашем профиле для всех будущих расчетов.",
-        reply_markup=None
-    )
-
-
-@router.message(AsicExplorerStates.prompt_electricity_cost)
-async def process_electricity_cost(message: Message, state: FSMContext, deps: Deps):
-    """Обрабатывает введенную стоимость и обновляет список."""
+@router.message(Command("ask"))
+async def cmd_ask(message: Message, deps) -> None:
+    """Обработчик команды /ask для вопросов к AI"""
     try:
-        cost_str = message.text.replace(',', '.').strip()
-        cost = float(cost_str)
-        if not (0 <= cost < 1):
-            raise ValueError("Cost must be a positive number less than 1.")
-    except (ValueError, TypeError):
-        await message.reply("❌ <b>Ошибка.</b> Введите корректное число, например: <code>0.05</code>")
+        # Получаем текст после команды
+        command_text = message.text or ""
+        question = command_text.replace("/ask", "", 1).strip()
+        
+        if not question:
+            await message.answer(
+                "💡 <b>Как использовать /ask:</b>\n\n"
+                "Просто напишите вопрос после команды:\n"
+                "<code>/ask Что такое биткоин?</code>\n\n"
+                "Я отвечу на любые вопросы о криптовалютах! 🤖",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Отправляем индикатор "печатает"
+        await message.bot.send_chat_action(message.chat.id, "typing")
+        
+        # Получаем AI сервис
+        ai_service = getattr(deps, "ai_content_service", None)
+        if not ai_service:
+            await message.answer(
+                "❌ AI сервис временно недоступен. Попробуйте позже.",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Генерируем ответ
+        response = await ai_service.generate_answer(
+            question=question,
+            context="Ты - помощник по криптовалютам. Отвечай кратко и понятно."
+        )
+        
+        if not response:
+            await message.answer(
+                "❌ Не удалось получить ответ. Попробуйте переформулировать вопрос.",
+                parse_mode="HTML"
+            )
+            return
+        
+        # Отправляем ответ
+        await message.answer(
+            f"🤖 <b>Ответ:</b>\n\n{response}",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        logger.exception(f"Error in /ask command: {e}")
+        await message.answer(
+            "❌ Произошла ошибка при обработке запроса. Попробуйте позже.",
+            parse_mode="HTML"
+        )
+
+
+@router.message()
+async def on_text(message: Message, deps) -> None:
+    text = (message.text or "").strip()
+
+    if text.lower() in ("news", "новости", "📰"):
+        from bot.handlers.public.news_handler import cmd_news
+        await cmd_news(message, deps)
         return
 
-    user = await deps.user_service.get_user(message.from_user.id)
-    if user:
-        user.electricity_cost = cost
-        await deps.user_service.save_user(user)
+    m = _PAIR_RE.match(text)
+    if not m:
+        return
 
-    await message.answer(f"✅ Ваша цена электроэнергии <b>${cost:.4f}/кВт·ч</b> сохранена! Пересчитываю топ...")
-    await show_top_asics_page(message, state, deps)
+    symbol = _norm_symbol(m.group(1))
+    coin_id = SYMBOL_TO_COIN_ID.get(symbol)
+    
+    if not coin_id:
+        await message.answer(
+            f"❌ Неизвестная монета: {symbol}. Используйте /help для списка поддерживаемых монет.", 
+            parse_mode="HTML"
+        )
+        return
+
+    try:
+        p = await deps.price_service.get_price(coin_id)
+        if p is None:
+            await message.answer(
+                "❌ Не удалось получить цену. Попробуйте позже.", 
+                parse_mode="HTML"
+            )
+            return
+
+        await message.answer(
+            f"<b>{symbol}/USD</b>: <code>${p:,.2f}</code>", 
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.error(f"Error getting price for {symbol}: {e}")
+        await message.answer(
+            "❌ Ошибка получения цены. Попробуйте позже.", 
+            parse_mode="HTML"
+        )
