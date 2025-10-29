@@ -1,242 +1,110 @@
-# ======================================================================================
-# File: bot/handlers/menu_handler.py
-# Version: "Distinguished Engineer" — ИСПРАВЛЕНО (28.10.2025)
-# Description:
-#   /menu и инлайн-меню с быстрыми действиями: цены, новости, справка.
-# ИСПРАВЛЕНО: parse_mode="HTML" заменён на ParseMode.HTML (enum)
-# ======================================================================================
-
+# src/bot/handlers/public/menu_handler.py
 from __future__ import annotations
-
-import asyncio
-from typing import Any, Optional
 
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.enums import ParseMode  # ← ДОБАВЛЕНО
+from aiogram.enums import ParseMode
+from loguru import logger
 
-# ИСПРАВЛЕНО: Импорт теперь указывает на правильный файл `keyboards.py`
 from bot.keyboards.keyboards import get_main_menu_keyboard
+from bot.keyboards.callback_factories import PriceCallback, NewsCallback
 
 router = Router(name="menu_public")
 
 
-def _menu_kb() -> InlineKeyboardMarkup:
-    rows = [
+def get_quick_actions_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура быстрых действий"""
+    buttons = [
         [
-            InlineKeyboardButton(text="💱 Цена BTC", callback_data="menu:price:BTC:USDT"),
-            InlineKeyboardButton(text="📰 Новости", callback_data="menu:news"),
+            InlineKeyboardButton(
+                text="💱 Цена BTC",
+                callback_data=PriceCallback(action="show", coin_id="bitcoin").pack()
+            ),
+            InlineKeyboardButton(
+                text="📰 Новости",
+                callback_data=NewsCallback(action="sources", source_key=None).pack()
+            ),
         ],
         [
             InlineKeyboardButton(text="❓ Справка", callback_data="menu:help"),
         ],
     ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
-# ---------------------------- helpers (fallbacks) ----------------------------
-
-async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
-    if not obj or not hasattr(obj, method):
-        return None
-    fn = getattr(obj, method)
-    try:
-        res = fn(*args, **kwargs)
-        if asyncio.iscoroutine(res):
-            res = await res
-        return res
-    except Exception:
-        return None
-
-
-async def _get_price_any(deps, symbol: str, quote: str) -> Optional[float]:
-    """
-    Универсальный фетч цены: пробует популярные сигнатуры PriceService/MarketDataService,
-    умеет маппить тикер -> coin_id через CoinListService.
-    """
-    symbol_u, quote_u = symbol.upper(), quote.upper()
-    svc_candidates = [
-        getattr(deps, "price_service", None),
-        getattr(deps, "market_data_service", None),
-    ]
-    tries = [
-        (("get_price",), {"symbol": symbol_u, "vs": quote_u}),
-        (("get_price",), {"ticker": symbol_u, "vs": quote_u}),
-        (("get_spot", "spot", "price"), {"symbol": symbol_u, "vs": quote_u}),
-        (("get_ticker", "ticker"), {"symbol": symbol_u}),
-        (("fetch_price", "fetch_spot"), {"symbol": symbol_u, "vs": quote_u}),
-        (("get_pair",), {"pair": f"{symbol_u}{quote_u}"}),
-    ]
-    for svc in svc_candidates:
-        for names, kw in tries:
-            for name in names:
-                val = await _try_call(svc, name, **kw)
-                if isinstance(val, (int, float)):
-                    return float(val)
-                if isinstance(val, dict):
-                    for k in ("price", "spot", "last", "close", "value"):
-                        v = val.get(k)
-                        if isinstance(v, (int, float)):
-                            return float(v)
-                    cell = (val.get(symbol_u) or val.get(symbol_u.lower()))
-                    if isinstance(cell, dict):
-                        v = cell.get(quote_u) or cell.get(quote_u.lower())
-                        if isinstance(v, (int, float)):
-                            return float(v)
-
-    # Через id
-    cls = getattr(deps, "coin_list_service", None)
-    mds = getattr(deps, "market_data_service", None)
-    if cls and mds:
-        # популярные методы маппинга тикера -> coin_id
-        id_methods = ("find_coin_id", "get_id_by_ticker", "get_id_by_symbol", "resolve_id", "by_ticker")
-        coin_id = None
-        for m in id_methods:
-            coin_id = await _try_call(cls, m, symbol_u)
-            if isinstance(coin_id, str) and coin_id:
-                break
-        if isinstance(coin_id, str) and coin_id:
-            # популярные методы по id
-            for name in ("get_price_by_id", "price_by_id", "get_spot_by_id", "fetch_price_by_id"):
-                val = await _try_call(mds, name, coin_id=coin_id, vs=quote_u)
-                if isinstance(val, (int, float)):
-                    return float(val)
-                if isinstance(val, dict):
-                    v = (val.get("price") or val.get("spot") or val.get("last") or
-                         (val.get(coin_id) if isinstance(val.get(coin_id), (int, float)) else None))
-                    if isinstance(v, (int, float)):
-                        return float(v)
-
-    return None
-
-
-def _fmt_price_local(p: float) -> str:
-    if p >= 1000:
-        return f"{p:,.2f}".replace(",", " ")
-    if p >= 1:
-        return f"{p:.2f}"
-    if p >= 0.01:
-        return f"{p:.4f}"
-    return f"{p:.8f}".rstrip("0").rstrip(".")
-
-
-# -------------------------------- handlers -----------------------------------
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
-    """
-    Обработчик команды /menu.
-    
-    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
-    """
-    # Большое основное меню
+    """Обработчик команды /menu - показывает главное меню и быстрые действия"""
+    # Главное меню
     await message.answer(
-        "<b>Главное меню</b>",
-        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
+        "<b>🎮 Главное меню</b>\n\nВыберите интересующий раздел:",
+        parse_mode=ParseMode.HTML,
         reply_markup=get_main_menu_keyboard()
     )
-    # Быстрые кнопки под вторым сообщением
+    
+    # Быстрые действия
     await message.answer(
-        "Быстрые действия:",
-        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
-        reply_markup=_menu_kb()
+        "⚡ <b>Быстрые действия:</b>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_quick_actions_keyboard()
     )
 
 
 @router.callback_query(F.data == "menu:open")
 async def cb_open(call: CallbackQuery) -> None:
-    """
-    Открытие меню через callback.
-    
-    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
-    """
+    """Открытие главного меню через callback"""
     await call.answer()
-    await call.message.edit_text(  # type: ignore[union-attr]
-        "<b>Главное меню</b>",
-        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
-        reply_markup=_menu_kb()
-    )
-
-
-@router.callback_query(F.data.startswith("menu:price:"))
-async def cb_price_shortcut(call: CallbackQuery, deps) -> None:
-    """
-    Быстрый показ цены через callback.
     
-    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
-    """
-    await call.answer()
-    parts = (call.data or "").split(":")
-    # ожидаем menu:price:SYMBOL:QUOTE
-    if len(parts) < 4:
-        await call.message.answer(  # type: ignore[union-attr]
-            "Некорректный запрос цены.",
-            parse_mode=ParseMode.HTML  # ← ИСПРАВЛЕНО
-        )
-        return
-    _, _, symbol, quote = parts[:4]
-    symbol = (symbol or "BTC").upper()
-    quote = (quote or "USDT").upper()
-
-    price = await _get_price_any(deps, symbol, quote)
-    if price is None:
-        await call.message.answer(  # type: ignore[union-attr]
-            "⚠️ Нет данных по цене сейчас. Повторите позже.",
-            parse_mode=ParseMode.HTML  # ← ИСПРАВЛЕНО
-        )
-        return
-
     try:
-        from bot.handlers.price_handler import _fmt_price as _fmt  # type: ignore
-        price_text = _fmt(price)
-    except Exception:
-        price_text = _fmt_price_local(price)
-
-    text = f"<b>{symbol}/{quote}</b>: <code>{price_text}</code>"
-    await call.message.answer(  # type: ignore[union-attr]
-        text,
-        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
-        disable_web_page_preview=True
-    )
-
-
-@router.callback_query(F.data == "menu:news")
-async def cb_news_shortcut(call: CallbackQuery, deps) -> None:
-    """
-    Показ новостей через callback.
-    
-    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
-    """
-    await call.answer()
-    try:
-        from bot.handlers.news_handler import _get_items, _render  # type: ignore
-        items = await _get_items(deps)
-        text = _render(items, page=0)
-    except Exception:
-        text = "Пока новостей нет."
-    await call.message.answer(  # type: ignore[union-attr]
-        text,
-        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
-        disable_web_page_preview=True
-    )
+        await call.message.edit_text(
+            "<b>🎮 Главное меню</b>\n\nВыберите интересующий раздел:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Error editing menu message: {e}")
+        await call.message.answer(
+            "<b>🎮 Главное меню</b>\n\nВыберите интересующий раздел:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard()
+        )
 
 
 @router.callback_query(F.data == "menu:help")
 async def cb_help_shortcut(call: CallbackQuery) -> None:
-    """
-    Показ справки через callback.
-    
-    ИСПРАВЛЕНО: parse_mode="HTML" → ParseMode.HTML
-    """
+    """Показ справки через callback из быстрых действий"""
     await call.answer()
-    try:
-        from bot.handlers.help_handler import HELP_TEXT  # type: ignore
-        text = HELP_TEXT
-    except Exception:
-        text = "<b>Справка</b>\n/menu — главное меню\n/price — цена\n/news — новости"
-    await call.message.answer(  # type: ignore[union-attr]
-        text,
-        parse_mode=ParseMode.HTML,  # ← ИСПРАВЛЕНО
-        disable_web_page_preview=True
+    
+    help_text = (
+        "<b>📖 Справка по боту</b>\n\n"
+        "<b>Основные команды:</b>\n"
+        "/start - Перезапустить бота\n"
+        "/menu - Главное меню\n"
+        "/game - Майнинг-игра\n"
+        "/price - Цены криптовалют\n"
+        "/news - Крипто-новости\n"
+        "/help - Подробная справка\n\n"
+        "<b>Разделы меню:</b>\n"
+        "📈 Курс - Актуальные цены криптовалют\n"
+        "🏆 Топ ASIC - Лучшие майнеры\n"
+        "🕹 Игра - Майнинг-симулятор\n"
+        "📰 Новости - Крипто-новости\n"
+        "🧮 Калькулятор - Расчёт доходности\n"
+        "🛒 Рынок - Покупка/продажа\n"
+        "🧭 Центр - Обучение\n"
+        "❓ Викторина - Проверка знаний\n\n"
+        "Нужна помощь? Напишите /support"
     )
+    
+    try:
+        await call.message.edit_text(
+            help_text,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Error editing help message: {e}")
+        await call.message.answer(
+            help_text,
+            parse_mode=ParseMode.HTML
+        )
