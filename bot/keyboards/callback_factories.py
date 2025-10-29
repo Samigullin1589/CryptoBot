@@ -1,9 +1,4 @@
-# =============================================================================
-# Файл: src/bot/keyboards/callback_factories.py
-# Версия: "Distinguished Engineer" — ПРОДАКШН-СБОРКА (23 августа 2025)
-# Описание: Единые, строго типизированные фабрики CallbackData для всех модулей.
-# =============================================================================
-
+# src/bot/keyboards/callback_factories.py
 from typing import Optional
 from aiogram.filters.callback_data import CallbackData
 
@@ -35,7 +30,7 @@ class ThreatCallback(CallbackData, prefix="threat"):
 
 class PriceCallback(CallbackData, prefix="price"):
     action: str
-    coin_id: str
+    coin_id: Optional[str] = None  # ← ИСПРАВЛЕНО: сделано опциональным
 
 class AsicCallback(CallbackData, prefix="asic"):
     action: str
@@ -65,10 +60,7 @@ class CryptoCenterCallback(CallbackData, prefix="crypto_center"):
 class OnboardingCallback(CallbackData, prefix="onb"):
     action: str
 
-# --- ИСПРАВЛЕНИЕ: Добавлен недостающий класс PaginatorCallback ---
-# Причина: Логи показывали падение бота из-за невозможности импортировать этот класс.
-# Его добавление напрямую устраняет ошибку ImportError при запуске.
 class PaginatorCallback(CallbackData, prefix="paginator"):
-    action: str  # Например, "next" или "prev"
+    action: str
     page: int
-    module: str  # Идентификатор модуля, для которого используется пагинация (например, "news", "market")
+    module: str
