@@ -1,10 +1,11 @@
 # =============================================================================
 # Файл: bot/main.py
-# Версия: PRODUCTION-READY (28.10.2025) - Distinguished Engineer
-# ✅ ИСПРАВЛЕНО: game_service → mining_game_service (строка 41)
-# ✅ ИСПРАВЛЕНО: Graceful shutdown без ошибок NoneType
-# ✅ ДОБАВЛЕНО: Health check endpoint для Render
-# ✅ ДОБАВЛЕНО: Правильная обработка сигналов SIGTERM/SIGINT
+# Версия: PRODUCTION-READY (29.10.2025) - Distinguished Engineer
+# Описание:
+#   • ИСПРАВЛЕНО: Правильная регистрация handlers (public_router теперь не пустой)
+#   • ИСПРАВЛЕНО: Принудительное удаление webhook в polling режиме
+#   • ДОБАВЛЕНО: Диагностика зарегистрированных handlers
+#   • ДОБАВЛЕНО: Graceful shutdown без ошибок NoneType
 # =============================================================================
 
 import asyncio
@@ -18,58 +19,19 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from dependency_injector import containers, providers
 from loguru import logger
 
 from bot.config.settings import settings
 from bot.utils.logging_setup import setup_logging
+from bot.containers import Container
 
 # Глобальные переменные для управления жизненным циклом
 bot: Optional[Bot] = None
 dp: Optional[Dispatcher] = None
-container: Optional[containers.DeclarativeContainer] = None
+container: Optional[Container] = None
 app: Optional[web.Application] = None
 runner: Optional[web.AppRunner] = None
 shutdown_event: Optional[asyncio.Event] = None
-
-
-# =============================================================================
-# DI CONTAINER
-# =============================================================================
-
-class Container(containers.DeclarativeContainer):
-    """
-    Dependency Injection контейнер для всех сервисов.
-    ✅ ИСПРАВЛЕНО: bot.services.game_service → bot.services.mining_game_service
-    """
-    wiring_config = containers.WiringConfiguration(
-        modules=[
-            "bot.handlers.public",
-            "bot.handlers.admin",
-            "bot.services.ai_content_service",
-            "bot.services.security_service",
-            "bot.services.mining_game_service",  # ✅ ИСПРАВЛЕНО! Было: game_service
-            "bot.services.news_service",
-            "bot.services.price_service",
-            "bot.services.market_data_service",
-        ]
-    )
-    
-    config = providers.Singleton(lambda: settings)
-    
-    # Redis (используется многими сервисами)
-    redis_client = providers.Singleton(
-        lambda: None  # Инициализируется в setup_dependencies
-    )
-    
-    # Bot и Dispatcher
-    bot_instance = providers.Singleton(
-        lambda: None  # Инициализируется в setup_bot
-    )
-    
-    dispatcher = providers.Singleton(
-        lambda: None  # Инициализируется в setup_bot
-    )
 
 
 # =============================================================================
@@ -79,20 +41,16 @@ class Container(containers.DeclarativeContainer):
 async def setup_dependencies() -> None:
     """
     Инициализация всех зависимостей (Redis, БД и т.д.).
-    ✅ ДОБАВЛЕНО: Проверка на None перед await
     """
     logger.info("🔧 Initializing dependencies...")
     
     try:
-        # Redis
-        import redis.asyncio as aioredis
-        redis_client = await aioredis.from_url(
-            settings.REDIS_URL,
-            encoding="utf-8",
-            decode_responses=True
-        )
-        await redis_client.ping()
-        container.redis_client.override(redis_client)
+        # Инициализируем ресурсы контейнера
+        await container.init_resources()
+        
+        # Проверяем Redis
+        redis = container.redis_client()
+        await redis.ping()
         logger.info("✅ Redis connected successfully")
         
     except Exception as e:
@@ -103,25 +61,17 @@ async def setup_dependencies() -> None:
 async def setup_bot() -> tuple[Bot, Dispatcher]:
     """
     Создание и настройка Bot и Dispatcher.
-    ✅ ДОБАВЛЕНО: parse_mode=HTML по умолчанию
     
     Returns:
         Кортеж (Bot, Dispatcher)
     """
     logger.info("🤖 Setting up bot and dispatcher...")
     
-    # Создаём бота с parse_mode=HTML
-    bot_instance = Bot(
-        token=settings.BOT_TOKEN.get_secret_value(),
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)  # ✅ КРИТИЧНО!
-    )
+    # Получаем бота из контейнера
+    bot_instance = container.bot()
     
     # Создаём диспетчер
     dispatcher = Dispatcher()
-    
-    # Регистрируем в контейнере
-    container.bot_instance.override(bot_instance)
-    container.dispatcher.override(dispatcher)
     
     # Регистрируем обработчики
     await register_handlers(dispatcher)
@@ -146,12 +96,26 @@ async def register_handlers(dp: Dispatcher) -> None:
         from bot.handlers.public import public_router
         from bot.handlers.admin import admin_router
         
+        # Регистрируем роутеры
         dp.include_router(public_router)
         dp.include_router(admin_router)
         
+        # ДИАГНОСТИКА: Проверяем сколько handlers зарегистрировано
+        logger.info(f"✅ Public router: {len(public_router.sub_routers)} sub-routers registered")
+        logger.info(f"✅ Admin router registered")
+        
+        # Дополнительная диагностика всех handlers
+        total_handlers = 0
+        for router in [public_router, admin_router]:
+            for observer in router.observers.values():
+                total_handlers += len(observer)
+        
+        logger.info(f"✅ Total handlers registered: {total_handlers}")
         logger.info("✅ Handlers registered successfully")
+        
     except ImportError as e:
-        logger.warning(f"⚠️ Some handlers not found: {e}")
+        logger.error(f"❌ Failed to import handlers: {e}")
+        raise
 
 
 async def register_middlewares(dp: Dispatcher) -> None:
@@ -185,16 +149,26 @@ async def on_startup() -> None:
     # Инициализация зависимостей
     await setup_dependencies()
     
+    # КРИТИЧНО: Принудительно удаляем webhook перед запуском polling
+    logger.info("🔄 Removing any existing webhook...")
+    try:
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.warning(f"⚠️ Found existing webhook: {webhook_info.url}")
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("✅ Webhook removed")
+        else:
+            logger.info("✅ No webhook found")
+    except Exception as e:
+        logger.error(f"❌ Error checking/removing webhook: {e}")
+    
     # Настройка webhook или polling
     if settings.IS_WEB_PROCESS:
         webhook_url = await get_webhook_url()
         if not webhook_url:
             raise ValueError("Webhook URL not configured for web process")
         
-        # Удаляем старый webhook
-        await bot.delete_webhook(drop_pending_updates=True)
-        
-        # Устанавливаем новый
+        # Устанавливаем webhook
         webhook_info = await bot.set_webhook(
             url=webhook_url,
             drop_pending_updates=True,
@@ -204,7 +178,7 @@ async def on_startup() -> None:
         logger.info(f"✅ Webhook set: {webhook_url}")
         logger.info(f"📊 Webhook info: {webhook_info}")
     else:
-        # Удаляем webhook для polling
+        # Polling mode - еще раз убедимся что webhook удален
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("✅ Polling mode enabled")
     
@@ -219,7 +193,8 @@ async def on_startup() -> None:
                 settings.ADMIN_CHAT_ID,
                 "🤖 <b>Bot Started</b>\n\n"
                 f"Mode: {'Webhook' if settings.IS_WEB_PROCESS else 'Polling'}\n"
-                f"Time: {asyncio.get_event_loop().time():.2f}",
+                f"Username: @{bot_user.username}\n"
+                f"ID: {bot_user.id}",
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
@@ -229,7 +204,6 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     """
     Действия при остановке бота.
-    ✅ ИСПРАВЛЕНО: Проверки на None перед операциями
     """
     logger.info("🛑 Shutting down bot...")
     
@@ -252,15 +226,13 @@ async def on_shutdown() -> None:
         except Exception as e:
             logger.warning(f"⚠️ Error removing webhook: {e}")
     
-    # Закрываем Redis
+    # Закрываем ресурсы контейнера
     if container is not None:
-        redis = container.redis_client()
-        if redis is not None:  # ✅ Проверка на None!
-            try:
-                await redis.close()
-                logger.info("✅ Redis connection closed")
-            except Exception as e:
-                logger.warning(f"⚠️ Error closing Redis: {e}")
+        try:
+            await container.shutdown_resources()
+            logger.info("✅ Container resources closed")
+        except Exception as e:
+            logger.warning(f"⚠️ Error closing container resources: {e}")
     
     logger.info("✅ Shutdown complete")
 
@@ -387,6 +359,16 @@ async def start_polling() -> None:
     logger.info("🔄 Starting polling mode...")
     
     try:
+        # КРИТИЧНО: Еще раз проверяем что webhook удален
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url:
+            logger.warning(f"⚠️ Webhook still exists: {webhook_info.url}, removing...")
+            await bot.delete_webhook(drop_pending_updates=True)
+            # Ждем немного
+            await asyncio.sleep(1)
+        
+        logger.info("✅ Starting polling for updates...")
+        
         await dp.start_polling(
             bot,
             allowed_updates=dp.resolve_used_update_types(),
@@ -420,7 +402,6 @@ def handle_signal(signum: int) -> None:
 async def cleanup() -> None:
     """
     Очистка всех ресурсов.
-    ✅ ИСПРАВЛЕНО: Проверки на None и awaitable перед await
     """
     logger.info("🧹 Cleaning up resources...")
     
@@ -483,6 +464,10 @@ async def main() -> None:
     try:
         # Инициализируем DI контейнер
         container = Container()
+        container.wire(
+            modules=[__name__],
+            packages=["bot.handlers", "bot.middlewares"]
+        )
         
         # Настраиваем бота
         bot, dp = await setup_bot()
