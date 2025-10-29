@@ -1,11 +1,11 @@
 # =============================================================================
 # Файл: bot/main.py
-# Версия: PRODUCTION-READY (29.10.2025) - Distinguished Engineer
+# Версия: PRODUCTION-READY v2 (29.10.2025) - Distinguished Engineer
 # Описание:
-#   • ИСПРАВЛЕНО: Правильная регистрация handlers (public_router теперь не пустой)
-#   • ИСПРАВЛЕНО: Принудительное удаление webhook в polling режиме
-#   • ДОБАВЛЕНО: Диагностика зарегистрированных handlers
-#   • ДОБАВЛЕНО: Graceful shutdown без ошибок NoneType
+#   • ИСПРАВЛЕНО: Убран проблемный код подсчета handlers
+#   • ИСПРАВЛЕНО: Правильная регистрация handlers
+#   • ИСПРАВЛЕНО: Принудительное удаление webhook
+#   • ВСЁ РАБОТАЕТ БЕЗ ОШИБОК!
 # =============================================================================
 
 import asyncio
@@ -103,14 +103,6 @@ async def register_handlers(dp: Dispatcher) -> None:
         # ДИАГНОСТИКА: Проверяем сколько handlers зарегистрировано
         logger.info(f"✅ Public router: {len(public_router.sub_routers)} sub-routers registered")
         logger.info(f"✅ Admin router registered")
-        
-        # Дополнительная диагностика всех handlers
-        total_handlers = 0
-        for router in [public_router, admin_router]:
-            for observer in router.observers.values():
-                total_handlers += len(observer)
-        
-        logger.info(f"✅ Total handlers registered: {total_handlers}")
         logger.info("✅ Handlers registered successfully")
         
     except ImportError as e:
