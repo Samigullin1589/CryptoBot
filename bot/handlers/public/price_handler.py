@@ -12,7 +12,6 @@ from bot.keyboards.callback_factories import PriceCallback
 
 router = Router(name="price_public")
 
-# Маппинг символов в coin_id
 SYMBOL_TO_COIN_ID = {
     "BTC": "bitcoin",
     "ETH": "ethereum",
@@ -111,8 +110,6 @@ async def price_show_handler(call: CallbackQuery, deps, callback_data: PriceCall
     await call.answer()
     
     coin_id = callback_data.coin_id
-    
-    # Находим символ по coin_id
     symbol = None
     for sym, cid in SYMBOL_TO_COIN_ID.items():
         if cid == coin_id:
@@ -131,11 +128,7 @@ async def price_show_handler(call: CallbackQuery, deps, callback_data: PriceCall
     text = f"💰 <b>{symbol}/USD</b>\n\n<code>${_fmt_price(price)}</code>"
     
     try:
-        await call.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=get_price_keyboard()
-        )
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_price_keyboard())
     except Exception as e:
         logger.error(f"Error editing message: {e}")
 
