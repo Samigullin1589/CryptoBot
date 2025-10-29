@@ -1,9 +1,11 @@
+# bot/config/settings.py
 # =================================================================================
 # bot/config/settings.py
 # Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
 # Описание:
 #   • ИСПРАВЛЕНО: Добавлены недостающие поля в ThreatFilterConfig
 #   • ИСПРАВЛЕНО: Добавлены недостающие атрибуты в AIConfig
+#   • ИСПРАВЛЕНО: Добавлено cache_ttl_seconds в AsicServiceConfig
 #   • ИСПРАВЛЕНО: Тип REDIS_URL остается str для совместимости с DI
 # =================================================================================
 
@@ -154,6 +156,7 @@ class AsicServiceConfig(BaseModel):
     fallback_file_path: str = "data/fallback_asics.json"
     merge_score_cutoff: int = 90
     enrich_score_cutoff: int = 95
+    cache_ttl_seconds: int = 21600  # ✅ ИСПРАВЛЕНО: 6 часов TTL для кэша
 
 
 class CryptoCenterServiceConfig(BaseModel):
