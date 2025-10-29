@@ -1,17 +1,36 @@
 # src/bot/handlers/public/price_handler.py
 from __future__ import annotations
 
-import asyncio
-from typing import List, Optional, Any
+from typing import Optional
 
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from loguru import logger
 
-from bot.keyboards.callback_factories import MenuCallback
+from bot.keyboards.callback_factories import PriceCallback
 
 router = Router(name="price_public")
+
+# Маппинг символов в coin_id
+SYMBOL_TO_COIN_ID = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "USDT": "tether",
+    "BNB": "binancecoin",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "TRX": "tron",
+    "MATIC": "matic-network",
+    "LTC": "litecoin",
+    "AVAX": "avalanche-2",
+    "LINK": "chainlink",
+    "UNI": "uniswap",
+    "ATOM": "cosmos",
+}
 
 
 def _fmt_price(p: Optional[float]) -> str:
@@ -26,168 +45,103 @@ def _fmt_price(p: Optional[float]) -> str:
     return f"{p:.8f}".rstrip("0").rstrip(".")
 
 
-async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
-    if not obj or not hasattr(obj, method):
-        return None
-    fn = getattr(obj, method)
-    try:
-        res = fn(*args, **kwargs)
-        if asyncio.iscoroutine(res):
-            res = await res
-        return res
-    except Exception as e:
-        logger.debug(f"Failed to call {method}: {e}")
-        return None
-
-
-async def _get_price_any(deps, symbol: str, quote: str = "USD") -> Optional[float]:
-    """Универсальный метод получения цены из разных сервисов"""
-    symbol_u, quote_u = symbol.upper(), quote.upper()
-    
-    # Маппинг символов в coin_id для CoinGecko
-    SYMBOL_TO_COIN_ID = {
-        "BTC": "bitcoin",
-        "ETH": "ethereum",
-        "USDT": "tether",
-        "BNB": "binancecoin",
-        "SOL": "solana",
-        "XRP": "ripple",
-        "ADA": "cardano",
-        "DOGE": "dogecoin",
-        "DOT": "polkadot",
-        "TRX": "tron",
-        "MATIC": "matic-network",
-        "LTC": "litecoin",
-        "AVAX": "avalanche-2",
-        "LINK": "chainlink",
-        "UNI": "uniswap",
-        "ATOM": "cosmos",
-    }
-    
-    # Пробуем через price_service
-    price_service = getattr(deps, "price_service", None)
-    if price_service:
-        coin_id = SYMBOL_TO_COIN_ID.get(symbol_u)
-        if coin_id:
-            try:
-                price = await price_service.get_price(coin_id)
-                if price is not None:
-                    return float(price)
-            except Exception as e:
-                logger.debug(f"price_service.get_price failed for {coin_id}: {e}")
-    
-    # Пробуем через market_data_service
-    market_service = getattr(deps, "market_data_service", None)
-    if market_service:
-        coin_id = SYMBOL_TO_COIN_ID.get(symbol_u)
-        if coin_id:
-            try:
-                prices = await market_service.get_prices([coin_id])
-                if prices and coin_id in prices:
-                    price = prices[coin_id]
-                    if price is not None:
-                        return float(price)
-            except Exception as e:
-                logger.debug(f"market_data_service.get_prices failed for {coin_id}: {e}")
-    
-    return None
-
-
-def _kb_top(symbols: List[str], quote: str) -> InlineKeyboardMarkup:
-    rows = []
+def get_price_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура с топовыми криптовалютами"""
+    buttons = []
     row = []
-    for i, s in enumerate(symbols[:12], start=1):
-        row.append(InlineKeyboardButton(text=s, callback_data=f"price:{s}:{quote}"))
-        if i % 4 == 0:
-            rows.append(row)
+    symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "DOT", "TRX", "MATIC", "LTC", "AVAX"]
+    
+    for i, symbol in enumerate(symbols, 1):
+        coin_id = SYMBOL_TO_COIN_ID.get(symbol, symbol.lower())
+        row.append(InlineKeyboardButton(
+            text=symbol,
+            callback_data=PriceCallback(action="show", coin_id=coin_id).pack()
+        ))
+        if i % 3 == 0:
+            buttons.append(row)
             row = []
+    
     if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text=f"🔄 Обновить", callback_data=f"price:refresh:{quote}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        buttons.append(row)
+    
+    buttons.append([InlineKeyboardButton(
+        text="🔄 Обновить",
+        callback_data=PriceCallback(action="refresh", coin_id="all").pack()
+    )])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-async def show_price_menu(message_or_call, deps, quote: str = "USD"):
-    """Показывает меню с ценами топовых криптовалют"""
-    top_symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "DOT", "TRX", "MATIC", "LTC", "AVAX"]
-    
-    text = f"💰 <b>Цены криптовалют в {quote}</b>\n\nВыберите монету для просмотра цены:"
-    keyboard = _kb_top(top_symbols, quote)
-    
-    if isinstance(message_or_call, CallbackQuery):
-        try:
-            await message_or_call.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
-        except Exception as e:
-            logger.error(f"Error editing message: {e}")
-            await message_or_call.message.answer(text, parse_mode="HTML", reply_markup=keyboard)
-    else:
-        await message_or_call.answer(text, parse_mode="HTML", reply_markup=keyboard)
+async def get_price_from_service(deps, coin_id: str) -> Optional[float]:
+    """Получает цену из price_service"""
+    try:
+        price_service = getattr(deps, "price_service", None)
+        if price_service:
+            price = await price_service.get_price(coin_id)
+            if price is not None:
+                return float(price)
+    except Exception as e:
+        logger.error(f"Error getting price for {coin_id}: {e}")
+    return None
 
 
 @router.message(Command("price"))
 async def cmd_price(message: Message, deps) -> None:
     """Обработчик команды /price"""
-    parts = (message.text or "").split()
-    
-    if len(parts) == 1:
-        # Просто /price - показываем меню
-        await show_price_menu(message, deps)
-        return
-    
-    symbol = parts[1].upper()
-    quote = parts[2].upper() if len(parts) >= 3 else "USD"
-
-    price = await _get_price_any(deps, symbol, quote)
-    if price is None:
-        await message.answer(f"❌ Не удалось получить цену {symbol}/{quote}. Попробуйте позже.")
-        return
-
-    text = f"<b>{symbol}/{quote}</b>: <code>{_fmt_price(price)}</code>"
-    top_symbols = ["BTC", "ETH", "BNB", "SOL", "XRP"]
-    await message.answer(text, parse_mode="HTML", reply_markup=_kb_top(top_symbols, quote))
+    text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
+    await message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
 
 
-@router.callback_query(MenuCallback.filter(F.action == "price"))
-async def menu_price_handler(call: CallbackQuery, deps) -> None:
-    """Обработчик кнопки 'Курс' из главного меню"""
+@router.callback_query(PriceCallback.filter(F.action == "open"))
+async def price_menu_handler(call: CallbackQuery, deps) -> None:
+    """Обработчик открытия меню цен из главного меню"""
     await call.answer()
-    await show_price_menu(call, deps)
+    text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
+    
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+    except Exception as e:
+        logger.error(f"Error editing message: {e}")
+        await call.message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
 
 
-@router.callback_query(F.data.startswith("price:"))
-async def cb_price(call: CallbackQuery, deps) -> None:
-    """Обработчик callback для выбора конкретной монеты"""
+@router.callback_query(PriceCallback.filter(F.action == "show"))
+async def price_show_handler(call: CallbackQuery, deps, callback_data: PriceCallback) -> None:
+    """Показывает цену конкретной монеты"""
     await call.answer()
     
-    if not call.data:
-        return
+    coin_id = callback_data.coin_id
     
-    parts = call.data.split(":")
+    # Находим символ по coin_id
+    symbol = None
+    for sym, cid in SYMBOL_TO_COIN_ID.items():
+        if cid == coin_id:
+            symbol = sym
+            break
     
-    if len(parts) < 2:
-        await call.answer("Некорректный запрос", show_alert=True)
-        return
-
-    if parts[1] == "refresh":
-        quote = parts[2].upper() if len(parts) > 2 else "USD"
-        await show_price_menu(call, deps, quote)
-        return
-
-    symbol = parts[1].upper()
-    quote = parts[2].upper() if len(parts) > 2 else "USD"
+    if not symbol:
+        symbol = coin_id.upper()
     
-    price = await _get_price_any(deps, symbol, quote)
+    price = await get_price_from_service(deps, coin_id)
+    
     if price is None:
         await call.answer(f"⚠️ Не удалось получить цену {symbol}", show_alert=True)
         return
     
-    text = f"💰 <b>{symbol}/{quote}</b>\n\n<code>${_fmt_price(price)}</code>"
+    text = f"💰 <b>{symbol}/USD</b>\n\n<code>${_fmt_price(price)}</code>"
     
     try:
         await call.message.edit_text(
-            text, 
-            parse_mode="HTML", 
-            reply_markup=call.message.reply_markup
+            text,
+            parse_mode="HTML",
+            reply_markup=get_price_keyboard()
         )
     except Exception as e:
-        logger.error(f"Error editing price message: {e}")
+        logger.error(f"Error editing message: {e}")
+
+
+@router.callback_query(PriceCallback.filter(F.action == "refresh"))
+async def price_refresh_handler(call: CallbackQuery, deps) -> None:
+    """Обновляет меню цен"""
+    await call.answer("🔄 Обновление...")
+    await price_menu_handler(call, deps)

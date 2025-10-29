@@ -1,8 +1,7 @@
 # src/bot/handlers/public/news_handler.py
 from __future__ import annotations
 
-import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from aiogram import Router, F
 from aiogram.filters import Command
@@ -10,117 +9,151 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.exceptions import TelegramBadRequest
 from loguru import logger
 
+from bot.keyboards.callback_factories import NewsCallback
+
 router = Router(name="news_public")
 
-PAGE_SIZE = 8
+PAGE_SIZE = 5
 
 
-def _page_kb(page: int) -> InlineKeyboardMarkup:
-    prev_btn = InlineKeyboardButton(text="⬅️ Назад", callback_data=f"news:page:{max(0, page-1)}")
-    next_btn = InlineKeyboardButton(text="Вперёд ➡️", callback_data=f"news:page:{page+1}")
-    refresh_btn = InlineKeyboardButton(text="🔄 Обновить", callback_data="news:refresh")
-    return InlineKeyboardMarkup(inline_keyboard=[[prev_btn, next_btn], [refresh_btn]])
+def get_news_keyboard(page: int = 0) -> InlineKeyboardMarkup:
+    """Клавиатура для навигации по новостям"""
+    buttons = []
+    
+    if page > 0:
+        buttons.append([
+            InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data=NewsCallback(action="page", source_key=str(page - 1)).pack()
+            ),
+            InlineKeyboardButton(
+                text="Вперёд ➡️",
+                callback_data=NewsCallback(action="page", source_key=str(page + 1)).pack()
+            )
+        ])
+    else:
+        buttons.append([
+            InlineKeyboardButton(
+                text="Вперёд ➡️",
+                callback_data=NewsCallback(action="page", source_key=str(page + 1)).pack()
+            )
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data=NewsCallback(action="refresh", source_key=None).pack()
+        )
+    ])
+    
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def _render(items: List[Dict[str, Any]], page: int) -> str:
+def render_news(articles: List[Any], page: int) -> str:
+    """Форматирует новости для отображения"""
+    if not articles:
+        return "📰 <b>Новости</b>\n\nПока новостей нет."
+    
     start = page * PAGE_SIZE
-    chunk = items[start : start + PAGE_SIZE]
+    chunk = articles[start:start + PAGE_SIZE]
+    
     if not chunk:
-        return "Пока новостей нет."
-    lines = [f"<b>📰 Крипто-новости — страница {page+1}</b>", ""]
-    for it in chunk:
-        title = (it.get("title") or it.get("headline") or "").strip()
-        url = (it.get("url") or it.get("link") or "").strip()
-        src = (it.get("src") or it.get("source") or "").strip()
+        return "📰 <b>Новости</b>\n\nБольше новостей нет."
+    
+    lines = [f"📰 <b>Крипто-новости — страница {page + 1}</b>\n"]
+    
+    for article in chunk:
+        if hasattr(article, 'title'):
+            title = article.title
+            url = article.url
+            source = article.source
+        else:
+            title = article.get('title', 'Без заголовка')
+            url = article.get('url', '')
+            source = article.get('source', '')
+        
         if url and title:
-            lines.append(f"• <a href=\"{url}\">{title}</a> <i>({src})</i>")
+            lines.append(f"• <a href=\"{url}\">{title}</a> <i>({source})</i>")
         elif title:
             lines.append(f"• {title}")
-    lines.append("")
-    lines.append(f"<i>Показано {len(chunk)} из {len(items)}.</i>")
+    
+    lines.append(f"\n<i>Показано {len(chunk)} из {len(articles)}</i>")
+    
     return "\n".join(lines)
 
 
-async def _try_call(obj: Any, method: str, *args, **kwargs) -> Optional[Any]:
-    if not obj or not hasattr(obj, method):
-        return None
-    fn = getattr(obj, method)
+async def get_news_articles(deps) -> List[Any]:
+    """Получает новости из news_service"""
     try:
-        res = fn(*args, **kwargs)
-        if asyncio.iscoroutine(res):
-            res = await res
-        return res
-    except Exception as e:
-        logger.debug(f"Failed to call {method}: {e}")
-        return None
-
-
-async def _get_items(deps) -> List[Dict[str, Any]]:
-    svc = getattr(deps, "news_service", None)
-    if not svc:
-        return []
-    
-    try:
-        data = await svc.get_all_latest_news(limit=50)
-        if data:
-            items: List[Dict[str, Any]] = []
-            for article in data:
-                if hasattr(article, 'model_dump'):
-                    items.append(article.model_dump())
-                elif isinstance(article, dict):
-                    items.append(article)
-            return items
+        news_service = getattr(deps, "news_service", None)
+        if news_service:
+            articles = await news_service.get_all_latest_news(limit=50)
+            return articles if articles else []
     except Exception as e:
         logger.error(f"Error getting news: {e}")
-    
     return []
 
 
 @router.message(Command("news"))
 async def cmd_news(message: Message, deps) -> None:
-    items = await _get_items(deps)
+    """Обработчик команды /news"""
+    articles = await get_news_articles(deps)
+    text = render_news(articles, 0)
     await message.answer(
-        _render(items, page=0),
+        text,
         parse_mode="HTML",
         disable_web_page_preview=True,
-        reply_markup=_page_kb(0),
+        reply_markup=get_news_keyboard(0)
     )
 
 
-@router.callback_query(F.data.startswith("news:"))
-async def cb_news(call: CallbackQuery, deps) -> None:
+@router.callback_query(NewsCallback.filter(F.action == "sources"))
+async def news_menu_handler(call: CallbackQuery, deps) -> None:
+    """Обработчик открытия меню новостей из главного меню"""
     await call.answer()
     
-    if not call.message:
-        return
+    articles = await get_news_articles(deps)
+    text = render_news(articles, 0)
     
-    data = (call.data or "").split(":")
-    items = await _get_items(deps)
-    page = 0
-
-    if len(data) >= 3 and data[1] == "page":
-        try:
-            page = max(0, int(data[2]))
-        except ValueError:
-            page = 0
-    elif len(data) >= 2 and data[1] == "refresh":
-        page = 0
-    
-    new_text = _render(items, page=page)
-    new_markup = _page_kb(page)
-    
-    # Проверяем, изменилось ли содержимое
     try:
         await call.message.edit_text(
-            new_text,
+            text,
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=new_markup,
+            reply_markup=get_news_keyboard(0)
         )
     except TelegramBadRequest as e:
-        if "message is not modified" in str(e):
-            # Сообщение не изменилось, это не ошибка
-            logger.debug("Message content unchanged, skipping edit")
-        else:
+        if "message is not modified" not in str(e):
             logger.error(f"Error editing message: {e}")
-            raise
+
+
+@router.callback_query(NewsCallback.filter(F.action == "page"))
+async def news_page_handler(call: CallbackQuery, deps, callback_data: NewsCallback) -> None:
+    """Обработчик пагинации новостей"""
+    await call.answer()
+    
+    try:
+        page = int(callback_data.source_key) if callback_data.source_key else 0
+    except (ValueError, TypeError):
+        page = 0
+    
+    articles = await get_news_articles(deps)
+    text = render_news(articles, page)
+    
+    try:
+        await call.message.edit_text(
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=get_news_keyboard(page)
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" not in str(e):
+            logger.error(f"Error editing message: {e}")
+
+
+@router.callback_query(NewsCallback.filter(F.action == "refresh"))
+async def news_refresh_handler(call: CallbackQuery, deps) -> None:
+    """Обновляет новости"""
+    await call.answer("🔄 Обновление...")
+    await news_menu_handler(call, deps)
