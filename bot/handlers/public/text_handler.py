@@ -40,7 +40,6 @@ def _norm_symbol(s: str) -> str:
 async def cmd_ask(message: Message, deps) -> None:
     """Обработчик команды /ask для вопросов к AI"""
     try:
-        # Получаем текст после команды
         command_text = message.text or ""
         question = command_text.replace("/ask", "", 1).strip()
         
@@ -54,10 +53,8 @@ async def cmd_ask(message: Message, deps) -> None:
             )
             return
         
-        # Отправляем индикатор "печатает"
         await message.bot.send_chat_action(message.chat.id, "typing")
         
-        # Получаем AI сервис
         ai_service = getattr(deps, "ai_content_service", None)
         if not ai_service:
             await message.answer(
@@ -66,20 +63,19 @@ async def cmd_ask(message: Message, deps) -> None:
             )
             return
         
-        # Генерируем ответ
-        response = await ai_service.generate_answer(
-            question=question,
-            context="Ты - помощник по криптовалютам. Отвечай кратко и понятно."
+        # Используем правильный метод из AIContentService
+        response = await ai_service.generate_text(
+            prompt=f"Ты - помощник по криптовалютам. Отвечай кратко и понятно на русском языке.\n\nВопрос: {question}",
+            use_flash=True
         )
         
-        if not response:
+        if not response or not response.strip():
             await message.answer(
                 "❌ Не удалось получить ответ. Попробуйте переформулировать вопрос.",
                 parse_mode="HTML"
             )
             return
         
-        # Отправляем ответ
         await message.answer(
             f"🤖 <b>Ответ:</b>\n\n{response}",
             parse_mode="HTML"
