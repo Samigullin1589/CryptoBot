@@ -45,10 +45,7 @@ async def setup_dependencies() -> None:
     logger.info("🔧 Initializing dependencies...")
     
     try:
-        # Инициализируем ресурсы контейнера
-        await container.init_resources()
-        
-        # Проверяем Redis
+        # Проверяем Redis (автоматически инициализирует ресурс)
         redis = container.redis_client()
         await redis.ping()
         logger.info("✅ Redis connected successfully")
@@ -218,13 +215,15 @@ async def on_shutdown() -> None:
         except Exception as e:
             logger.warning(f"⚠️ Error removing webhook: {e}")
     
-    # Закрываем ресурсы контейнера
+    # Закрываем Redis
     if container is not None:
         try:
-            await container.shutdown_resources()
-            logger.info("✅ Container resources closed")
+            redis = container.redis_client()
+            if redis is not None:
+                await redis.close()
+                logger.info("✅ Redis closed")
         except Exception as e:
-            logger.warning(f"⚠️ Error closing container resources: {e}")
+            logger.warning(f"⚠️ Error closing Redis: {e}")
     
     logger.info("✅ Shutdown complete")
 
