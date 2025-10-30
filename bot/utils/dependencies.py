@@ -1,14 +1,7 @@
-# =================================================================================
 # bot/utils/dependencies.py
-# Версия: PRODUCTION v3.0.0 (29.10.2025) - Distinguished Engineer
-# ✅ ИСПРАВЛЕНО: Совместимость с существующей архитектурой проекта
-# ✅ ИСПРАВЛЕНО: Использование @inject декоратора и Provide паттерна
-# ✅ ИСПРАВЛЕНО: Правильная работа с Resource провайдерами
-# =================================================================================
-
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from aiogram.types import TelegramObject
 from dependency_injector.wiring import Provide, inject
@@ -29,6 +22,7 @@ from bot.services.ai_content_service import AIContentService
 from bot.services.mining_service import MiningService
 from bot.services.security_service import SecurityService
 from bot.services.moderation_service import ModerationService
+from bot.services.coin_list_service import CoinListService
 from bot.config.settings import Settings
 from bot.utils.keys import KeyFactory
 
@@ -37,7 +31,6 @@ from bot.utils.keys import KeyFactory
 class Deps:
     """
     Контейнер для зависимостей, передаваемый в хэндлеры.
-    
     Все сервисы и ресурсы доступны через этот dataclass.
     """
     settings: Settings
@@ -57,6 +50,7 @@ class Deps:
     mining_service: MiningService
     security_service: SecurityService
     moderation_service: ModerationService
+    coin_list_service: CoinListService
 
 
 @inject
@@ -64,9 +58,8 @@ async def dependencies_middleware(
     handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
     event: TelegramObject,
     data: Dict[str, Any],
-    # ✅ ИСПРАВЛЕНО: Используем правильные имена из Container
     settings: Settings = Provide[Container.config],
-    redis: Redis = Provide[Container.redis_client],  # ✅ redis_client из Container
+    redis: Redis = Provide[Container.redis_client],
     admin_service: AdminService = Provide[Container.admin_service],
     user_service: UserService = Provide[Container.user_service],
     price_service: PriceService = Provide[Container.price_service],
@@ -81,17 +74,15 @@ async def dependencies_middleware(
     mining_service: MiningService = Provide[Container.mining_service],
     security_service: SecurityService = Provide[Container.security_service],
     moderation_service: ModerationService = Provide[Container.moderation_service],
+    coin_list_service: CoinListService = Provide[Container.coin_list_service],
 ) -> Any:
     """
     Middleware для внедрения всех зависимостей в data.
-    
-    ✅ ИСПРАВЛЕНО: Правильная работа с Resource провайдерами
     
     Args:
         handler: Следующий обработчик в цепочке
         event: Telegram событие
         data: Данные для передачи в обработчик
-        ... (все сервисы инъектируются автоматически)
         
     Returns:
         Результат обработчика
@@ -114,5 +105,14 @@ async def dependencies_middleware(
         mining_service=mining_service,
         security_service=security_service,
         moderation_service=moderation_service,
+        coin_list_service=coin_list_service,
     )
+    
+    # Добавляем отдельные сервисы для обратной совместимости
+    data["market_data_service"] = market_data_service
+    data["price_service"] = price_service
+    data["coin_list_service"] = coin_list_service
+    data["user_service"] = user_service
+    data["admin_service"] = admin_service
+    
     return await handler(event, data)

@@ -1,6 +1,4 @@
-"""
-Middlewares для бота.
-"""
-from .logging import LoggingMiddleware
+# bot/middlewares/__init__.py
+from bot.middlewares.dependencies import DependenciesMiddleware
 
-__all__ = ["LoggingMiddleware"]
+__all__ = ["DependenciesMiddleware"]

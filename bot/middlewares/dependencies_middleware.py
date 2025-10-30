@@ -1,28 +1,24 @@
-# src/bot/middlewares/dependencies_middleware.py
-"""
-Middleware для внедрения зависимостей из контейнера в обработчики.
-"""
+# bot/middlewares/dependencies.py
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
-from dependency_injector.wiring import Provide, inject
+from loguru import logger
 
 from bot.containers import Container
-from bot.services.user_service import UserService
+from bot.utils.dependencies import Deps
 
 
 class DependenciesMiddleware(BaseMiddleware):
     """
-    Промежуточный слой, который извлекает сервисы из контейнера
-    и передает их в хендлеры через kwargs.
+    Middleware для внедрения зависимостей из DI-контейнера в обработчики.
+    Все сервисы из контейнера становятся доступны как kwargs в handlers.
     """
-    # Мы не будем внедрять зависимости в сам middleware,
-    # а будем передавать их в конструкторе.
-    # Это более явный и контролируемый подход.
-    def __init__(self, user_service: UserService):
+
+    def __init__(self, container: Container):
         super().__init__()
-        self.user_service = user_service
+        self.container = container
+        logger.info("✅ DependenciesMiddleware initialized")
 
     async def __call__(
         self,
@@ -31,25 +27,67 @@ class DependenciesMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         """
-        Выполняет middleware.
-
-        Добавляет в `data` экземпляры сервисов, чтобы они были доступны
-        в последующих middleware и хендлерах.
+        Внедряем сервисы в data для доступа из handlers.
         """
-        # Добавляем сервисы в `data`. Теперь в хендлерах можно будет
-        # получить их через аргументы функции.
-        data["user_service"] = self.user_service
-        # ... можно добавить и другие часто используемые сервисы,
-        # но лучше полагаться на @inject для чистоты.
-
-        # Также можно выполнить какие-то действия с пользователем,
-        # например, зарегистрировать его при первом обращении.
-        user = data.get("event_from_user")
-        if user:
-            await self.user_service.get_or_create_user(
-                user_id=user.id,
-                username=user.username,
-                full_name=user.full_name,
+        try:
+            from bot.utils.keys import KeyFactory
+            
+            # Получаем все сервисы из контейнера
+            settings = self.container.config()
+            redis = self.container.redis_client()
+            
+            admin_service = self.container.admin_service()
+            user_service = self.container.user_service()
+            price_service = self.container.price_service()
+            asic_service = self.container.asic_service()
+            news_service = self.container.news_service()
+            quiz_service = self.container.quiz_service()
+            market_data_service = self.container.market_data_service()
+            crypto_center_service = self.container.crypto_center_service()
+            mining_game_service = self.container.mining_game_service()
+            verification_service = self.container.verification_service()
+            ai_content_service = self.container.ai_content_service()
+            mining_service = self.container.mining_service()
+            security_service = self.container.security_service()
+            moderation_service = self.container.moderation_service()
+            coin_list_service = self.container.coin_list_service()
+            
+            # Создаем объект Deps со всеми зависимостями
+            deps = Deps(
+                settings=settings,
+                redis=redis,
+                keys=KeyFactory,
+                admin_service=admin_service,
+                user_service=user_service,
+                price_service=price_service,
+                asic_service=asic_service,
+                news_service=news_service,
+                quiz_service=quiz_service,
+                market_data_service=market_data_service,
+                crypto_center_service=crypto_center_service,
+                mining_game_service=mining_game_service,
+                verification_service=verification_service,
+                ai_content_service=ai_content_service,
+                mining_service=mining_service,
+                security_service=security_service,
+                moderation_service=moderation_service,
+                coin_list_service=coin_list_service,
             )
-
+            
+            # Добавляем deps в data
+            data["deps"] = deps
+            
+            # Добавляем отдельные сервисы для обратной совместимости
+            data["container"] = self.container
+            data["market_data_service"] = market_data_service
+            data["price_service"] = price_service
+            data["coin_list_service"] = coin_list_service
+            data["user_service"] = user_service
+            data["admin_service"] = admin_service
+            data["settings"] = settings
+            data["redis"] = redis
+            
+        except Exception as e:
+            logger.error(f"Error in DependenciesMiddleware: {e}", exc_info=True)
+        
         return await handler(event, data)
