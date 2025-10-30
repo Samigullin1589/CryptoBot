@@ -32,10 +32,11 @@ class DependenciesMiddleware(BaseMiddleware):
         try:
             from bot.utils.keys import KeyFactory
             
-            # Получаем все сервисы из контейнера
+            # Получаем ресурсы асинхронно
             settings = self.container.config()
-            redis = self.container.redis_client()
+            redis = await self.container.redis_client()
             
+            # Получаем сервисы синхронно (они Singleton)
             admin_service = self.container.admin_service()
             user_service = self.container.user_service()
             price_service = self.container.price_service()
