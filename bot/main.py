@@ -22,20 +22,14 @@ async def setup_dependencies(container: Container) -> None:
     logger.info("🔧 Initializing dependencies...")
     
     try:
-        # Если это async Resource, нужно await
-        http_client = container.http_client()
-        if asyncio.iscoroutine(http_client) or asyncio.isfuture(http_client):
-            await http_client
+        await container.http_client()
         logger.info("✅ HTTP client initialized")
     except Exception as e:
         logger.error(f"❌ Failed to initialize HTTP client: {e}")
         raise
     
     try:
-        # Если это async Resource, нужно await
-        redis = container.redis_client()
-        if asyncio.iscoroutine(redis) or asyncio.isfuture(redis):
-            await redis
+        await container.redis_client()
         logger.info("✅ Redis connected successfully")
     except Exception as e:
         logger.error(f"❌ Failed to connect to Redis: {e}")
@@ -49,16 +43,8 @@ async def setup_bot(container: Container) -> tuple[Bot, Dispatcher]:
     logger.info("🤖 Setting up bot and dispatcher...")
     
     try:
-        # Получаем bot - если это Task/coroutine, нужно await
-        bot = container.bot()
-        if asyncio.iscoroutine(bot) or asyncio.isfuture(bot):
-            bot = await bot
-        
-        # Получаем redis - если это Task/coroutine, нужно await
-        redis = container.redis_client()
-        if asyncio.iscoroutine(redis) or asyncio.isfuture(redis):
-            redis = await redis
-            
+        bot = await container.bot()
+        redis = await container.redis_client()
         storage = RedisStorage(redis=redis)
         dispatcher = Dispatcher(storage=storage)
         
@@ -76,71 +62,70 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
     """Регистрация всех обработчиков"""
     logger.info("📝 Registering handlers...")
     
-    # Public handlers
+    registered_count = 0
+    
+    # Public handlers - регистрируем каждый отдельно
     try:
-        from bot.handlers import public
-        
-        if hasattr(public, 'router'):
-            dp.include_router(public.router)
-            logger.info("✅ Public handlers registered (router)")
-        else:
-            # Попытка импортировать отдельные модули
-            try:
-                from bot.handlers.public import command_handler_extended
-                dp.include_router(command_handler_extended.router)
-            except (ImportError, AttributeError):
-                pass
-                
-            try:
-                from bot.handlers.public import market_info_handler
-                dp.include_router(market_info_handler.router)
-            except (ImportError, AttributeError):
-                pass
-                
-            try:
-                from bot.handlers.public import price_handler
-                dp.include_router(price_handler.router)
-            except (ImportError, AttributeError):
-                pass
-                
-            logger.info("✅ Public handlers registered (individual)")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not register all public handlers: {e}")
+        from bot.handlers.public import command_handler_extended
+        if hasattr(command_handler_extended, 'router'):
+            dp.include_router(command_handler_extended.router)
+            registered_count += 1
+            logger.info("✅ command_handler_extended registered")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"⚠️ command_handler_extended not found: {e}")
+    
+    try:
+        from bot.handlers.public import market_info_handler
+        if hasattr(market_info_handler, 'router'):
+            dp.include_router(market_info_handler.router)
+            registered_count += 1
+            logger.info("✅ market_info_handler registered")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"⚠️ market_info_handler not found: {e}")
+    
+    try:
+        from bot.handlers.public import price_handler
+        if hasattr(price_handler, 'router'):
+            dp.include_router(price_handler.router)
+            registered_count += 1
+            logger.info("✅ price_handler registered")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"⚠️ price_handler not found: {e}")
     
     # Game handlers
     try:
-        from bot.handlers import game
-        if hasattr(game, 'router'):
-            dp.include_router(game.router)
-            logger.info("✅ Game handlers registered")
-    except ImportError:
-        logger.warning("⚠️ Game handlers not found, skipping")
-    except Exception as e:
-        logger.warning(f"⚠️ Error registering game handlers: {e}")
+        from bot.handlers.game import game_handler
+        if hasattr(game_handler, 'router'):
+            dp.include_router(game_handler.router)
+            registered_count += 1
+            logger.info("✅ game_handler registered")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"⚠️ game_handler not found: {e}")
     
     # Mining handlers
     try:
-        from bot.handlers import mining
-        if hasattr(mining, 'router'):
-            dp.include_router(mining.router)
-            logger.info("✅ Mining handlers registered")
-    except ImportError:
-        logger.warning("⚠️ Mining handlers not found, skipping")
-    except Exception as e:
-        logger.warning(f"⚠️ Error registering mining handlers: {e}")
+        from bot.handlers.mining import mining_handler
+        if hasattr(mining_handler, 'router'):
+            dp.include_router(mining_handler.router)
+            registered_count += 1
+            logger.info("✅ mining_handler registered")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"⚠️ mining_handler not found: {e}")
     
     # Admin handlers
     try:
-        from bot.handlers import admin
-        if hasattr(admin, 'router'):
-            dp.include_router(admin.router)
-            logger.info("✅ Admin handlers registered")
-    except ImportError:
-        logger.warning("⚠️ Admin handlers not found, skipping")
-    except Exception as e:
-        logger.warning(f"⚠️ Error registering admin handlers: {e}")
+        from bot.handlers.admin import admin_handler
+        if hasattr(admin_handler, 'router'):
+            dp.include_router(admin_handler.router)
+            registered_count += 1
+            logger.info("✅ admin_handler registered")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"⚠️ admin_handler not found: {e}")
     
-    logger.info("✅ Handlers registration completed")
+    logger.info(f"✅ Handlers registration completed. Total routers: {registered_count}")
+    
+    if registered_count == 0:
+        logger.error("❌ No handlers were registered! Bot will not respond to any commands.")
 
 
 def register_middlewares(dp: Dispatcher, container: Container) -> None:
@@ -170,6 +155,7 @@ async def on_startup(bot: Bot, container: Container) -> None:
     
     try:
         await bot.delete_webhook(drop_pending_updates=True)
+        await asyncio.sleep(2)  # Увеличенная задержка для очистки
         logger.info("✅ Webhook deleted, pending updates dropped")
     except Exception as e:
         logger.warning(f"⚠️ Failed to delete webhook: {e}")
@@ -189,9 +175,7 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
     logger.info("🛑 Shutting down bot...")
     
     try:
-        http_client = container.http_client()
-        if asyncio.iscoroutine(http_client) or asyncio.isfuture(http_client):
-            http_client = await http_client
+        http_client = await container.http_client()
         if http_client and hasattr(http_client, 'close'):
             await http_client.close()
             logger.info("✅ HTTP client closed")
@@ -199,9 +183,7 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
         logger.error(f"❌ Error closing HTTP client: {e}")
     
     try:
-        redis = container.redis_client()
-        if asyncio.iscoroutine(redis) or asyncio.isfuture(redis):
-            redis = await redis
+        redis = await container.redis_client()
         if redis and hasattr(redis, 'aclose'):
             await redis.aclose()
             logger.info("✅ Redis connection closed")
@@ -209,9 +191,10 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
         logger.error(f"❌ Error closing Redis: {e}")
     
     try:
-        if bot and hasattr(bot, 'session') and bot.session and not bot.session.closed:
-            await bot.session.close()
-            logger.info("✅ Bot session closed")
+        if bot and hasattr(bot, 'session') and bot.session:
+            if hasattr(bot.session, 'close'):
+                await bot.session.close()
+                logger.info("✅ Bot session closed")
     except Exception as e:
         logger.error(f"❌ Error closing bot session: {e}")
     
