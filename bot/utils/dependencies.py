@@ -13,12 +13,10 @@ from bot.services.user_service import UserService
 from bot.services.price_service import PriceService
 from bot.services.asic_service import AsicService
 from bot.services.news_service import NewsService
-from bot.services.quiz_service import QuizService
 from bot.services.market_data_service import MarketDataService
 from bot.services.crypto_center_service import CryptoCenterService
 from bot.services.mining_game_service import MiningGameService
 from bot.services.verification_service import VerificationService
-from bot.services.ai_content_service import AIContentService
 from bot.services.mining_service import MiningService
 from bot.services.security_service import SecurityService
 from bot.services.moderation_service import ModerationService
@@ -41,16 +39,17 @@ class Deps:
     price_service: PriceService
     asic_service: AsicService
     news_service: NewsService
-    quiz_service: QuizService
     market_data_service: MarketDataService
     crypto_center_service: CryptoCenterService
     mining_game_service: MiningGameService
     verification_service: VerificationService
-    ai_content_service: AIContentService
     mining_service: MiningService
     security_service: SecurityService
     moderation_service: ModerationService
     coin_list_service: CoinListService
+    # Опциональные сервисы
+    quiz_service: Optional[Any] = None
+    ai_content_service: Optional[Any] = None
 
 
 @inject
@@ -65,12 +64,10 @@ async def dependencies_middleware(
     price_service: PriceService = Provide[Container.price_service],
     asic_service: AsicService = Provide[Container.asic_service],
     news_service: NewsService = Provide[Container.news_service],
-    quiz_service: QuizService = Provide[Container.quiz_service],
     market_data_service: MarketDataService = Provide[Container.market_data_service],
     crypto_center_service: CryptoCenterService = Provide[Container.crypto_center_service],
     mining_game_service: MiningGameService = Provide[Container.mining_game_service],
     verification_service: VerificationService = Provide[Container.verification_service],
-    ai_content_service: AIContentService = Provide[Container.ai_content_service],
     mining_service: MiningService = Provide[Container.mining_service],
     security_service: SecurityService = Provide[Container.security_service],
     moderation_service: ModerationService = Provide[Container.moderation_service],
@@ -87,6 +84,26 @@ async def dependencies_middleware(
     Returns:
         Результат обработчика
     """
+    # Пытаемся получить опциональные сервисы
+    quiz_service = None
+    ai_content_service = None
+    
+    try:
+        from bot.services.quiz_service import QuizService
+        # Попытка получить quiz_service из контейнера, если он существует
+        if hasattr(Container, 'quiz_service'):
+            quiz_service = await Container.quiz_service()
+    except (ImportError, AttributeError):
+        pass
+    
+    try:
+        from bot.services.ai_content_service import AIContentService
+        # Попытка получить ai_content_service из контейнера, если он существует
+        if hasattr(Container, 'ai_content_service'):
+            ai_content_service = await Container.ai_content_service()
+    except (ImportError, AttributeError):
+        pass
+    
     data["deps"] = Deps(
         settings=settings,
         redis=redis,
@@ -96,16 +113,16 @@ async def dependencies_middleware(
         price_service=price_service,
         asic_service=asic_service,
         news_service=news_service,
-        quiz_service=quiz_service,
         market_data_service=market_data_service,
         crypto_center_service=crypto_center_service,
         mining_game_service=mining_game_service,
         verification_service=verification_service,
-        ai_content_service=ai_content_service,
         mining_service=mining_service,
         security_service=security_service,
         moderation_service=moderation_service,
         coin_list_service=coin_list_service,
+        quiz_service=quiz_service,
+        ai_content_service=ai_content_service,
     )
     
     # Добавляем отдельные сервисы для обратной совместимости
