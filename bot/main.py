@@ -17,34 +17,48 @@ _bot_instance: Bot | None = None
 _dispatcher_instance: Dispatcher | None = None
 
 
-def setup_dependencies(container: Container) -> None:
+async def setup_dependencies(container: Container) -> None:
     """Инициализация всех зависимостей"""
     logger.info("🔧 Initializing dependencies...")
     
     try:
-        container.http_client()
+        # Если это async Resource, нужно await
+        http_client = container.http_client()
+        if asyncio.iscoroutine(http_client) or asyncio.isfuture(http_client):
+            await http_client
         logger.info("✅ HTTP client initialized")
     except Exception as e:
         logger.error(f"❌ Failed to initialize HTTP client: {e}")
         raise
     
     try:
+        # Если это async Resource, нужно await
         redis = container.redis_client()
+        if asyncio.iscoroutine(redis) or asyncio.isfuture(redis):
+            await redis
         logger.info("✅ Redis connected successfully")
     except Exception as e:
         logger.error(f"❌ Failed to connect to Redis: {e}")
         raise
 
 
-def setup_bot(container: Container) -> tuple[Bot, Dispatcher]:
+async def setup_bot(container: Container) -> tuple[Bot, Dispatcher]:
     """Настройка бота и диспетчера"""
     global _bot_instance, _dispatcher_instance
     
     logger.info("🤖 Setting up bot and dispatcher...")
     
     try:
+        # Получаем bot - если это Task/coroutine, нужно await
         bot = container.bot()
+        if asyncio.iscoroutine(bot) or asyncio.isfuture(bot):
+            bot = await bot
+        
+        # Получаем redis - если это Task/coroutine, нужно await
         redis = container.redis_client()
+        if asyncio.iscoroutine(redis) or asyncio.isfuture(redis):
+            redis = await redis
+            
         storage = RedisStorage(redis=redis)
         dispatcher = Dispatcher(storage=storage)
         
@@ -152,7 +166,7 @@ async def on_startup(bot: Bot, container: Container) -> None:
     """Действия при запуске бота"""
     logger.info("🚀 Starting bot...")
     
-    setup_dependencies(container)
+    await setup_dependencies(container)
     
     try:
         await bot.delete_webhook(drop_pending_updates=True)
@@ -176,6 +190,8 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
     
     try:
         http_client = container.http_client()
+        if asyncio.iscoroutine(http_client) or asyncio.isfuture(http_client):
+            http_client = await http_client
         if http_client and hasattr(http_client, 'close'):
             await http_client.close()
             logger.info("✅ HTTP client closed")
@@ -184,6 +200,8 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
     
     try:
         redis = container.redis_client()
+        if asyncio.iscoroutine(redis) or asyncio.isfuture(redis):
+            redis = await redis
         if redis and hasattr(redis, 'aclose'):
             await redis.aclose()
             logger.info("✅ Redis connection closed")
@@ -191,7 +209,7 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
         logger.error(f"❌ Error closing Redis: {e}")
     
     try:
-        if bot.session and not bot.session.closed:
+        if bot and hasattr(bot, 'session') and bot.session and not bot.session.closed:
             await bot.session.close()
             logger.info("✅ Bot session closed")
     except Exception as e:
@@ -245,7 +263,7 @@ async def main_async() -> None:
     """Главная асинхронная функция"""
     container = Container()
     
-    bot, dp = setup_bot(container)
+    bot, dp = await setup_bot(container)
     register_handlers(dp, container)
     register_middlewares(dp, container)
     
