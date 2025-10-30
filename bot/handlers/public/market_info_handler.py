@@ -1,81 +1,176 @@
-# src/bot/handlers/public/market_info_handler.py
+# bot/handlers/public/market_info_handler.py
 
-import logging
-from aiogram import F, Router
-from aiogram.types import CallbackQuery, BufferedInputFile
-from aiogram.fsm.context import FSMContext
+from aiogram import Router, F
+from aiogram.types import CallbackQuery
+from aiogram.exceptions import TelegramBadRequest
+from loguru import logger
 
-from bot.utils.dependencies import Deps
-from bot.keyboards.keyboards import get_back_to_main_menu_keyboard
-from bot.keyboards.callback_factories import MenuCallback
-from bot.utils.formatters import format_halving_info, format_network_status
-from bot.utils.plotting import generate_fng_image
+from bot.services.market_data_service import MarketDataService
+from bot.keyboards.inline.market_keyboards import get_market_menu_keyboard
 
-router = Router(name=__name__)
-logger = logging.getLogger(__name__)
+router = Router(name="market_info_handler")
 
-@router.callback_query(MenuCallback.filter(F.action == "fear_index"))
-async def handle_fear_greed_index(call: CallbackQuery, deps: Deps, state: FSMContext):
-    await call.answer()
-    temp_message = await call.message.edit_text("⏳ Загружаю индекс и генерирую пояснение от AI...")
 
+@router.callback_query(F.data == "market_info")
+async def market_info_menu(
+    callback: CallbackQuery,
+    market_data_service: MarketDataService
+):
+    """Главное меню рыночной информации"""
     try:
-        data = await deps.market_data_service.get_fear_and_greed_index()
-        if not data:
-            raise ValueError("API индекса страха и жадности не вернул данных.")
-
-        value = int(data.value)
-        classification = data.value_classification
-
-        image_bytes = generate_fng_image(value, classification)
-        photo = BufferedInputFile(image_bytes, filename="fng_index.png")
-
-        ai_question = (f"Кратко, в 1-2 предложениях, объясни простым языком, что означает 'Индекс страха и жадности' {value} ({classification}).")
-        ai_explanation = await deps.ai_content_service.get_consultant_answer(ai_question, history=[])
-
-        base_caption = f"😱 <b>Индекс страха и жадности:</b> {value}\n<i>Состояние рынка: {classification}</i>"
-        final_caption = base_caption
-        if ai_explanation and "недоступен" not in ai_explanation and "внутренняя ошибка" not in ai_explanation:
-            final_caption += f"\n\n<b>Пояснение от AI:</b>\n{ai_explanation}"
-
-        await temp_message.delete()
-        await call.message.answer_photo(photo=photo, caption=final_caption, reply_markup=get_back_to_main_menu_keyboard())
+        await callback.answer()
+        
+        text = (
+            "📊 <b>Рыночная информация</b>\n\n"
+            "Выберите раздел для получения актуальной информации о криптовалютном рынке:"
+        )
+        
+        keyboard = get_market_menu_keyboard()
+        
+        try:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                raise
+                
     except Exception as e:
-        logger.error(f"Ошибка получения индекса страха и жадности: {e}", exc_info=True)
-        await temp_message.edit_text("😕 Не удалось загрузить данные индекса.")
+        logger.error(f"Ошибка в market_info_menu: {e}")
+        await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
 
-@router.callback_query(MenuCallback.filter(F.action == "halving"))
-async def handle_halving_info(call: CallbackQuery, deps: Deps, state: FSMContext):
-    await call.answer("Загружаю данные о халвинге...")
+
+@router.callback_query(F.data == "btc_network_status")
+async def handle_btc_status(
+    callback: CallbackQuery,
+    market_data_service: MarketDataService
+):
+    """Обработчик статуса сети Bitcoin"""
     try:
-        data = await deps.market_data_service.get_halving_info()
-        if not data:
-            raise ValueError("API для халвинга не вернул валидных данных.")
-
-        text = format_halving_info(data.model_dump())
-        await call.message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+        await callback.answer("Получаю данные о сети Bitcoin...")
+        
+        # Получаем данные о сети
+        status = await market_data_service.get_btc_network_status()
+        
+        if not status:
+            # Вместо raise используем graceful fallback
+            text = (
+                "⚠️ <b>Статус сети Bitcoin</b>\n\n"
+                "К сожалению, не удалось получить актуальные данные о сети Bitcoin.\n"
+                "Попробуйте позже или выберите другой раздел."
+            )
+        else:
+            # Форматируем данные
+            difficulty = status.get("difficulty", 0)
+            hash_rate = status.get("hash_rate", 0)
+            blocks = status.get("blocks_count", 0)
+            next_retarget = status.get("next_retarget", 0)
+            
+            # Конвертируем hash rate в читаемый формат
+            if hash_rate > 0:
+                hash_rate_eh = hash_rate / 1_000_000_000_000_000_000  # в EH/s
+                hash_rate_str = f"{hash_rate_eh:.2f} EH/s"
+            else:
+                hash_rate_str = "Н/Д"
+            
+            text = (
+                f"⛏ <b>Статус сети Bitcoin</b>\n\n"
+                f"📊 <b>Сложность:</b> {difficulty:,.0f}\n"
+                f"⚡️ <b>Хешрейт:</b> {hash_rate_str}\n"
+                f"📦 <b>Блоков:</b> {blocks:,}\n"
+                f"🎯 <b>След. корректировка:</b> блок {next_retarget:,}\n\n"
+                f"<i>Данные обновляются в реальном времени</i>"
+            )
+        
+        keyboard = get_market_menu_keyboard()
+        
+        try:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                raise
+                
+        logger.info(f"User {callback.from_user.id} viewed BTC network status")
+        
     except Exception as e:
-        logger.error(f"Ошибка получения данных о халвинге: {e}", exc_info=True)
-        await call.answer("Не удалось загрузить данные.", show_alert=True)
+        logger.error(f"Ошибка в handle_btc_status: {e}")
+        try:
+            await callback.message.edit_text(
+                text=(
+                    "❌ <b>Ошибка</b>\n\n"
+                    "Не удалось загрузить данные о сети Bitcoin.\n"
+                    "Попробуйте позже."
+                ),
+                reply_markup=get_market_menu_keyboard(),
+                parse_mode="HTML"
+            )
+        except:
+            await callback.answer(
+                "Произошла ошибка при загрузке данных.",
+                show_alert=True
+            )
 
-@router.callback_query(MenuCallback.filter(F.action == "btc_status"))
-async def handle_btc_status(call: CallbackQuery, deps: Deps, state: FSMContext):
-    await call.answer()
-    temp_message = await call.message.edit_text("⏳ Загружаю статус сети и запрашиваю анализ у AI...")
+
+@router.callback_query(F.data == "market_overview")
+async def handle_market_overview(
+    callback: CallbackQuery,
+    market_data_service: MarketDataService
+):
+    """Общий обзор рынка"""
     try:
-        data = await deps.market_data_service.get_btc_network_status()
-        if not data:
-            raise ValueError("Сервис не вернул данные о статусе сети BTC.")
-
-        text = format_network_status(data.model_dump())
-        hashrate_ehs = data.hashrate_ehs
-        ai_question = (f"Хешрейт сети Bitcoin сейчас ~{hashrate_ehs:.0f} EH/s. Кратко, в 1-2 предложениях, объясни простым языком, что это значит.")
-        ai_explanation = await deps.ai_content_service.get_consultant_answer(ai_question, history=[])
-
-        if ai_explanation and "недоступен" not in ai_explanation and "внутренняя ошибка" not in ai_explanation:
-            text += f"\n\n<b>Что это значит (анализ AI):</b>\n{ai_explanation}"
-
-        await temp_message.edit_text(text, reply_markup=get_back_to_main_menu_keyboard())
+        await callback.answer("Загружаю обзор рынка...")
+        
+        # Получаем топ монет
+        top_coins = ["btc", "eth", "bnb", "xrp", "ada", "sol", "doge", "dot"]
+        prices = await market_data_service.get_prices(top_coins)
+        
+        text = "📈 <b>Обзор криптовалютного рынка</b>\n\n"
+        
+        coin_names = {
+            "btc": "Bitcoin",
+            "eth": "Ethereum", 
+            "bnb": "BNB",
+            "xrp": "XRP",
+            "ada": "Cardano",
+            "sol": "Solana",
+            "doge": "Dogecoin",
+            "dot": "Polkadot"
+        }
+        
+        for coin_id, price in prices.items():
+            if price:
+                name = coin_names.get(coin_id, coin_id.upper())
+                text += f"• <b>{name}:</b> ${price:,.2f}\n"
+        
+        text += "\n<i>Данные обновляются каждые 30 секунд</i>"
+        
+        keyboard = get_market_menu_keyboard()
+        
+        try:
+            await callback.message.edit_text(
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                raise
+                
+        logger.info(f"User {callback.from_user.id} viewed market overview")
+        
     except Exception as e:
-        logger.error(f"Ошибка получения статуса сети BTC: {e}", exc_info=True)
-        await temp_message.edit_text("😕 Не удалось загрузить данные о статусе сети.")
+        logger.error(f"Ошибка в handle_market_overview: {e}")
+        await callback.answer("Произошла ошибка. Попробуйте позже.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("market_"))
+async def handle_market_back(callback: CallbackQuery):
+    """Обработчик возврата в меню"""
+    if callback.data == "market_back":
+        await market_info_menu(callback, callback.bot.get("market_data_service"))

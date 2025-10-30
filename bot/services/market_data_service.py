@@ -1,215 +1,230 @@
-# src/bot/services/market_data_service.py
+# bot/services/market_data_service.py
 
-import json
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Literal, Optional
-
+import asyncio
+from typing import Dict, List, Optional
 from loguru import logger
-from pydantic import BaseModel, ValidationError
-from redis.asyncio import Redis
+import aiohttp
+from bot.utils.http_client import HTTPClient
 
-from bot.config.settings import MarketDataServiceConfig
-from bot.services.coin_list_service import CoinListService
-from bot.utils.http_client import HttpClient
-from bot.utils.keys import KeyFactory
-
-
-class FearAndGreedData(BaseModel):
-    value: str
-    value_classification: str
-
-class FearAndGreedResponse(BaseModel):
-    data: List[FearAndGreedData]
-
-class HalvingInfo(BaseModel):
-    progressPercent: float
-    remainingBlocks: int
-    estimated_date: str
-
-class NetworkStatus(BaseModel):
-    hashrate_ehs: float
-    difficulty_change: float
-    estimated_retarget_date: str
-
-class TopCoin(BaseModel):
-    id: str
-    symbol: str
-    name: str
-    current_price: Optional[float] = None
-    market_cap: Optional[int] = None
-    price_change_percentage_24h: Optional[float] = None
-    ath: Optional[float] = None
-
-
-Provider = Literal["coingecko", "cryptocompare"]
 
 class MarketDataService:
-    """
-    Агрегирует рыночные данные, обеспечивая отказоустойчивость
-    и кэширование для минимизации обращений к внешним API.
-    """
+    """Сервис для получения рыночных данных с множественных источников"""
+    
+    PROVIDERS = {
+        "binance": {
+            "url": "https://api.binance.com/api/v3/ticker/price",
+            "priority": 1
+        },
+        "coinbase": {
+            "url": "https://api.coinbase.com/v2/exchange-rates",
+            "priority": 2
+        },
+        "kraken": {
+            "url": "https://api.kraken.com/0/public/Ticker",
+            "priority": 3
+        },
+        "cryptocompare": {
+            "url": "https://min-api.cryptocompare.com/data/price",
+            "priority": 4
+        },
+        "coingecko": {
+            "url": "https://api.coingecko.com/api/v3/simple/price",
+            "priority": 5
+        }
+    }
+    
+    COIN_MAPPING = {
+        "btc": {"binance": "BTCUSDT", "coinbase": "BTC", "kraken": "XXBTZUSD", "symbol": "BTC"},
+        "eth": {"binance": "ETHUSDT", "coinbase": "ETH", "kraken": "XETHZUSD", "symbol": "ETH"},
+        "ltc": {"binance": "LTCUSDT", "coinbase": "LTC", "kraken": "XLTCZUSD", "symbol": "LTC"},
+        "xrp": {"binance": "XRPUSDT", "coinbase": "XRP", "kraken": "XXRPZUSD", "symbol": "XRP"},
+        "doge": {"binance": "DOGEUSDT", "coinbase": "DOGE", "kraken": "XDGUSD", "symbol": "DOGE"},
+        "ada": {"binance": "ADAUSDT", "coinbase": "ADA", "kraken": "ADAUSD", "symbol": "ADA"},
+        "dot": {"binance": "DOTUSDT", "coinbase": "DOT", "kraken": "DOTUSD", "symbol": "DOT"},
+        "matic": {"binance": "MATICUSDT", "coinbase": "MATIC", "kraken": "MATICUSD", "symbol": "MATIC"},
+        "sol": {"binance": "SOLUSDT", "coinbase": "SOL", "kraken": "SOLUSD", "symbol": "SOL"},
+        "avax": {"binance": "AVAXUSDT", "coinbase": "AVAX", "kraken": "AVAXUSD", "symbol": "AVAX"},
+        "link": {"binance": "LINKUSDT", "coinbase": "LINK", "kraken": "LINKUSD", "symbol": "LINK"},
+        "atom": {"binance": "ATOMUSDT", "coinbase": "ATOM", "kraken": "ATOMUSD", "symbol": "ATOM"},
+        "uni": {"binance": "UNIUSDT", "coinbase": "UNI", "kraken": "UNIUSD", "symbol": "UNI"},
+        "xlm": {"binance": "XLMUSDT", "coinbase": "XLM", "kraken": "XXLMZUSD", "symbol": "XLM"},
+        "bch": {"binance": "BCHUSDT", "coinbase": "BCH", "kraken": "BCHUSD", "symbol": "BCH"},
+        "etc": {"binance": "ETCUSDT", "coinbase": "ETC", "kraken": "XETCZUSD", "symbol": "ETC"},
+        "trx": {"binance": "TRXUSDT", "coinbase": "TRX", "kraken": "TRXUSD", "symbol": "TRX"},
+        "eos": {"binance": "EOSUSDT", "coinbase": "EOS", "kraken": "EOSUSD", "symbol": "EOS"},
+    }
 
-    def __init__(
-        self,
-        redis_client: Redis,
-        http_client: HttpClient,
-        coin_list_service: CoinListService,
-        config: MarketDataServiceConfig,
-    ):
-        self.redis = redis_client
+    def __init__(self, http_client: HTTPClient):
         self.http_client = http_client
-        self.coin_list_service = coin_list_service
-        self.config = config
-        self.keys = KeyFactory
+        self.cache: Dict[str, Dict] = {}
+        self.cache_ttl = 30
+        self.last_fetch = {}
         logger.info("Сервис MarketDataService инициализирован.")
 
     async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        """
-        Получает цены, используя основного провайдера и переключаясь на резервного при неудаче.
-        """
-        try:
-            prices = await self._fetch_prices_from_provider(coin_ids, self.config.primary_provider)
+        """Получить цены для списка монет с fallback на множество провайдеров"""
+        result = {}
+        
+        for coin_id in coin_ids:
+            price = await self._get_price_with_fallback(coin_id)
+            result[coin_id] = price
             
-            coins_to_retry = [cid for cid, price in prices.items() if price is None]
-            if coins_to_retry:
-                logger.warning(f"Не удалось получить цены для {coins_to_retry} через основного провайдера. Попытка через резервного.")
-                fallback_prices = await self._fetch_prices_from_provider(coins_to_retry, self.config.fallback_provider)
-                prices.update(fallback_prices)
-            return prices
-        except Exception as e:
-            logger.error(f"Ошибка при запросе к основному провайдеру ({self.config.primary_provider}): {e}. Переключение на резервного.")
-            try:
-                return await self._fetch_prices_from_provider(coin_ids, self.config.fallback_provider)
-            except Exception as fallback_e:
-                logger.critical(f"Резервный провайдер ({self.config.fallback_provider}) также не доступен: {fallback_e}")
-                return {cid: None for cid in coin_ids}
-
-    async def _fetch_prices_from_provider(self, coin_ids: List[str], provider: Provider) -> Dict[str, Optional[float]]:
-        """Маршрутизирует запрос к соответствующему методу провайдера."""
-        if not coin_ids:
-            return {}
-        if provider == "coingecko":
-            return await self._get_prices_coingecko(coin_ids)
-        if provider == "cryptocompare":
-            return await self._get_prices_cryptocompare(coin_ids)
-        raise ValueError(f"Неизвестный провайдер API: {provider}")
-
-    async def _get_prices_coingecko(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        """Получает цены от CoinGecko."""
-        params = {'ids': ','.join(coin_ids), 'vs_currencies': 'usd'}
-        data = await self.http_client.get(
-            f"{self.http_client.config.coingecko_api_base}{self.http_client.config.simple_price_endpoint}",
-            params=params
-        )
-        result = {cid: None for cid in coin_ids}
-        if data:
-            for cid, price_data in data.items():
-                result[cid] = float(price_data['usd']) if 'usd' in price_data else None
         return result
 
-    async def _get_prices_cryptocompare(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
-        """Получает цены от CryptoCompare."""
-        symbols_to_fetch, id_to_symbol_map = [], {}
-        for cid in coin_ids:
-            symbol = await self.coin_list_service.get_symbol_by_coin_id(cid)
-            if symbol:
-                symbols_to_fetch.append(symbol.upper())
-                id_to_symbol_map[symbol.upper()] = cid
+    async def _get_price_with_fallback(self, coin_id: str) -> Optional[float]:
+        """Получить цену с автоматическим переключением между провайдерами"""
         
-        if not symbols_to_fetch:
-            return {cid: None for cid in coin_ids}
-
-        params = {'fsyms': ','.join(symbols_to_fetch), 'tsyms': 'USD'}
-        data = await self.http_client.get(
-            f"{self.http_client.config.cryptocompare_api_base}{self.http_client.config.cryptocompare_price_endpoint}",
-            params=params
-        )
+        # Проверка кэша
+        if coin_id in self.cache:
+            cache_entry = self.cache[coin_id]
+            if (asyncio.get_event_loop().time() - cache_entry.get("timestamp", 0)) < self.cache_ttl:
+                return cache_entry.get("price")
         
-        result = {cid: None for cid in coin_ids}
-        if data and "Response" not in data:
-            for symbol, price_data in data.items():
-                if original_id := id_to_symbol_map.get(symbol):
-                    result[original_id] = float(price_data['USD']) if 'USD' in price_data else None
-        return result
-
-    async def get_fear_and_greed_index(self) -> Optional[FearAndGreedData]:
-        """Получает 'Индекс страха и жадности'."""
-        try:
-            data = await self.http_client.get(str(self.http_client.config.fear_and_greed_api))
-            return FearAndGreedResponse.model_validate(data).data[0]
-        except (ValidationError, IndexError, Exception) as e:
-            logger.error(f"Не удалось получить 'Индекс страха и жадности': {e}")
-            return None
-
-    async def get_halving_info(self) -> Optional[HalvingInfo]:
-        """Рассчитывает информацию о следующем халвинге Bitcoin."""
-        try:
-            HALVING_INTERVAL = 210000
-            AVG_BLOCK_TIME_MINUTES = 10
-
-            tip_height_str = await self.http_client.get(str(self.http_client.config.mempool_space_tip_height))
-            current_height = int(tip_height_str)
-
-            halving_cycle = current_height // HALVING_INTERVAL
-            next_halving_block = (halving_cycle + 1) * HALVING_INTERVAL
-            blocks_remaining = next_halving_block - current_height
-            estimated_date = datetime.now(timezone.utc) + timedelta(minutes=blocks_remaining * AVG_BLOCK_TIME_MINUTES)
-            progress = (current_height % HALVING_INTERVAL) / HALVING_INTERVAL * 100
-            
-            return HalvingInfo(
-                progressPercent=progress,
-                remainingBlocks=blocks_remaining,
-                estimated_date=estimated_date.strftime('%d.%m.%Y')
-            )
-        except (ValueError, Exception) as e:
-            logger.error(f"Не удалось вычислить данные о халвинге: {e}")
-            return None
-
-    async def get_btc_network_status(self) -> Optional[NetworkStatus]:
-        """Получает статус сети Bitcoin."""
-        try:
-            data = await self.http_client.get(str(self.http_client.config.mempool_space_difficulty_adjustment))
-            if not data:
-                return None
-            
-            hashrate_ehs = data.get('currentHashrate', 0) / 1e18
-            difficulty_change = data.get('difficultyChange', 0)
-            estimated_retarget_timestamp = data.get('estimatedRetargetDate', 0) / 1000
-            estimated_retarget_date = datetime.fromtimestamp(estimated_retarget_timestamp, tz=timezone.utc).strftime('%d.%m.%Y')
-            
-            return NetworkStatus(
-                hashrate_ehs=hashrate_ehs,
-                difficulty_change=difficulty_change,
-                estimated_retarget_date=estimated_retarget_date
-            )
-        except Exception as e:
-            logger.error(f"Не удалось получить статус сети BTC: {e}")
-            return None
-
-    async def get_top_n_coins(self, limit: int) -> List[Dict[str, Any]]:
-        """Получает топ N монет по рыночной капитализации."""
-        cache_key = self.keys.get_top_coins_cache_key()
-        try:
-            if cached_data := await self.redis.get(cache_key):
-                logger.debug(f"Cache hit for top {limit} coins.")
-                all_coins = json.loads(cached_data)
-                return [TopCoin.model_validate(item).model_dump() for item in all_coins[:limit]]
-        except (json.JSONDecodeError, ValidationError) as e:
-            logger.warning(f"Кэш топ-монет поврежден ({e}), будет запрошен заново.")
-
-        params = {'vs_currency': 'usd', 'order': 'market_cap_desc', 'per_page': limit, 'page': 1}
-        data = await self.http_client.get(
-            f"{self.http_client.config.coingecko_api_base}{self.http_client.config.coins_markets_endpoint}",
-            params=params
-        )
-
-        if data:
+        # Попытка получить данные от всех провайдеров по приоритету
+        providers = sorted(self.PROVIDERS.items(), key=lambda x: x[1]["priority"])
+        
+        for provider_name, provider_config in providers:
             try:
-                validated_data = [TopCoin.model_validate(item).model_dump() for item in data]
-                if limit >= self.config.top_n_coins:
-                    await self.redis.set(cache_key, json.dumps(validated_data), ex=3600)
-                return validated_data
-            except ValidationError as e:
-                logger.error(f"Ошибка валидации данных топ-монет от API: {e}")
+                price = await self._fetch_from_provider(provider_name, coin_id)
+                if price:
+                    # Кэшируем результат
+                    self.cache[coin_id] = {
+                        "price": price,
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "provider": provider_name
+                    }
+                    logger.debug(f"Получена цена {coin_id} от {provider_name}: ${price}")
+                    return price
+            except Exception as e:
+                logger.warning(f"Провайдер {provider_name} недоступен для {coin_id}: {e}")
+                continue
         
-        return []
+        logger.error(f"Не удалось получить цену для {coin_id} ни от одного провайдера")
+        return None
+
+    async def _fetch_from_provider(self, provider: str, coin_id: str) -> Optional[float]:
+        """Получить цену от конкретного провайдера"""
+        
+        if coin_id not in self.COIN_MAPPING:
+            logger.warning(f"Неизвестная монета: {coin_id}")
+            return None
+        
+        coin_data = self.COIN_MAPPING[coin_id]
+        
+        if provider == "binance":
+            return await self._fetch_binance(coin_data.get("binance"))
+        elif provider == "coinbase":
+            return await self._fetch_coinbase(coin_data.get("coinbase"))
+        elif provider == "kraken":
+            return await self._fetch_kraken(coin_data.get("kraken"))
+        elif provider == "cryptocompare":
+            return await self._fetch_cryptocompare(coin_data.get("symbol"))
+        elif provider == "coingecko":
+            return await self._fetch_coingecko(coin_id)
+        
+        return None
+
+    async def _fetch_binance(self, symbol: str) -> Optional[float]:
+        """Binance API"""
+        if not symbol:
+            return None
+        
+        try:
+            url = f"{self.PROVIDERS['binance']['url']}?symbol={symbol}"
+            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return float(data.get("price", 0))
+        except Exception as e:
+            logger.debug(f"Binance error for {symbol}: {e}")
+        return None
+
+    async def _fetch_coinbase(self, currency: str) -> Optional[float]:
+        """Coinbase API"""
+        if not currency:
+            return None
+        
+        try:
+            url = f"{self.PROVIDERS['coinbase']['url']}?currency=USD"
+            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    rates = data.get("data", {}).get("rates", {})
+                    rate = rates.get(currency)
+                    if rate:
+                        return 1.0 / float(rate)
+        except Exception as e:
+            logger.debug(f"Coinbase error for {currency}: {e}")
+        return None
+
+    async def _fetch_kraken(self, pair: str) -> Optional[float]:
+        """Kraken API"""
+        if not pair:
+            return None
+        
+        try:
+            url = f"{self.PROVIDERS['kraken']['url']}?pair={pair}"
+            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("error"):
+                        return None
+                    result = data.get("result", {})
+                    for key, value in result.items():
+                        price = value.get("c", [None])[0]
+                        if price:
+                            return float(price)
+        except Exception as e:
+            logger.debug(f"Kraken error for {pair}: {e}")
+        return None
+
+    async def _fetch_cryptocompare(self, symbol: str) -> Optional[float]:
+        """CryptoCompare API"""
+        if not symbol:
+            return None
+        
+        try:
+            url = f"{self.PROVIDERS['cryptocompare']['url']}?fsym={symbol}&tsyms=USD"
+            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return float(data.get("USD", 0))
+        except Exception as e:
+            logger.debug(f"CryptoCompare error for {symbol}: {e}")
+        return None
+
+    async def _fetch_coingecko(self, coin_id: str) -> Optional[float]:
+        """CoinGecko API (последний fallback)"""
+        try:
+            url = f"{self.PROVIDERS['coingecko']['url']}?ids={coin_id}&vs_currencies=usd"
+            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return float(data.get(coin_id, {}).get("usd", 0))
+        except Exception as e:
+            logger.debug(f"CoinGecko error for {coin_id}: {e}")
+        return None
+
+    async def get_btc_network_status(self) -> Optional[Dict]:
+        """Получить статус сети Bitcoin"""
+        try:
+            # Используем blockchain.info API
+            url = "https://blockchain.info/stats?format=json"
+            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {
+                        "difficulty": data.get("difficulty"),
+                        "hash_rate": data.get("hash_rate"),
+                        "blocks_count": data.get("n_blocks_total"),
+                        "next_retarget": data.get("nextretarget"),
+                    }
+        except Exception as e:
+            logger.error(f"Ошибка получения статуса BTC сети: {e}")
+        
+        return None
+
+    def clear_cache(self):
+        """Очистить кэш"""
+        self.cache.clear()
+        logger.info("Кэш цен очищен")

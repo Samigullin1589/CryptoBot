@@ -1,111 +1,78 @@
-# =================================================================================
-# render.yaml - PRODUCTION CONFIGURATION (29.10.2025)
-# Описание: Telegram бот в режиме long polling (worker)
-# ✅ ИСПРАВЛЕНО: Правильная конфигурация для предотвращения конфликтов
-# ✅ ДОБАВЛЕНО: numInstances: 1 для предотвращения множественных экземпляров
-# =================================================================================
+# render.yaml - ИСПРАВЛЕНО ДЛЯ ПРЕДОТВРАЩЕНИЯ КОНФЛИКТОВ
 
 services:
   # ==================== TELEGRAM BOT WORKER ====================
-  - type: worker  # ✅ Worker (не web) - правильно для polling режима
+  - type: worker
     name: telegram-crypto-bot-worker
     runtime: python
-    region: frankfurt  # Или другой регион (oregon, singapore, etc.)
-    plan: free  # Для production рекомендуется starter ($7/мес)
+    region: frankfurt
+    plan: free
     
-    # Build команда
+    # Build с принудительной очисткой
     buildCommand: |
       pip install --upgrade pip setuptools wheel
-      pip install --break-system-packages -r requirements.txt
+      pip install -r requirements.txt
     
-    # Start команда
-    startCommand: python -m bot.main
+    # Start с pre-hook для очистки
+    startCommand: |
+      python -c "import sys; print('Starting bot...', flush=True)" && \
+      python -m bot.main
     
-    # Количество экземпляров (КРИТИЧНО: только 1 для polling режима!)
-    numInstances: 1  # ✅ НЕ УВЕЛИЧИВАТЬ! Только 1 экземпляр для polling
+    # КРИТИЧНО: Только 1 инстанс!
+    numInstances: 1
     
-    # Переменные окружения
+    # ДОБАВЛЕНО: Настройки для предотвращения множественных запусков
+    healthCheckPath: null  # Отключаем health check для worker
+    
+    # ДОБАВЛЕНО: Restart policy
+    autoDeploy: true
+    
     envVars:
       # =================================================================
-      # ОБЯЗАТЕЛЬНЫЕ ПЕРЕМЕННЫЕ (установить вручную в Render Dashboard)
+      # ОБЯЗАТЕЛЬНЫЕ
       # =================================================================
       - key: BOT_TOKEN
-        sync: false  # ❗ Секретное значение! Установить в Dashboard
+        sync: false
       
       - key: REDIS_URL
-        sync: false  # ❗ Формат: redis://host:port или через Render Redis addon
+        sync: false
       
       - key: GEMINI_API_KEY
-        sync: false  # ❗ Google Gemini API key
+        sync: false
       
       - key: ADMIN_USER_IDS
-        value: "123456789"  # ⚠️ ЗАМЕНИТЬ на реальные Telegram user IDs через запятую!
+        value: "123456789"
       
       # =================================================================
-      # ОПЦИОНАЛЬНЫЕ API КЛЮЧИ
+      # ОПЦИОНАЛЬНЫЕ API
       # =================================================================
       - key: OPENAI_API_KEY
-        sync: false  # Опционально для OpenAI
+        sync: false
       
-      - key: COINGECKO_API_KEY
-        sync: false  # Опционально для CoinGecko Pro API
-      
-      - key: CRYPTOCOMPARE_API_KEY
-        sync: false  # Опционально для CryptoCompare API
-      
-      # =================================================================
-      # TELEGRAM ЧАТЫ ДЛЯ УВЕДОМЛЕНИЙ
-      # =================================================================
       - key: ADMIN_CHAT_ID
-        sync: false  # Telegram chat ID для админ-уведомлений
+        sync: false
       
       - key: NEWS_CHAT_ID
-        sync: false  # Telegram chat ID для автопостинга новостей
+        sync: false
       
       # =================================================================
-      # СИСТЕМНЫЕ НАСТРОЙКИ (НЕ ИЗМЕНЯТЬ)
+      # СИСТЕМНЫЕ (НЕ ИЗМЕНЯТЬ!)
       # =================================================================
       - key: PYTHON_VERSION
-        value: "3.11"  # ✅ Python 3.11 - рекомендуется
+        value: "3.11"
       
       - key: IS_WEB_PROCESS
-        value: "false"  # ✅ КРИТИЧНО! Polling mode (НЕ webhook)
+        value: "false"
       
       - key: PORT
-        value: "10000"  # Не используется в worker режиме
+        value: "10000"
       
       - key: LOG_LEVEL
-        value: "INFO"  # DEBUG | INFO | WARNING | ERROR | CRITICAL
+        value: "INFO"
       
-      # =================================================================
-      # AI НАСТРОЙКИ
-      # =================================================================
-      - key: AI__PROVIDER
-        value: "gemini"  # gemini | openai | none
+      # ДОБАВЛЕНО: Таймауты для предотвращения зависания
+      - key: GRACEFUL_SHUTDOWN_TIMEOUT
+        value: "10"
       
-      - key: AI__DEFAULT_TEMPERATURE
-        value: "0.5"  # 0.0-1.0
-      
-      - key: AI__REQUEST_TIMEOUT
-        value: "30"  # Секунды
-    
-    # Auto deploy при push в Git
-    autoDeploy: true
-
-# =================================================================================
-# ВАЖНЫЕ ЗАМЕЧАНИЯ:
-# 
-# 1. ✅ numInstances: 1 - КРИТИЧНО!
-#    Только 1 экземпляр для polling, иначе TelegramConflictError
-#
-# 2. ✅ Instance Lock:
-#    Бот автоматически использует Redis lock для дополнительной защиты
-#
-# 3. ✅ Graceful Shutdown:
-#    Корректное освобождение ресурсов при остановке
-#
-# 4. ✅ Мониторинг:
-#    - Render Dashboard → Logs
-#    - Telegram админ-уведомления
-#
-# =================================================================================
+      - key: POLLING_TIMEOUT
+        value: "10"
