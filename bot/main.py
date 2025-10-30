@@ -218,7 +218,6 @@ async def start_polling(bot: Bot, dp: Dispatcher, container: Container) -> None:
 async def main_async() -> None:
     """Главная асинхронная функция"""
     container = Container()
-    container.config.from_dict(settings.model_dump())
     
     bot, dp = setup_bot(container)
     register_handlers(dp, container)
