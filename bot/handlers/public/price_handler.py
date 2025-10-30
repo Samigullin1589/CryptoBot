@@ -16,9 +16,9 @@ router = Router(name="price_public")
 
 # Кэш цен с timestamp
 _price_cache: Dict[str, tuple[float, datetime]] = {}
-_CACHE_TTL = timedelta(seconds=60)  # 60 секунд кэш
+_CACHE_TTL = timedelta(seconds=60)
 
-# Популярные монеты по умолчанию
+# Популярные монеты (СИМВОЛЫ)
 DEFAULT_SYMBOLS = ["BTC", "ETH", "BNB", "SOL", "XRP", "ADA", "DOGE", "DOT", "TRX", "MATIC", "LTC", "AVAX"]
 
 
@@ -41,6 +41,7 @@ async def get_coin_id_by_symbol(deps: Deps, symbol: str) -> Optional[str]:
         coin_list_service = getattr(deps, "coin_list_service", None)
         if coin_list_service and hasattr(coin_list_service, "get_coin_id_by_symbol"):
             coin_id = await coin_list_service.get_coin_id_by_symbol(symbol.upper())
+            logger.debug(f"Resolved {symbol} -> {coin_id}")
             return coin_id
     except Exception as e:
         logger.warning(f"Failed to get coin_id for {symbol}: {e}")
@@ -77,7 +78,6 @@ async def get_price_cached(deps: Deps, coin_id: str) -> Optional[float]:
             logger.warning("price_service not available")
             return None
         
-        # Добавляем небольшую задержку между запросами
         await asyncio.sleep(0.1)
         
         price = await price_service.get_price(coin_id)
@@ -94,14 +94,15 @@ async def get_price_cached(deps: Deps, coin_id: str) -> Optional[float]:
 
 
 def get_price_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с топовыми криптовалютами"""
+    """Клавиатура с топовыми криптовалютами - передаем СИМВОЛЫ"""
     buttons = []
     row = []
     
     for i, symbol in enumerate(DEFAULT_SYMBOLS, 1):
         row.append(InlineKeyboardButton(
             text=symbol,
-            callback_data=PriceCallback(action="show", coin_id=symbol.lower()).pack()
+            # ВАЖНО: передаем СИМВОЛ, а не coin_id
+            callback_data=PriceCallback(action="show", coin_id=symbol).pack()
         ))
         if i % 3 == 0:
             buttons.append(row)
@@ -148,7 +149,7 @@ async def cmd_price(message: Message, deps: Deps) -> None:
 
 @router.callback_query(PriceCallback.filter(F.action == "open"))
 async def price_menu_handler(call: CallbackQuery, deps: Deps) -> None:
-    """Обработчик открытия меню цен из главного меню"""
+    """Обработчик открытия меню цен"""
     try:
         await call.answer()
         
@@ -164,7 +165,6 @@ async def price_menu_handler(call: CallbackQuery, deps: Deps) -> None:
         
     except Exception as e:
         logger.error(f"Error in price_menu_handler: {e}", exc_info=True)
-        
         try:
             await call.answer("⚠️ Произошла ошибка", show_alert=True)
         except Exception:
@@ -177,26 +177,29 @@ async def price_show_handler(call: CallbackQuery, deps: Deps, callback_data: Pri
     try:
         await call.answer("⏳ Загрузка...")
         
-        coin_id = callback_data.coin_id
-        if not coin_id:
+        input_value = callback_data.coin_id
+        if not input_value:
             await call.answer("⚠️ Не указана монета", show_alert=True)
             return
         
-        # Если передан символ, получаем coin_id
-        if coin_id.upper() in DEFAULT_SYMBOLS:
-            resolved_coin_id = await get_coin_id_by_symbol(deps, coin_id.upper())
-            if not resolved_coin_id:
-                # Fallback на простое преобразование
-                resolved_coin_id = coin_id.lower()
-            symbol = coin_id.upper()
-        else:
-            resolved_coin_id = coin_id
-            symbol = await get_symbol_by_coin_id(deps, coin_id)
-            if not symbol:
-                symbol = coin_id.upper()
+        # ВСЕГДА пытаемся преобразовать в coin_id через CoinListService
+        symbol = input_value.upper()
+        coin_id = await get_coin_id_by_symbol(deps, symbol)
+        
+        if not coin_id:
+            # Если не нашли через CoinListService, возможно это уже coin_id
+            coin_id = input_value.lower()
+            # Пытаемся получить символ обратно
+            resolved_symbol = await get_symbol_by_coin_id(deps, coin_id)
+            if resolved_symbol:
+                symbol = resolved_symbol.upper()
+            else:
+                symbol = input_value.upper()
+        
+        logger.info(f"Requesting price for symbol={symbol}, coin_id={coin_id}")
         
         # Получаем цену с кэшированием
-        price = await get_price_cached(deps, resolved_coin_id)
+        price = await get_price_cached(deps, coin_id)
         
         if price is None:
             text = (
@@ -224,7 +227,6 @@ async def price_show_handler(call: CallbackQuery, deps: Deps, callback_data: Pri
         
     except Exception as e:
         logger.error(f"Error in price_show_handler: {e}", exc_info=True)
-        
         try:
             await call.answer("⚠️ Произошла ошибка", show_alert=True)
         except Exception:
@@ -313,12 +315,9 @@ async def handle_coin_search(message: Message, deps: Deps) -> None:
 async def price_refresh_handler(call: CallbackQuery, deps: Deps) -> None:
     """Обновляет меню цен"""
     try:
-        # Очищаем кэш
         _price_cache.clear()
-        
         await call.answer("🔄 Кэш очищен")
         await price_menu_handler(call, deps)
-        
     except Exception as e:
         logger.error(f"Error in price_refresh_handler: {e}", exc_info=True)
         await call.answer("⚠️ Ошибка обновления", show_alert=True)
