@@ -48,6 +48,7 @@ class InstanceLockManager:
         self.redis = redis
         self.instance_id = f"{datetime.utcnow().timestamp()}"
         self.is_locked = False
+        self._keepalive_task: Optional[asyncio.Task] = None
     
     async def acquire_lock(self, force: bool = False) -> bool:
         """
@@ -74,7 +75,7 @@ class InstanceLockManager:
             if result:
                 self.is_locked = True
                 logger.info(f"🔒 Instance lock получен: {self.instance_id}")
-                asyncio.create_task(self._keep_alive())
+                self._keepalive_task = asyncio.create_task(self._keep_alive())
                 return True
             else:
                 existing = await self.redis.get(self.LOCK_KEY)
@@ -89,6 +90,14 @@ class InstanceLockManager:
         """Освободить блокировку"""
         if not self.is_locked:
             return
+        
+        # Останавливаем keepalive задачу
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except asyncio.CancelledError:
+                pass
         
         try:
             current = await self.redis.get(self.LOCK_KEY)
@@ -108,8 +117,8 @@ class InstanceLockManager:
                     await self.redis.expire(self.LOCK_KEY, self.LOCK_TTL)
             except asyncio.CancelledError:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Ошибка в keepalive: {e}")
 
 
 # =================================================================================
@@ -243,7 +252,6 @@ class Container(containers.DeclarativeContainer):
         http_client=http_client
     )
 
-    # ✅ ИСПРАВЛЕНО: MarketDataService принимает только http_client
     market_data_service = providers.Singleton(
         MarketDataService, 
         http_client=http_client
@@ -325,10 +333,16 @@ class Container(containers.DeclarativeContainer):
         bot=bot
     )
     
-    # ==================== INSTANCE LOCK ====================
-    instance_lock_manager: Optional[InstanceLockManager] = None
-
     # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._instance_lock_manager: Optional[InstanceLockManager] = None
+    
+    @property
+    def instance_lock_manager(self) -> Optional[InstanceLockManager]:
+        """Получить instance lock manager"""
+        return self._instance_lock_manager
     
     async def init_resources(self) -> None:
         """Инициализация всех ресурсов контейнера"""
@@ -339,8 +353,8 @@ class Container(containers.DeclarativeContainer):
             redis = await self.redis_client()
             
             # Создаем и получаем instance lock
-            self.instance_lock_manager = InstanceLockManager(redis)
-            lock_acquired = await self.instance_lock_manager.acquire_lock(force=False)
+            self._instance_lock_manager = InstanceLockManager(redis)
+            lock_acquired = await self._instance_lock_manager.acquire_lock(force=False)
             
             if not lock_acquired:
                 logger.critical("❌ Не удалось получить instance lock!")
@@ -363,8 +377,9 @@ class Container(containers.DeclarativeContainer):
             logger.info("🛑 Освобождение ресурсов контейнера...")
             
             # Освобождаем instance lock
-            if self.instance_lock_manager:
-                await self.instance_lock_manager.release_lock()
+            if self._instance_lock_manager:
+                await self._instance_lock_manager.release_lock()
+                self._instance_lock_manager = None
             
             # Закрываем провайдеры ресурсов
             if hasattr(self, '_singletons'):
