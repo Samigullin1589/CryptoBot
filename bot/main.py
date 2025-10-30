@@ -62,43 +62,69 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
     """Регистрация всех обработчиков"""
     logger.info("📝 Registering handlers...")
     
+    # Public handlers
     try:
-        from bot.handlers.public import command_handler, market_info_handler, price_handler
+        from bot.handlers import public
         
-        dp.include_router(command_handler.router)
-        dp.include_router(market_info_handler.router)
-        dp.include_router(price_handler.router)
-        logger.info("✅ Public handlers registered")
-    except ImportError as e:
-        logger.error(f"❌ Failed to import public handlers: {e}")
-        raise
+        if hasattr(public, 'router'):
+            dp.include_router(public.router)
+            logger.info("✅ Public handlers registered (router)")
+        else:
+            # Попытка импортировать отдельные модули
+            try:
+                from bot.handlers.public import command_handler_extended
+                dp.include_router(command_handler_extended.router)
+            except (ImportError, AttributeError):
+                pass
+                
+            try:
+                from bot.handlers.public import market_info_handler
+                dp.include_router(market_info_handler.router)
+            except (ImportError, AttributeError):
+                pass
+                
+            try:
+                from bot.handlers.public import price_handler
+                dp.include_router(price_handler.router)
+            except (ImportError, AttributeError):
+                pass
+                
+            logger.info("✅ Public handlers registered (individual)")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not register all public handlers: {e}")
     
+    # Game handlers
     try:
-        from bot.handlers.game import game_handler
-        dp.include_router(game_handler.router)
-        logger.info("✅ Game handlers registered")
+        from bot.handlers import game
+        if hasattr(game, 'router'):
+            dp.include_router(game.router)
+            logger.info("✅ Game handlers registered")
     except ImportError:
         logger.warning("⚠️ Game handlers not found, skipping")
     except Exception as e:
-        logger.error(f"❌ Error registering game handlers: {e}")
+        logger.warning(f"⚠️ Error registering game handlers: {e}")
     
+    # Mining handlers
     try:
-        from bot.handlers.mining import mining_handler
-        dp.include_router(mining_handler.router)
-        logger.info("✅ Mining handlers registered")
+        from bot.handlers import mining
+        if hasattr(mining, 'router'):
+            dp.include_router(mining.router)
+            logger.info("✅ Mining handlers registered")
     except ImportError:
         logger.warning("⚠️ Mining handlers not found, skipping")
     except Exception as e:
-        logger.error(f"❌ Error registering mining handlers: {e}")
+        logger.warning(f"⚠️ Error registering mining handlers: {e}")
     
+    # Admin handlers
     try:
-        from bot.handlers.admin import admin_handler
-        dp.include_router(admin_handler.router)
-        logger.info("✅ Admin handlers registered")
+        from bot.handlers import admin
+        if hasattr(admin, 'router'):
+            dp.include_router(admin.router)
+            logger.info("✅ Admin handlers registered")
     except ImportError:
         logger.warning("⚠️ Admin handlers not found, skipping")
     except Exception as e:
-        logger.error(f"❌ Error registering admin handlers: {e}")
+        logger.warning(f"⚠️ Error registering admin handlers: {e}")
     
     logger.info("✅ Handlers registration completed")
 
