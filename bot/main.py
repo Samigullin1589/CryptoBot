@@ -152,6 +152,10 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
     """Действия при остановке бота"""
     logger.info("🛑 Shutting down bot...")
     
+    # Освобождаем instance lock
+    if container.instance_lock_manager:
+        await container.instance_lock_manager.release_lock()
+    
     try:
         http_client = await container.http_client()
         if http_client and hasattr(http_client, 'close'):
@@ -224,11 +228,22 @@ async def main_async() -> None:
     """Главная асинхронная функция"""
     container = Container()
     
-    bot, dp = await setup_bot(container)
-    register_handlers(dp, container)
-    register_middlewares(dp, container)
+    # Инициализация ресурсов и проверка instance lock
+    try:
+        await container.init_resources()
+    except RuntimeError as e:
+        logger.error(f"❌ Cannot start: {e}")
+        logger.info("💡 Another instance is already running. Exiting...")
+        return
     
-    await start_polling(bot, dp, container)
+    try:
+        bot, dp = await setup_bot(container)
+        register_handlers(dp, container)
+        register_middlewares(dp, container)
+        
+        await start_polling(bot, dp, container)
+    finally:
+        await container.shutdown_resources()
 
 
 def main() -> None:
