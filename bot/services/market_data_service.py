@@ -1,5 +1,4 @@
 # bot/services/market_data_service.py
-
 import asyncio
 from typing import Dict, List, Optional
 from loguru import logger
@@ -9,30 +8,21 @@ from bot.utils.http_client import HTTPClient
 
 class MarketDataService:
     """Сервис для получения рыночных данных с множественных источников"""
-    
+
     PROVIDERS = {
-        "binance": {
-            "url": "https://api.binance.com/api/v3/ticker/price",
-            "priority": 1
-        },
-        "coinbase": {
-            "url": "https://api.coinbase.com/v2/exchange-rates",
-            "priority": 2
-        },
-        "kraken": {
-            "url": "https://api.kraken.com/0/public/Ticker",
-            "priority": 3
-        },
+        "binance": {"url": "https://api.binance.com/api/v3/ticker/price", "priority": 1},
+        "coinbase": {"url": "https://api.coinbase.com/v2/exchange-rates", "priority": 2},
+        "kraken": {"url": "https://api.kraken.com/0/public/Ticker", "priority": 3},
         "cryptocompare": {
             "url": "https://min-api.cryptocompare.com/data/price",
-            "priority": 4
+            "priority": 4,
         },
         "coingecko": {
             "url": "https://api.coingecko.com/api/v3/simple/price",
-            "priority": 5
-        }
+            "priority": 5,
+        },
     }
-    
+
     COIN_MAPPING = {
         "btc": {"binance": "BTCUSDT", "coinbase": "BTC", "kraken": "XXBTZUSD", "symbol": "BTC"},
         "eth": {"binance": "ETHUSDT", "coinbase": "ETH", "kraken": "XETHZUSD", "symbol": "ETH"},
@@ -52,6 +42,7 @@ class MarketDataService:
         "etc": {"binance": "ETCUSDT", "coinbase": "ETC", "kraken": "XETCZUSD", "symbol": "ETC"},
         "trx": {"binance": "TRXUSDT", "coinbase": "TRX", "kraken": "TRXUSD", "symbol": "TRX"},
         "eos": {"binance": "EOSUSDT", "coinbase": "EOS", "kraken": "EOSUSD", "symbol": "EOS"},
+        "bnb": {"binance": "BNBUSDT", "coinbase": "BNB", "kraken": "BNBUSD", "symbol": "BNB"},
     }
 
     def __init__(self, http_client: HTTPClient):
@@ -59,30 +50,39 @@ class MarketDataService:
         self.cache: Dict[str, Dict] = {}
         self.cache_ttl = 30
         self.last_fetch = {}
+        self._session_cache: Optional[aiohttp.ClientSession] = None
         logger.info("Сервис MarketDataService инициализирован.")
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Получить сессию из http_client"""
+        if self._session_cache is None or self._session_cache.closed:
+            self._session_cache = await self.http_client._get_session()
+        return self._session_cache
 
     async def get_prices(self, coin_ids: List[str]) -> Dict[str, Optional[float]]:
         """Получить цены для списка монет с fallback на множество провайдеров"""
         result = {}
-        
+
         for coin_id in coin_ids:
             price = await self._get_price_with_fallback(coin_id)
             result[coin_id] = price
-            
+
         return result
 
     async def _get_price_with_fallback(self, coin_id: str) -> Optional[float]:
         """Получить цену с автоматическим переключением между провайдерами"""
-        
+
         # Проверка кэша
         if coin_id in self.cache:
             cache_entry = self.cache[coin_id]
-            if (asyncio.get_event_loop().time() - cache_entry.get("timestamp", 0)) < self.cache_ttl:
+            if (
+                asyncio.get_event_loop().time() - cache_entry.get("timestamp", 0)
+            ) < self.cache_ttl:
                 return cache_entry.get("price")
-        
+
         # Попытка получить данные от всех провайдеров по приоритету
         providers = sorted(self.PROVIDERS.items(), key=lambda x: x[1]["priority"])
-        
+
         for provider_name, provider_config in providers:
             try:
                 price = await self._fetch_from_provider(provider_name, coin_id)
@@ -91,26 +91,34 @@ class MarketDataService:
                     self.cache[coin_id] = {
                         "price": price,
                         "timestamp": asyncio.get_event_loop().time(),
-                        "provider": provider_name
+                        "provider": provider_name,
                     }
-                    logger.debug(f"Получена цена {coin_id} от {provider_name}: ${price}")
+                    logger.debug(
+                        f"Получена цена {coin_id} от {provider_name}: ${price}"
+                    )
                     return price
             except Exception as e:
-                logger.warning(f"Провайдер {provider_name} недоступен для {coin_id}: {e}")
+                logger.debug(
+                    f"Провайдер {provider_name} недоступен для {coin_id}: {e}"
+                )
                 continue
-        
-        logger.error(f"Не удалось получить цену для {coin_id} ни от одного провайдера")
+
+        logger.warning(
+            f"Не удалось получить цену для {coin_id} ни от одного провайдера"
+        )
         return None
 
-    async def _fetch_from_provider(self, provider: str, coin_id: str) -> Optional[float]:
+    async def _fetch_from_provider(
+        self, provider: str, coin_id: str
+    ) -> Optional[float]:
         """Получить цену от конкретного провайдера"""
-        
+
         if coin_id not in self.COIN_MAPPING:
             logger.warning(f"Неизвестная монета: {coin_id}")
             return None
-        
+
         coin_data = self.COIN_MAPPING[coin_id]
-        
+
         if provider == "binance":
             return await self._fetch_binance(coin_data.get("binance"))
         elif provider == "coinbase":
@@ -121,17 +129,20 @@ class MarketDataService:
             return await self._fetch_cryptocompare(coin_data.get("symbol"))
         elif provider == "coingecko":
             return await self._fetch_coingecko(coin_id)
-        
+
         return None
 
     async def _fetch_binance(self, symbol: str) -> Optional[float]:
         """Binance API"""
         if not symbol:
             return None
-        
+
         try:
+            session = await self._get_session()
             url = f"{self.PROVIDERS['binance']['url']}?symbol={symbol}"
-            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return float(data.get("price", 0))
@@ -143,10 +154,13 @@ class MarketDataService:
         """Coinbase API"""
         if not currency:
             return None
-        
+
         try:
+            session = await self._get_session()
             url = f"{self.PROVIDERS['coinbase']['url']}?currency=USD"
-            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     rates = data.get("data", {}).get("rates", {})
@@ -161,10 +175,13 @@ class MarketDataService:
         """Kraken API"""
         if not pair:
             return None
-        
+
         try:
+            session = await self._get_session()
             url = f"{self.PROVIDERS['kraken']['url']}?pair={pair}"
-            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     if data.get("error"):
@@ -182,10 +199,13 @@ class MarketDataService:
         """CryptoCompare API"""
         if not symbol:
             return None
-        
+
         try:
+            session = await self._get_session()
             url = f"{self.PROVIDERS['cryptocompare']['url']}?fsym={symbol}&tsyms=USD"
-            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return float(data.get("USD", 0))
@@ -196,8 +216,11 @@ class MarketDataService:
     async def _fetch_coingecko(self, coin_id: str) -> Optional[float]:
         """CoinGecko API (последний fallback)"""
         try:
+            session = await self._get_session()
             url = f"{self.PROVIDERS['coingecko']['url']}?ids={coin_id}&vs_currencies=usd"
-            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return float(data.get(coin_id, {}).get("usd", 0))
@@ -208,9 +231,12 @@ class MarketDataService:
     async def get_btc_network_status(self) -> Optional[Dict]:
         """Получить статус сети Bitcoin"""
         try:
+            session = await self._get_session()
             # Используем blockchain.info API
             url = "https://blockchain.info/stats?format=json"
-            async with self.http_client.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            async with session.get(
+                url, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return {
@@ -221,7 +247,7 @@ class MarketDataService:
                     }
         except Exception as e:
             logger.error(f"Ошибка получения статуса BTC сети: {e}")
-        
+
         return None
 
     def clear_cache(self):
