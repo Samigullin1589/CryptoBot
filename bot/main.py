@@ -234,7 +234,6 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info(f"📝 Log level: {settings.log_level}")
     logger.info(f"🔧 Mode: Polling (Worker)")
-    logger.info(f"🌍 Port: {settings.port}")
     logger.info("=" * 60)
     
     try:
