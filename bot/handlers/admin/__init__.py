@@ -1,14 +1,16 @@
-# =============================================================================
-# Файл: bot/handlers/admin/__init__.py
-# Версия: "Distinguished Engineer" — ИСПРАВЛЕННАЯ СБОРКА (25 августа 2025)
-# Описание:
-#   • ИСПРАВЛЕНО: Удалена логика агрегации роутеров.
-#     Файл теперь просто экспортирует все админские роутеры.
-# =============================================================================
-
+# bot/handlers/admin/__init__.py
 from aiogram import Router
 
-# Единый роутер для экспорта, как и в public
+# Создаем роутер для админки
 admin_router = Router(name="admin_handlers")
 
-# Вся логика `include_routers` перенесена в `bot/main.py`.
+# Импортируем обработчики
+try:
+    from .admin_handler import router as admin_handler_router
+    admin_router.include_router(admin_handler_router)
+except ImportError as e:
+    print(f"⚠️ Warning: Could not import admin_handler: {e}")
+
+__all__ = ["admin_router"]
+
+print(f"✅ Admin router configured")

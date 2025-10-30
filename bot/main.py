@@ -54,19 +54,54 @@ async def setup_bot() -> tuple[Bot, Dispatcher]:
 async def register_handlers(dp: Dispatcher) -> None:
     logger.info("📝 Registering handlers...")
     
+    handlers_registered = 0
+    
+    # Public handlers
     try:
         from bot.handlers.public import public_router
-        from bot.handlers.admin import admin_router
-        from bot.handlers.game import game_router, mining_router
-        
         dp.include_router(public_router)
-        dp.include_router(game_router)
-        dp.include_router(mining_router)
-        dp.include_router(admin_router)
-        
-        logger.info("✅ Handlers registered successfully")
+        handlers_registered += 1
+        logger.info("✅ Public handlers registered")
     except ImportError as e:
-        logger.warning(f"⚠️ Some handlers not found: {e}")
+        logger.warning(f"⚠️ Public handlers not found: {e}")
+    
+    # Game handlers
+    try:
+        from bot.handlers.game import game_router
+        dp.include_router(game_router)
+        handlers_registered += 1
+        logger.info("✅ Game handlers registered")
+    except ImportError as e:
+        logger.warning(f"⚠️ Game handlers not found: {e}")
+    except Exception as e:
+        logger.warning(f"⚠️ Game handlers import error: {e}")
+    
+    # Mining handlers
+    try:
+        from bot.handlers.game import mining_router
+        dp.include_router(mining_router)
+        handlers_registered += 1
+        logger.info("✅ Mining handlers registered")
+    except ImportError as e:
+        logger.warning(f"⚠️ Mining handlers not found: {e}")
+    except Exception as e:
+        logger.warning(f"⚠️ Mining handlers import error: {e}")
+    
+    # Admin handlers
+    try:
+        from bot.handlers.admin import admin_router
+        dp.include_router(admin_router)
+        handlers_registered += 1
+        logger.info("✅ Admin handlers registered")
+    except ImportError as e:
+        logger.warning(f"⚠️ Admin handlers not found: {e}")
+    except Exception as e:
+        logger.warning(f"⚠️ Admin handlers import error: {e}")
+    
+    if handlers_registered == 0:
+        raise RuntimeError("❌ No handlers registered! Cannot start bot.")
+    
+    logger.info(f"✅ Handlers registered successfully: {handlers_registered} routers")
 
 
 async def register_middlewares(dp: Dispatcher) -> None:
@@ -210,7 +245,7 @@ async def start_webhook() -> None:
     host = "0.0.0.0"
     port = settings.PORT
     
-    logger.info(f"🌐 Starting webhook server on {host}:{port}")
+    logger.info(f"🌍 Starting webhook server on {host}:{port}")
     
     app = create_app()
     
@@ -220,7 +255,7 @@ async def start_webhook() -> None:
     await site.start()
     
     logger.info(f"✅ Webhook server started at http://{host}:{port}")
-    logger.info(f"📍 Webhook endpoint: /webhook/bot")
+    logger.info(f"🔗 Webhook endpoint: /webhook/bot")
     logger.info(f"❤️ Health check: http://{host}:{port}/health")
     
     await shutdown_event.wait()
