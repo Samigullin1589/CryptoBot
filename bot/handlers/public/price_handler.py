@@ -9,6 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 from loguru import logger
+import aiohttp
 
 from bot.keyboards.callback_factories import PriceCallback
 from bot.utils.dependencies import Deps
@@ -19,21 +20,23 @@ router = Router(name="price_public")
 _price_cache: Dict[str, tuple[float, datetime]] = {}
 _CACHE_TTL = timedelta(seconds=60)
 
-# Популярные монеты (СИМВОЛЫ)
-DEFAULT_SYMBOLS = [
-    "BTC",
-    "ETH",
-    "BNB",
-    "SOL",
-    "XRP",
-    "ADA",
-    "DOGE",
-    "DOT",
-    "TRX",
-    "MATIC",
-    "LTC",
-    "AVAX",
-]
+# Популярные монеты (СИМВОЛЫ -> coin_id для CoinGecko)
+COIN_MAP = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "BNB": "binancecoin",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+    "DOT": "polkadot",
+    "TRX": "tron",
+    "MATIC": "matic-network",
+    "LTC": "litecoin",
+    "AVAX": "avalanche-2",
+}
+
+DEFAULT_SYMBOLS = list(COIN_MAP.keys())
 
 
 def _fmt_price(p: Optional[float]) -> str:
@@ -49,8 +52,53 @@ def _fmt_price(p: Optional[float]) -> str:
     return f"{p:.8f}".rstrip("0").rstrip(".")
 
 
+async def fetch_price_coingecko(coin_id: str) -> Optional[float]:
+    """Получение цены через CoinGecko API (бесплатный)"""
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    price = data.get(coin_id, {}).get("usd")
+                    if price:
+                        logger.debug(f"CoinGecko: {coin_id} = ${price}")
+                        return float(price)
+    except Exception as e:
+        logger.warning(f"CoinGecko failed for {coin_id}: {e}")
+    
+    return None
+
+
+async def fetch_price_binance(symbol: str) -> Optional[float]:
+    """Получение цены через Binance Public API (бесплатный)"""
+    trading_pair = f"{symbol}USDT"
+    url = f"https://api.binance.com/api/v3/ticker/price?symbol={trading_pair}"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    price = data.get("price")
+                    if price:
+                        logger.debug(f"Binance: {symbol} = ${price}")
+                        return float(price)
+    except Exception as e:
+        logger.warning(f"Binance failed for {symbol}: {e}")
+    
+    return None
+
+
 async def get_coin_id_by_symbol(deps: Deps, symbol: str) -> Optional[str]:
-    """Получает coin_id по символу через CoinListService"""
+    """Получает coin_id по символу"""
+    # Сначала проверяем встроенную карту
+    coin_id = COIN_MAP.get(symbol.upper())
+    if coin_id:
+        return coin_id
+    
+    # Пытаемся через CoinListService
     try:
         coin_list_service = getattr(deps, "coin_list_service", None)
         if coin_list_service and hasattr(coin_list_service, "get_coin_id_by_symbol"):
@@ -59,11 +107,18 @@ async def get_coin_id_by_symbol(deps: Deps, symbol: str) -> Optional[str]:
             return coin_id
     except Exception as e:
         logger.warning(f"Failed to get coin_id for {symbol}: {e}")
+    
     return None
 
 
 async def get_symbol_by_coin_id(deps: Deps, coin_id: str) -> Optional[str]:
-    """Получает символ по coin_id через CoinListService"""
+    """Получает символ по coin_id"""
+    # Проверяем встроенную карту
+    for symbol, cid in COIN_MAP.items():
+        if cid == coin_id:
+            return symbol
+    
+    # Пытаемся через CoinListService
     try:
         coin_list_service = getattr(deps, "coin_list_service", None)
         if coin_list_service and hasattr(coin_list_service, "get_symbol_by_coin_id"):
@@ -71,44 +126,54 @@ async def get_symbol_by_coin_id(deps: Deps, coin_id: str) -> Optional[str]:
             return symbol
     except Exception as e:
         logger.warning(f"Failed to get symbol for {coin_id}: {e}")
+    
     return None
 
 
-async def get_price_cached(deps: Deps, coin_id: str) -> Optional[float]:
-    """Получает цену с кэшированием"""
+async def get_price_cached(deps: Deps, symbol: str, coin_id: str) -> Optional[float]:
+    """Получает цену с кэшированием и fallback на бесплатные API"""
     now = datetime.now()
 
     # Проверяем кэш
-    if coin_id in _price_cache:
-        cached_price, cached_time = _price_cache[coin_id]
+    cache_key = f"{symbol}:{coin_id}"
+    if cache_key in _price_cache:
+        cached_price, cached_time = _price_cache[cache_key]
         if now - cached_time < _CACHE_TTL:
-            logger.debug(f"Cache hit for {coin_id}: {cached_price}")
+            logger.debug(f"Cache hit for {cache_key}: {cached_price}")
             return cached_price
 
-    # Запрашиваем свежую цену
+    price = None
+
+    # Пытаемся через price_service
     try:
         price_service = getattr(deps, "price_service", None)
-        if not price_service or not hasattr(price_service, "get_price"):
-            logger.warning("price_service not available")
-            return None
-
-        await asyncio.sleep(0.1)
-
-        price = await price_service.get_price(coin_id)
-        if price is not None:
-            price = float(price)
-            _price_cache[coin_id] = (price, now)
-            logger.debug(f"Fetched and cached price for {coin_id}: {price}")
-            return price
-
+        if price_service and hasattr(price_service, "get_price"):
+            await asyncio.sleep(0.1)
+            price = await price_service.get_price(coin_id)
+            if price is not None:
+                price = float(price)
+                logger.debug(f"PriceService: {coin_id} = ${price}")
     except Exception as e:
-        logger.error(f"Error getting price for {coin_id}: {e}")
+        logger.warning(f"PriceService failed for {coin_id}: {e}")
 
-    return None
+    # Fallback #1: CoinGecko
+    if price is None and coin_id:
+        price = await fetch_price_coingecko(coin_id)
+
+    # Fallback #2: Binance
+    if price is None and symbol:
+        price = await fetch_price_binance(symbol)
+
+    # Кэшируем результат
+    if price is not None:
+        _price_cache[cache_key] = (price, now)
+        logger.debug(f"Fetched and cached price for {cache_key}: {price}")
+
+    return price
 
 
 def get_price_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с топовыми криптовалютами - передаем СИМВОЛЫ"""
+    """Клавиатура с топовыми криптовалютами"""
     buttons = []
     row = []
 
@@ -189,24 +254,20 @@ async def price_show_handler(
             await call.answer("⚠️ Не указана монета", show_alert=True)
             return
 
-        # ВСЕГДА пытаемся преобразовать в coin_id через CoinListService
+        # Преобразуем в symbol и coin_id
         symbol = input_value.upper()
         coin_id = await get_coin_id_by_symbol(deps, symbol)
 
         if not coin_id:
-            # Если не нашли через CoinListService, возможно это уже coin_id
             coin_id = input_value.lower()
-            # Пытаемся получить символ обратно
             resolved_symbol = await get_symbol_by_coin_id(deps, coin_id)
             if resolved_symbol:
                 symbol = resolved_symbol.upper()
-            else:
-                symbol = input_value.upper()
 
         logger.info(f"Requesting price for symbol={symbol}, coin_id={coin_id}")
 
-        # Получаем цену с кэшированием
-        price = await get_price_cached(deps, coin_id)
+        # Получаем цену с fallback на бесплатные API
+        price = await get_price_cached(deps, symbol, coin_id)
 
         if price is None:
             text = (

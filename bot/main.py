@@ -152,33 +152,8 @@ async def on_shutdown(bot: Bot, container: Container) -> None:
     """Действия при остановке бота"""
     logger.info("🛑 Shutting down bot...")
     
-    # Освобождаем instance lock
-    if container.instance_lock_manager:
-        await container.instance_lock_manager.release_lock()
-    
-    try:
-        http_client = await container.http_client()
-        if http_client and hasattr(http_client, 'close'):
-            await http_client.close()
-            logger.info("✅ HTTP client closed")
-    except Exception as e:
-        logger.error(f"❌ Error closing HTTP client: {e}")
-    
-    try:
-        redis = await container.redis_client()
-        if redis and hasattr(redis, 'aclose'):
-            await redis.aclose()
-            logger.info("✅ Redis connection closed")
-    except Exception as e:
-        logger.error(f"❌ Error closing Redis: {e}")
-    
-    try:
-        if bot and hasattr(bot, 'session') and bot.session:
-            if hasattr(bot.session, 'close'):
-                await bot.session.close()
-                logger.info("✅ Bot session closed")
-    except Exception as e:
-        logger.error(f"❌ Error closing bot session: {e}")
+    # Освобождаем ресурсы через контейнер
+    await container.shutdown_resources()
     
     logger.info("✅ Bot stopped gracefully")
 

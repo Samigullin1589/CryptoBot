@@ -1,391 +1,283 @@
 # bot/containers.py
-
 import asyncio
-from typing import AsyncIterator, Optional
-from datetime import datetime
+from typing import Optional
 
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
-from aiogram import Bot
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiohttp import ClientSession, TCPConnector
 from loguru import logger
 
-from bot.config.settings import Settings
-from bot.services.achievement_service import AchievementService
-from bot.services.admin_service import AdminService
-from bot.services.asic_service import AsicService
-from bot.services.coin_alias_service import CoinAliasService
-from bot.services.coin_list_service import CoinListService
-from bot.services.crypto_center_service import CryptoCenterService
-from bot.services.market_data_service import MarketDataService
-from bot.services.mining_game_service import MiningGameService
-from bot.services.news_service import NewsService
-from bot.services.price_service import PriceService
-from bot.services.quiz_service import QuizService
-from bot.services.user_service import UserService
-from bot.services.verification_service import VerificationService
-from bot.services.ai_content_service import AIContentService
-from bot.utils.http_client import HTTPClient
-from bot.services.parser_service import ParserService
-from bot.services.mining_service import MiningService
-from bot.services.moderation_service import ModerationService
-from bot.services.security_service import SecurityService
-from bot.services.image_vision_service import ImageVisionService
+from bot.config.settings import settings
 
-
-# =================================================================================
-# INSTANCE LOCK MANAGER
-# =================================================================================
 
 class InstanceLockManager:
     """Менеджер блокировки для предотвращения множественных запусков"""
     
-    LOCK_KEY = "bot:instance:lock"
-    LOCK_TTL = 300  # 5 минут
-    
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: Redis, lock_key: str = "bot:instance_lock", ttl: int = 30):
         self.redis = redis
-        self.instance_id = f"{datetime.utcnow().timestamp()}"
-        self.is_locked = False
-        self._keepalive_task: Optional[asyncio.Task] = None
+        self.lock_key = lock_key
+        self.ttl = ttl
+        self._lock_acquired = False
+        self._refresh_task: Optional[asyncio.Task] = None
     
-    async def acquire_lock(self, force: bool = False) -> bool:
-        """
-        Получить блокировку запуска бота
-        
-        Args:
-            force: Принудительно захватить блокировку
-            
-        Returns:
-            True если блокировка получена
-        """
+    async def acquire_lock(self) -> bool:
+        """Попытка захвата блокировки"""
         try:
-            if force:
-                await self.redis.delete(self.LOCK_KEY)
-                logger.warning("🔓 Принудительное удаление старой блокировки")
-            
+            # NX = устанавливаем только если ключ не существует
+            # EX = TTL в секундах
             result = await self.redis.set(
-                self.LOCK_KEY,
-                self.instance_id,
+                self.lock_key,
+                "1",
                 nx=True,
-                ex=self.LOCK_TTL
+                ex=self.ttl
             )
             
             if result:
-                self.is_locked = True
-                logger.info(f"🔒 Instance lock получен: {self.instance_id}")
-                self._keepalive_task = asyncio.create_task(self._keep_alive())
+                self._lock_acquired = True
+                self._refresh_task = asyncio.create_task(self._refresh_lock())
+                logger.info(f"✅ Instance lock acquired: {self.lock_key}")
                 return True
             else:
-                existing = await self.redis.get(self.LOCK_KEY)
-                logger.error(f"❌ Instance lock уже занят: {existing}")
+                logger.warning(f"⚠️ Instance lock already held by another process")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Ошибка получения lock: {e}")
+            logger.error(f"❌ Failed to acquire lock: {e}")
             return False
     
+    async def _refresh_lock(self):
+        """Периодическое обновление TTL блокировки"""
+        try:
+            while self._lock_acquired:
+                await asyncio.sleep(self.ttl / 2)
+                if self._lock_acquired:
+                    await self.redis.expire(self.lock_key, self.ttl)
+                    logger.debug(f"🔄 Lock TTL refreshed: {self.lock_key}")
+        except asyncio.CancelledError:
+            logger.debug("Lock refresh task cancelled")
+        except Exception as e:
+            logger.error(f"Error refreshing lock: {e}")
+    
     async def release_lock(self):
-        """Освободить блокировку"""
-        if not self.is_locked:
+        """Освобождение блокировки"""
+        if not self._lock_acquired:
             return
         
-        # Останавливаем keepalive задачу
-        if self._keepalive_task and not self._keepalive_task.done():
-            self._keepalive_task.cancel()
-            try:
-                await self._keepalive_task
-            except asyncio.CancelledError:
-                pass
-        
         try:
-            current = await self.redis.get(self.LOCK_KEY)
-            if current == self.instance_id:
-                await self.redis.delete(self.LOCK_KEY)
-                logger.info(f"🔓 Instance lock освобожден: {self.instance_id}")
-            self.is_locked = False
+            self._lock_acquired = False
+            
+            if self._refresh_task:
+                self._refresh_task.cancel()
+                try:
+                    await self._refresh_task
+                except asyncio.CancelledError:
+                    pass
+            
+            await self.redis.delete(self.lock_key)
+            logger.info(f"✅ Instance lock released: {self.lock_key}")
+            
         except Exception as e:
-            logger.error(f"❌ Ошибка освобождения lock: {e}")
+            logger.error(f"Error releasing lock: {e}")
+
+
+class Container(containers.DynamicContainer):
+    """DI контейнер приложения"""
     
-    async def _keep_alive(self):
-        """Периодически обновлять TTL блокировки"""
-        while self.is_locked:
-            try:
-                await asyncio.sleep(self.LOCK_TTL // 2)
-                if self.is_locked:
-                    await self.redis.expire(self.LOCK_KEY, self.LOCK_TTL)
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Ошибка в keepalive: {e}")
-
-
-# =================================================================================
-# RESOURCE FACTORIES
-# =================================================================================
-
-async def init_redis_client(url: str) -> AsyncIterator[Redis]:
-    """Фабрика для создания Redis клиента"""
-    client = await Redis.from_url(
-        url,
+    config = providers.Configuration()
+    
+    # Redis клиент
+    redis_client = providers.Singleton(
+        Redis.from_url,
+        url=settings.redis_url,
         encoding="utf-8",
         decode_responses=True,
         socket_connect_timeout=5,
-        socket_timeout=5,
-        max_connections=10
+        socket_keepalive=True,
+        health_check_interval=30,
     )
     
-    try:
-        await client.ping()
-        logger.info("✅ Redis client initialized")
-        yield client
-    finally:
-        await client.aclose()
-        logger.info("✅ Redis client closed")
-
-
-async def init_http_client(config: dict) -> AsyncIterator[HTTPClient]:
-    """Фабрика для создания HTTP клиента"""
-    client = HTTPClient(config=config)
-    
-    try:
-        logger.info("✅ HTTP client initialized")
-        yield client
-    finally:
-        await client.close()
-        logger.info("✅ HTTP client closed")
-
-
-async def init_bot(token: str) -> AsyncIterator[Bot]:
-    """Фабрика для создания Bot"""
-    bot = Bot(
-        token=token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    # HTTP клиент
+    http_client = providers.Singleton(
+        ClientSession,
+        connector=TCPConnector(
+            limit=100,
+            limit_per_host=30,
+            ttl_dns_cache=300,
+            ssl=False,
+        ),
+        timeout=providers.Object(
+            __import__('aiohttp').ClientTimeout(total=30, connect=10)
+        ),
     )
     
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        await asyncio.sleep(1)
-        
-        me = await bot.get_me()
-        logger.info(f"✅ Bot initialized: @{me.username} (ID: {me.id})")
-        yield bot
-    finally:
-        if bot.session:
-            await bot.session.close()
-        logger.info("✅ Bot session closed")
-
-
-# =================================================================================
-# MAIN CONTAINER
-# =================================================================================
-
-class Container(containers.DeclarativeContainer):
-    """Основной контейнер приложения"""
+    # Instance Lock Manager
+    instance_lock_manager = providers.Singleton(
+        InstanceLockManager,
+        redis=redis_client,
+        lock_key="bot:instance_lock",
+        ttl=30,
+    )
     
-    wiring_config = containers.WiringConfiguration(
-        modules=[
-            "bot.main", 
-            "bot.utils.dependencies", 
-            "bot.jobs.scheduled_tasks",
-        ],
-        packages=[
-            "bot.handlers", 
-            "bot.middlewares",
-        ],
+    # Bot
+    bot = providers.Singleton(
+        __import__('aiogram').Bot,
+        token=settings.bot_token,
+        parse_mode="HTML",
     )
-
-    # ==================== КОНФИГУРАЦИЯ ====================
-    config = providers.Singleton(Settings)
-
-    bot_token = providers.Callable(
-        lambda cfg: cfg.BOT_TOKEN.get_secret_value() if cfg.BOT_TOKEN else "",
-        config
-    )
-
-    # ==================== РЕСУРСЫ ====================
     
-    redis_client = providers.Resource(
-        init_redis_client,
-        url=config.provided.REDIS_URL
-    )
-
-    http_client = providers.Resource(
-        init_http_client,
-        config=config.provided.endpoints
-    )
-
-    bot = providers.Resource(
-        init_bot,
-        token=bot_token
-    )
-
-    # ==================== СЕРВИСЫ ====================
-    
-    ai_content_service = providers.Singleton(AIContentService)
-
+    # Services - ленивая инициализация
     image_vision_service = providers.Singleton(
-        ImageVisionService, 
-        ai_service=ai_content_service
+        lambda: __import__('bot.services.image_vision_service', fromlist=['ImageVisionService']).ImageVisionService(),
     )
-
-    user_service = providers.Singleton(
-        UserService, 
-        redis_client=redis_client
-    )
-
-    coin_list_service = providers.Singleton(
-        CoinListService, 
-        redis_client=redis_client, 
-        http_client=http_client, 
-        config=config.provided.coin_list_service
-    )
-
-    coin_alias_service = providers.Singleton(
-        CoinAliasService, 
-        redis_client=redis_client
-    )
-
-    parser_service = providers.Singleton(
-        ParserService, 
-        http_client=http_client
-    )
-
-    market_data_service = providers.Singleton(
-        MarketDataService, 
-        http_client=http_client
-    )
-
-    price_service = providers.Singleton(
-        PriceService, 
-        redis_client=redis_client, 
-        market_data_service=market_data_service, 
-        config=config.provided.price_service
-    )
-
-    news_service = providers.Singleton(
-        NewsService, 
-        redis_client=redis_client, 
-        http_client=http_client
-    )
-
-    quiz_service = providers.Singleton(
-        QuizService, 
-        ai_content_service=ai_content_service
-    )
-
-    achievement_service = providers.Singleton(
-        AchievementService, 
-        market_data_service=market_data_service, 
-        redis_client=redis_client
-    )
-
-    asic_service = providers.Singleton(
-        AsicService, 
-        parser_service=parser_service, 
-        redis_client=redis_client
-    )
-
-    crypto_center_service = providers.Singleton(
-        CryptoCenterService, 
-        ai_service=ai_content_service, 
-        news_service=news_service, 
-        redis_client=redis_client
-    )
-
-    mining_service = providers.Singleton(
-        MiningService, 
-        market_data_service=market_data_service
-    )
-
-    mining_game_service = providers.Singleton(
-        MiningGameService, 
-        user_service=user_service, 
-        asic_service=asic_service, 
-        achievement_service=achievement_service, 
-        redis_client=redis_client
-    )
-
-    verification_service = providers.Singleton(
-        VerificationService, 
-        user_service=user_service
-    )
-
+    
     admin_service = providers.Singleton(
-        AdminService, 
-        redis_client=redis_client, 
-        bot=bot
+        lambda redis: __import__('bot.services.admin_service', fromlist=['AdminService']).AdminService(redis),
+        redis=redis_client,
     )
-
+    
+    user_service = providers.Singleton(
+        lambda redis: __import__('bot.services.user_service', fromlist=['UserService']).UserService(redis),
+        redis=redis_client,
+    )
+    
+    market_data_service = providers.Singleton(
+        lambda http: __import__('bot.services.market_data_service', fromlist=['MarketDataService']).MarketDataService(http),
+        http_client=http_client,
+    )
+    
+    parser_service = providers.Singleton(
+        lambda http: __import__('bot.services.parser_service', fromlist=['ParserService']).ParserService(http),
+        http_client=http_client,
+    )
+    
+    news_service = providers.Singleton(
+        lambda http: __import__('bot.services.news_service', fromlist=['NewsService']).NewsService(http),
+        http_client=http_client,
+    )
+    
     moderation_service = providers.Singleton(
-        ModerationService, 
-        redis_client=redis_client, 
-        bot=bot
+        lambda: __import__('bot.services.moderation_service', fromlist=['ModerationService']).ModerationService(),
     )
-
+    
+    coin_list_service = providers.Singleton(
+        lambda http, redis: __import__('bot.services.coin_list_service', fromlist=['CoinListService']).CoinListService(http, redis),
+        http_client=http_client,
+        redis_client=redis_client,
+    )
+    
+    verification_service = providers.Singleton(
+        lambda redis: __import__('bot.services.verification_service', fromlist=['VerificationService']).VerificationService(redis),
+        redis=redis_client,
+    )
+    
+    price_service = providers.Singleton(
+        lambda http: __import__('bot.services.price_service', fromlist=['PriceService']).PriceService(http),
+        http_client=http_client,
+    )
+    
+    achievement_service = providers.Singleton(
+        lambda redis: __import__('bot.services.achievement_service', fromlist=['AchievementService']).AchievementService(redis),
+        redis=redis_client,
+    )
+    
+    mining_service = providers.Singleton(
+        lambda redis: __import__('bot.services.mining_service', fromlist=['MiningService']).MiningService(redis),
+        redis=redis_client,
+    )
+    
+    asic_service = providers.Singleton(
+        lambda redis: __import__('bot.services.asic_service', fromlist=['AsicService']).AsicService(redis),
+        redis=redis_client,
+    )
+    
+    crypto_center_service = providers.Singleton(
+        lambda redis: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(redis),
+        redis=redis_client,
+    )
+    
     security_service = providers.Singleton(
-        SecurityService, 
-        ai_content_service=ai_content_service, 
-        image_vision_service=image_vision_service, 
-        moderation_service=moderation_service, 
-        redis_client=redis_client, 
-        bot=bot
+        lambda redis: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(redis),
+        redis=redis_client,
     )
     
-    # ==================== ПУБЛИЧНЫЕ МЕТОДЫ ====================
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._instance_lock_manager: Optional[InstanceLockManager] = None
-    
-    @property
-    def instance_lock_manager(self) -> Optional[InstanceLockManager]:
-        """Получить instance lock manager"""
-        return self._instance_lock_manager
+    mining_game_service = providers.Singleton(
+        lambda redis: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(redis),
+        redis=redis_client,
+    )
     
     async def init_resources(self) -> None:
-        """Инициализация всех ресурсов контейнера"""
+        """Инициализация ресурсов и получение блокировки"""
+        logger.info("🔧 Initializing container resources...")
+        
+        # Инициализируем Redis
         try:
-            logger.info("🔧 Инициализация ресурсов контейнера...")
-            
-            # Инициализируем Redis
             redis = await self.redis_client()
-            
-            # Создаем и получаем instance lock
-            self._instance_lock_manager = InstanceLockManager(redis)
-            lock_acquired = await self._instance_lock_manager.acquire_lock(force=False)
-            
-            if not lock_acquired:
-                logger.critical("❌ Не удалось получить instance lock!")
-                raise RuntimeError("Failed to acquire instance lock")
-            
-            # Инициализируем остальные ресурсы
-            await self.http_client()
-            await self.bot()
-            
-            logger.info("✅ Все ресурсы инициализированы")
-            
+            await redis.ping()
+            logger.info("✅ Redis connected")
         except Exception as e:
-            logger.error(f"❌ Ошибка инициализации ресурсов: {e}")
-            await self.shutdown_resources()
+            logger.error(f"❌ Redis connection failed: {e}")
+            raise
+        
+        # Получаем блокировку инстанса
+        try:
+            lock_manager = await self.instance_lock_manager()
+            acquired = await lock_manager.acquire_lock()
+            
+            if not acquired:
+                raise RuntimeError(
+                    "Another bot instance is already running. "
+                    "Please stop it before starting a new one."
+                )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize lock manager: {e}")
+            raise
+        
+        # Инициализируем HTTP клиент
+        try:
+            await self.http_client()
+            logger.info("✅ HTTP client initialized")
+        except Exception as e:
+            logger.error(f"❌ HTTP client initialization failed: {e}")
             raise
     
     async def shutdown_resources(self) -> None:
-        """Корректное освобождение всех ресурсов"""
+        """Корректное закрытие всех ресурсов"""
+        logger.info("🛑 Shutting down container resources...")
+        
+        # Освобождаем блокировку
         try:
-            logger.info("🛑 Освобождение ресурсов контейнера...")
-            
-            # Освобождаем instance lock
-            if self._instance_lock_manager:
-                await self._instance_lock_manager.release_lock()
-                self._instance_lock_manager = None
-            
-            # Закрываем провайдеры ресурсов
-            if hasattr(self, '_singletons'):
-                await self.shutdown()
-            
-            logger.info("✅ Все ресурсы освобождены")
-            
+            if hasattr(self, '_singletons') and 'instance_lock_manager' in self._singletons:
+                lock_manager = await self.instance_lock_manager()
+                await lock_manager.release_lock()
         except Exception as e:
-            logger.error(f"⚠️ Ошибка при освобождении ресурсов: {e}")
+            logger.error(f"Error releasing lock: {e}")
+        
+        # Закрываем HTTP клиент
+        try:
+            if hasattr(self, '_singletons') and 'http_client' in self._singletons:
+                http = await self.http_client()
+                await http.close()
+                logger.info("✅ HTTP client closed")
+        except Exception as e:
+            logger.error(f"Error closing HTTP client: {e}")
+        
+        # Закрываем Bot сессию
+        try:
+            if hasattr(self, '_singletons') and 'bot' in self._singletons:
+                bot = await self.bot()
+                if hasattr(bot, 'session') and bot.session:
+                    await bot.session.close()
+                logger.info("✅ Bot session closed")
+        except Exception as e:
+            logger.error(f"Error closing bot session: {e}")
+        
+        # Закрываем Redis
+        try:
+            if hasattr(self, '_singletons') and 'redis_client' in self._singletons:
+                redis = await self.redis_client()
+                await redis.aclose()
+                logger.info("✅ Redis client closed")
+        except Exception as e:
+            logger.error(f"Error closing Redis: {e}")
