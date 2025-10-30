@@ -4,7 +4,7 @@ from typing import Optional
 
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
-from aiohttp import ClientSession, TCPConnector
+from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from loguru import logger
 
 from bot.config.settings import settings
@@ -23,8 +23,6 @@ class InstanceLockManager:
     async def acquire_lock(self) -> bool:
         """Попытка захвата блокировки"""
         try:
-            # NX = устанавливаем только если ключ не существует
-            # EX = TTL в секундах
             result = await self.redis.set(
                 self.lock_key,
                 "1",
@@ -80,6 +78,20 @@ class InstanceLockManager:
             logger.error(f"Error releasing lock: {e}")
 
 
+async def create_http_client() -> ClientSession:
+    """Factory для создания HTTP клиента с connector"""
+    connector = TCPConnector(
+        limit=100,
+        limit_per_host=30,
+        ttl_dns_cache=300,
+        ssl=False,
+    )
+    return ClientSession(
+        connector=connector,
+        timeout=ClientTimeout(total=30, connect=10),
+    )
+
+
 class Container(containers.DynamicContainer):
     """DI контейнер приложения"""
     
@@ -96,18 +108,9 @@ class Container(containers.DynamicContainer):
         health_check_interval=30,
     )
     
-    # HTTP клиент
-    http_client = providers.Singleton(
-        ClientSession,
-        connector=TCPConnector(
-            limit=100,
-            limit_per_host=30,
-            ttl_dns_cache=300,
-            ssl=False,
-        ),
-        timeout=providers.Object(
-            __import__('aiohttp').ClientTimeout(total=30, connect=10)
-        ),
+    # HTTP клиент - используем Factory вместо Singleton для ленивой инициализации
+    http_client = providers.Resource(
+        create_http_client,
     )
     
     # Instance Lock Manager
@@ -120,9 +123,10 @@ class Container(containers.DynamicContainer):
     
     # Bot
     bot = providers.Singleton(
-        __import__('aiogram').Bot,
-        token=settings.bot_token,
-        parse_mode="HTML",
+        lambda: __import__('aiogram').Bot(
+            token=settings.bot_token,
+            parse_mode="HTML",
+        ),
     )
     
     # Services - ленивая инициализация
@@ -234,9 +238,9 @@ class Container(containers.DynamicContainer):
             logger.error(f"❌ Failed to initialize lock manager: {e}")
             raise
         
-        # Инициализируем HTTP клиент
+        # Инициализируем HTTP клиент через init
         try:
-            await self.http_client()
+            await self.http_client.init()
             logger.info("✅ HTTP client initialized")
         except Exception as e:
             logger.error(f"❌ HTTP client initialization failed: {e}")
@@ -254,12 +258,10 @@ class Container(containers.DynamicContainer):
         except Exception as e:
             logger.error(f"Error releasing lock: {e}")
         
-        # Закрываем HTTP клиент
+        # Закрываем HTTP клиент через shutdown
         try:
-            if hasattr(self, '_singletons') and 'http_client' in self._singletons:
-                http = await self.http_client()
-                await http.close()
-                logger.info("✅ HTTP client closed")
+            await self.http_client.shutdown()
+            logger.info("✅ HTTP client closed")
         except Exception as e:
             logger.error(f"Error closing HTTP client: {e}")
         
