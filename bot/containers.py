@@ -1,7 +1,6 @@
 # bot/containers.py
 
 import asyncio
-import logging
 from typing import AsyncIterator, Optional
 from datetime import datetime
 
@@ -27,7 +26,7 @@ from bot.services.quiz_service import QuizService
 from bot.services.user_service import UserService
 from bot.services.verification_service import VerificationService
 from bot.services.ai_content_service import AIContentService
-from bot.utils.http_client import HttpClient
+from bot.utils.http_client import HTTPClient
 from bot.services.parser_service import ParserService
 from bot.services.mining_service import MiningService
 from bot.services.moderation_service import ModerationService
@@ -137,9 +136,9 @@ async def init_redis_client(url: str) -> AsyncIterator[Redis]:
         logger.info("✅ Redis client closed")
 
 
-async def init_http_client(config: dict) -> AsyncIterator[HttpClient]:
+async def init_http_client(config: dict) -> AsyncIterator[HTTPClient]:
     """Фабрика для создания HTTP клиента"""
-    client = HttpClient(config=config)
+    client = HTTPClient(config=config)
     
     try:
         logger.info("✅ HTTP client initialized")
@@ -244,12 +243,10 @@ class Container(containers.DeclarativeContainer):
         http_client=http_client
     )
 
+    # ✅ ИСПРАВЛЕНО: MarketDataService принимает только http_client
     market_data_service = providers.Singleton(
         MarketDataService, 
-        redis_client=redis_client, 
-        http_client=http_client, 
-        coin_list_service=coin_list_service, 
-        config=config.provided.market_data
+        http_client=http_client
     )
 
     price_service = providers.Singleton(
