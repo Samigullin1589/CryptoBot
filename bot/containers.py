@@ -113,8 +113,8 @@ class Container(containers.DynamicContainer):
         create_http_client,
     )
     
-    # Instance Lock Manager
-    instance_lock_manager = providers.Singleton(
+    # Instance Lock Manager - создаем фабрику
+    instance_lock_manager = providers.Factory(
         InstanceLockManager,
         redis=redis_client,
         lock_key="bot:instance_lock",
@@ -222,9 +222,9 @@ class Container(containers.DynamicContainer):
             logger.error(f"❌ Redis connection failed: {e}")
             raise
         
-        # Получаем блокировку инстанса
+        # Получаем блокировку инстанса - используем Factory, не await
         try:
-            lock_manager = await self.instance_lock_manager()
+            lock_manager = self.instance_lock_manager()
             acquired = await lock_manager.acquire_lock()
             
             if not acquired:
@@ -232,6 +232,10 @@ class Container(containers.DynamicContainer):
                     "Another bot instance is already running. "
                     "Please stop it before starting a new one."
                 )
+            
+            # Сохраняем lock_manager для последующего использования
+            self._lock_manager = lock_manager
+            
         except RuntimeError:
             raise
         except Exception as e:
@@ -252,9 +256,8 @@ class Container(containers.DynamicContainer):
         
         # Освобождаем блокировку
         try:
-            if hasattr(self, '_singletons') and 'instance_lock_manager' in self._singletons:
-                lock_manager = await self.instance_lock_manager()
-                await lock_manager.release_lock()
+            if hasattr(self, '_lock_manager'):
+                await self._lock_manager.release_lock()
         except Exception as e:
             logger.error(f"Error releasing lock: {e}")
         
