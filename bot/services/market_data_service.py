@@ -188,7 +188,7 @@ class MarketDataService:
 
     async def get_top_n_coins(self, limit: int) -> List[Dict[str, Any]]:
         """Получает топ N монет по рыночной капитализации."""
-        cache_key = self.keys.get_all_coins_market_data_key()
+        cache_key = self.keys.get_top_coins_cache_key()
         try:
             if cached_data := await self.redis.get(cache_key):
                 logger.debug(f"Cache hit for top {limit} coins.")

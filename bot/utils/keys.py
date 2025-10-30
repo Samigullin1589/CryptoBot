@@ -97,3 +97,24 @@ class KeyFactory:
     def get_coin_price_key(coin_id: str) -> str:
         """Ключ для кэша цены монеты."""
         return f"price:coin:{coin_id}"
+
+    # --- Список монет ---
+    @staticmethod
+    def get_coin_list_key() -> str:
+        """Ключ для полного списка монет в формате JSON."""
+        return "coins:list"
+
+    @staticmethod
+    def get_coin_index_symbol_to_id_key() -> str:
+        """HASH для быстрого поиска: SYMBOL -> coin_id."""
+        return "coins:index:symbol_to_id"
+
+    @staticmethod
+    def get_coin_index_id_to_symbol_key() -> str:
+        """HASH для быстрого поиска: coin_id -> SYMBOL."""
+        return "coins:index:id_to_symbol"
+
+    @staticmethod
+    def get_top_coins_cache_key() -> str:
+        """Ключ для кэша топовых монет."""
+        return "cache:market:top_coins"
