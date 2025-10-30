@@ -43,7 +43,8 @@ async def setup_bot(container: Container) -> tuple[Bot, Dispatcher]:
     logger.info("🤖 Setting up bot and dispatcher...")
     
     try:
-        bot = await container.bot()
+        # Bot создается Singleton provider - не требует await
+        bot = container.bot()
         redis = await container.redis_client()
         storage = RedisStorage(redis=redis)
         dispatcher = Dispatcher(storage=storage)
