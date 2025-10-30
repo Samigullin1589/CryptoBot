@@ -101,7 +101,6 @@ def get_price_keyboard() -> InlineKeyboardMarkup:
     for i, symbol in enumerate(DEFAULT_SYMBOLS, 1):
         row.append(InlineKeyboardButton(
             text=symbol,
-            # ВАЖНО: передаем СИМВОЛ, а не coin_id
             callback_data=PriceCallback(action="show", coin_id=symbol).pack()
         ))
         if i % 3 == 0:
@@ -113,26 +112,12 @@ def get_price_keyboard() -> InlineKeyboardMarkup:
     
     buttons.append([
         InlineKeyboardButton(
-            text="🔍 Найти монету",
-            callback_data=PriceCallback(action="search", coin_id="").pack()
-        ),
-        InlineKeyboardButton(
             text="🔄 Обновить",
             callback_data=PriceCallback(action="refresh", coin_id="all").pack()
         )
     ])
     
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
-def get_back_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой назад"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="◀️ Назад",
-            callback_data=PriceCallback(action="open", coin_id="").pack()
-        )]
-    ])
 
 
 @router.message(Command("price"))
@@ -231,84 +216,6 @@ async def price_show_handler(call: CallbackQuery, deps: Deps, callback_data: Pri
             await call.answer("⚠️ Произошла ошибка", show_alert=True)
         except Exception:
             pass
-
-
-@router.callback_query(PriceCallback.filter(F.action == "search"))
-async def price_search_handler(call: CallbackQuery, deps: Deps) -> None:
-    """Обработчик поиска монет"""
-    try:
-        await call.answer()
-        
-        text = (
-            "🔍 <b>Поиск монеты</b>\n\n"
-            "Отправьте символ или название монеты:\n"
-            "Например: <code>BTC</code>, <code>ETH</code>, <code>LINK</code>\n\n"
-            "Для отмены нажмите кнопку ниже."
-        )
-        
-        await call.message.edit_text(
-            text,
-            parse_mode="HTML",
-            reply_markup=get_back_keyboard()
-        )
-        
-        logger.info(f"User {call.from_user.id} initiated coin search")
-        
-    except Exception as e:
-        logger.error(f"Error in price_search_handler: {e}", exc_info=True)
-
-
-@router.message(F.text & ~F.text.startswith("/"))
-async def handle_coin_search(message: Message, deps: Deps) -> None:
-    """Обрабатывает поиск монеты по тексту"""
-    try:
-        search_text = message.text.strip().upper()
-        
-        if len(search_text) < 2 or len(search_text) > 10:
-            await message.answer(
-                "⚠️ Введите корректный символ монеты (2-10 символов)\n"
-                "Например: BTC, ETH, LINK"
-            )
-            return
-        
-        # Ищем coin_id по символу
-        coin_id = await get_coin_id_by_symbol(deps, search_text)
-        
-        if not coin_id:
-            await message.answer(
-                f"❌ Монета <b>{search_text}</b> не найдена\n\n"
-                f"Проверьте правильность символа",
-                parse_mode="HTML",
-                reply_markup=get_price_keyboard()
-            )
-            return
-        
-        # Получаем цену
-        price = await get_price_cached(deps, coin_id)
-        
-        if price is None:
-            text = (
-                f"⚠️ <b>Не удалось получить цену {search_text}</b>\n\n"
-                f"Попробуйте позже."
-            )
-        else:
-            text = (
-                f"💰 <b>{search_text}/USD</b>\n\n"
-                f"<code>${_fmt_price(price)}</code>\n\n"
-                f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>"
-            )
-        
-        await message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=get_price_keyboard()
-        )
-        
-        logger.info(f"User {message.from_user.id} searched and viewed price for {search_text}")
-        
-    except Exception as e:
-        logger.error(f"Error in handle_coin_search: {e}", exc_info=True)
-        await message.answer("⚠️ Произошла ошибка при поиске")
 
 
 @router.callback_query(PriceCallback.filter(F.action == "refresh"))
