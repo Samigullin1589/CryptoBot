@@ -64,63 +64,41 @@ def register_handlers(dp: Dispatcher, container: Container) -> None:
     
     registered_count = 0
     
-    # Public handlers - регистрируем каждый отдельно
+    # Public handlers
     try:
-        from bot.handlers.public import command_handler_extended
-        if hasattr(command_handler_extended, 'router'):
-            dp.include_router(command_handler_extended.router)
-            registered_count += 1
-            logger.info("✅ command_handler_extended registered")
+        from bot.handlers.public import public_router
+        dp.include_router(public_router)
+        registered_count += 1
+        logger.info("✅ public_router registered")
     except (ImportError, AttributeError) as e:
-        logger.warning(f"⚠️ command_handler_extended not found: {e}")
-    
-    try:
-        from bot.handlers.public import market_info_handler
-        if hasattr(market_info_handler, 'router'):
-            dp.include_router(market_info_handler.router)
-            registered_count += 1
-            logger.info("✅ market_info_handler registered")
-    except (ImportError, AttributeError) as e:
-        logger.warning(f"⚠️ market_info_handler not found: {e}")
-    
-    try:
-        from bot.handlers.public import price_handler
-        if hasattr(price_handler, 'router'):
-            dp.include_router(price_handler.router)
-            registered_count += 1
-            logger.info("✅ price_handler registered")
-    except (ImportError, AttributeError) as e:
-        logger.warning(f"⚠️ price_handler not found: {e}")
+        logger.warning(f"⚠️ public_router not found: {e}")
     
     # Game handlers
     try:
-        from bot.handlers.game import game_handler
-        if hasattr(game_handler, 'router'):
-            dp.include_router(game_handler.router)
-            registered_count += 1
-            logger.info("✅ game_handler registered")
+        from bot.handlers.game import game_router
+        dp.include_router(game_router)
+        registered_count += 1
+        logger.info("✅ game_router registered")
     except (ImportError, AttributeError) as e:
-        logger.warning(f"⚠️ game_handler not found: {e}")
+        logger.warning(f"⚠️ game_router not found: {e}")
     
     # Mining handlers
     try:
-        from bot.handlers.mining import mining_handler
-        if hasattr(mining_handler, 'router'):
-            dp.include_router(mining_handler.router)
-            registered_count += 1
-            logger.info("✅ mining_handler registered")
+        from bot.handlers.game import mining_router
+        dp.include_router(mining_router)
+        registered_count += 1
+        logger.info("✅ mining_router registered")
     except (ImportError, AttributeError) as e:
-        logger.warning(f"⚠️ mining_handler not found: {e}")
+        logger.warning(f"⚠️ mining_router not found: {e}")
     
     # Admin handlers
     try:
-        from bot.handlers.admin import admin_handler
-        if hasattr(admin_handler, 'router'):
-            dp.include_router(admin_handler.router)
-            registered_count += 1
-            logger.info("✅ admin_handler registered")
+        from bot.handlers.admin import admin_router
+        dp.include_router(admin_router)
+        registered_count += 1
+        logger.info("✅ admin_router registered")
     except (ImportError, AttributeError) as e:
-        logger.warning(f"⚠️ admin_handler not found: {e}")
+        logger.warning(f"⚠️ admin_router not found: {e}")
     
     logger.info(f"✅ Handlers registration completed. Total routers: {registered_count}")
     
@@ -155,7 +133,7 @@ async def on_startup(bot: Bot, container: Container) -> None:
     
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        await asyncio.sleep(2)  # Увеличенная задержка для очистки
+        await asyncio.sleep(2)
         logger.info("✅ Webhook deleted, pending updates dropped")
     except Exception as e:
         logger.warning(f"⚠️ Failed to delete webhook: {e}")
