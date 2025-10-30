@@ -5,6 +5,9 @@ from typing import Optional
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
 from aiohttp import ClientSession, TCPConnector, ClientTimeout
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from loguru import logger
 
 from bot.config.settings import settings
@@ -108,12 +111,12 @@ class Container(containers.DynamicContainer):
         health_check_interval=30,
     )
     
-    # HTTP клиент - используем Factory вместо Singleton для ленивой инициализации
+    # HTTP клиент
     http_client = providers.Resource(
         create_http_client,
     )
     
-    # Instance Lock Manager - создаем фабрику
+    # Instance Lock Manager
     instance_lock_manager = providers.Factory(
         InstanceLockManager,
         redis=redis_client,
@@ -121,12 +124,11 @@ class Container(containers.DynamicContainer):
         ttl=30,
     )
     
-    # Bot
+    # Bot - исправлено для aiogram 3.7.0+
     bot = providers.Singleton(
-        lambda: __import__('aiogram').Bot(
-            token=settings.bot_token,
-            parse_mode="HTML",
-        ),
+        Bot,
+        token=settings.bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     
     # Services - ленивая инициализация
@@ -222,7 +224,7 @@ class Container(containers.DynamicContainer):
             logger.error(f"❌ Redis connection failed: {e}")
             raise
         
-        # Получаем блокировку инстанса - используем Factory, не await
+        # Получаем блокировку инстанса
         try:
             lock_manager = self.instance_lock_manager()
             acquired = await lock_manager.acquire_lock()
@@ -242,7 +244,7 @@ class Container(containers.DynamicContainer):
             logger.error(f"❌ Failed to initialize lock manager: {e}")
             raise
         
-        # Инициализируем HTTP клиент через init
+        # Инициализируем HTTP клиент
         try:
             await self.http_client.init()
             logger.info("✅ HTTP client initialized")
@@ -261,7 +263,7 @@ class Container(containers.DynamicContainer):
         except Exception as e:
             logger.error(f"Error releasing lock: {e}")
         
-        # Закрываем HTTP клиент через shutdown
+        # Закрываем HTTP клиент
         try:
             await self.http_client.shutdown()
             logger.info("✅ HTTP client closed")
