@@ -1,12 +1,12 @@
 # bot/config/settings.py
 # =================================================================================
 # bot/config/settings.py
-# Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
+# Версия: ИСПРАВЛЕННАЯ (30.10.2025) - Distinguished Engineer
 # Описание:
 #   • ИСПРАВЛЕНО: Добавлены недостающие поля в ThreatFilterConfig
 #   • ИСПРАВЛЕНО: Добавлены недостающие атрибуты в AIConfig
 #   • ИСПРАВЛЕНО: Добавлено cache_ttl_seconds в AsicServiceConfig
-#   • ИСПРАВЛЕНО: Тип REDIS_URL остается str для совместимости с DI
+#   • ИСПРАВЛЕНО: Добавлены свойства bot_token и redis_url для совместимости
 # =================================================================================
 
 from __future__ import annotations
@@ -295,6 +295,17 @@ class Settings(BaseSettings):
                 return []
             return [int(item.strip()) for item in s.split(",") if item.strip()]
         raise TypeError("ADMIN_USER_IDS должен быть строкой с ID через запятую или списком.")
+
+    # ✅ ИСПРАВЛЕНО: Добавлены свойства для обратной совместимости
+    @property
+    def bot_token(self) -> str:
+        """Свойство для доступа к токену бота"""
+        return self.BOT_TOKEN.get_secret_value()
+    
+    @property
+    def redis_url(self) -> str:
+        """Свойство для доступа к Redis URL"""
+        return self.REDIS_URL
 
     model_config = SettingsConfigDict(
         env_file=".env",
