@@ -85,10 +85,9 @@ def render_news(articles: List[Any], page: int) -> str:
 async def get_news_articles(deps) -> List[Any]:
     """Получает новости из news_service"""
     try:
-        news_service = getattr(deps, "news_service", None)
-        if news_service:
-            articles = await news_service.get_all_latest_news(limit=50)
-            return articles if articles else []
+        news_service = deps.news_service()
+        articles = await news_service.get_all_latest_news(limit=50)
+        return articles if articles else []
     except Exception as e:
         logger.error(f"Error getting news: {e}")
     return []

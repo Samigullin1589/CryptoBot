@@ -4,7 +4,6 @@ from typing import Optional
 
 from dependency_injector import containers, providers
 from redis.asyncio import Redis
-from aiohttp import ClientSession, TCPConnector, ClientTimeout
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -81,18 +80,15 @@ class InstanceLockManager:
             logger.error(f"Error releasing lock: {e}")
 
 
-async def create_http_client() -> ClientSession:
-    """Factory для создания HTTP клиента с connector"""
-    connector = TCPConnector(
-        limit=100,
-        limit_per_host=30,
-        ttl_dns_cache=300,
-        ssl=False,
-    )
-    return ClientSession(
-        connector=connector,
-        timeout=ClientTimeout(total=30, connect=10),
-    )
+async def create_http_client():
+    """Factory для создания HTTP клиента"""
+    from bot.utils.http_client import HTTPClient
+    return HTTPClient()
+
+
+async def shutdown_http_client(client):
+    """Shutdown HTTP клиента"""
+    await client.close()
 
 
 class Container(containers.DynamicContainer):
@@ -112,6 +108,7 @@ class Container(containers.DynamicContainer):
     
     http_client = providers.Resource(
         create_http_client,
+        shutdown=shutdown_http_client,
     )
     
     instance_lock_manager = providers.Factory(

@@ -33,11 +33,17 @@ class HTTPClient:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Лениво создает и возвращает сессию aiohttp."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(
+                limit=100,
+                limit_per_host=30,
+                ttl_dns_cache=300,
+                ssl=False,
+            )
+            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            self._session = aiohttp.ClientSession(connector=connector, timeout=timeout)
         return self._session
 
-    @property
-    async def session(self) -> aiohttp.ClientSession:
+    async def get_session(self) -> aiohttp.ClientSession:
         """Публичный доступ к сессии для обратной совместимости."""
         return await self._get_session()
 
