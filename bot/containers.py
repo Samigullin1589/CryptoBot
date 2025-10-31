@@ -80,17 +80,6 @@ class InstanceLockManager:
             logger.error(f"Error releasing lock: {e}")
 
 
-async def create_http_client():
-    """Factory для создания HTTP клиента"""
-    from bot.utils.http_client import HTTPClient
-    return HTTPClient()
-
-
-async def shutdown_http_client(client):
-    """Shutdown HTTP клиента"""
-    await client.close()
-
-
 class Container(containers.DynamicContainer):
     """DI контейнер приложения"""
     
@@ -106,9 +95,8 @@ class Container(containers.DynamicContainer):
         health_check_interval=30,
     )
     
-    http_client = providers.Resource(
-        create_http_client,
-        shutdown=shutdown_http_client,
+    http_client = providers.Singleton(
+        lambda: __import__('bot.utils.http_client', fromlist=['HTTPClient']).HTTPClient(),
     )
     
     instance_lock_manager = providers.Factory(
@@ -312,7 +300,7 @@ class Container(containers.DynamicContainer):
             raise
         
         try:
-            await self.http_client.init()
+            http = await self.http_client()
             logger.info("✅ HTTP client initialized")
         except Exception as e:
             logger.error(f"❌ HTTP client initialization failed: {e}")
@@ -329,8 +317,10 @@ class Container(containers.DynamicContainer):
             logger.error(f"Error releasing lock: {e}")
         
         try:
-            await self.http_client.shutdown()
-            logger.info("✅ HTTP client closed")
+            if hasattr(self, '_singletons') and 'http_client' in self._singletons:
+                http = await self.http_client()
+                await http.close()
+                logger.info("✅ HTTP client closed")
         except Exception as e:
             logger.error(f"Error closing HTTP client: {e}")
         
