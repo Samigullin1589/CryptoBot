@@ -1,12 +1,5 @@
-# =================================================================================
 # bot/services/ai_content_service.py
 # Версия: ИСПРАВЛЕННАЯ (28.10.2025) - Distinguished Engineer
-# Описание:
-#   • ИСПРАВЛЕНО: AttributeError с google_exceptions
-#   • Добавлены заглушки для исключений при отсутствии библиотек
-#   • Улучшена обработка ошибок и fallback-логика
-#   • Все настройки используют правильные пути (settings.ai.*)
-# =================================================================================
 
 import asyncio
 import json
@@ -15,13 +8,11 @@ from typing import Any, Dict, List, Optional
 
 import backoff
 
-# --- Импорты провайдеров AI ---
 try:
     from openai import APIConnectionError, OpenAI, RateLimitError
     OPENAI_AVAILABLE = True
 except ImportError:
     OpenAI = None
-    # Создаем заглушки для исключений
     class APIConnectionError(Exception):
         pass
     class RateLimitError(Exception):
@@ -40,8 +31,6 @@ except ImportError:
     HarmBlockThreshold = object
     GEMINI_AVAILABLE = False
     
-    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Создаем заглушки для google_exceptions
-    # чтобы декораторы могли использовать их без ошибок AttributeError
     class _GoogleExceptionStub(Exception):
         """Заглушка для Google API исключений когда библиотека не установлена"""
         pass
@@ -75,7 +64,6 @@ class AIContentService:
         self.gemini_pro = None
         self.gemini_flash = None
 
-        # --- Инициализация OpenAI ---
         openai_api_key = settings.OPENAI_API_KEY.get_secret_value() if settings.OPENAI_API_KEY else None
         if OPENAI_AVAILABLE and openai_api_key:
             try:
@@ -90,12 +78,10 @@ class AIContentService:
         else:
             logger.info("ℹ️ OpenAI не будет использоваться (ключ отсутствует или библиотека не установлена)")
 
-        # --- Инициализация Google Gemini ---
         gemini_api_key = settings.GEMINI_API_KEY.get_secret_value() if settings.GEMINI_API_KEY else None
         if GEMINI_AVAILABLE and gemini_api_key:
             try:
                 genai.configure(api_key=gemini_api_key)
-                # Настройка безопасности для избежания блокировок
                 safety_settings = {
                     HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
                     HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -171,22 +157,12 @@ class AIContentService:
         return response.text.strip()
 
     async def get_text_response(self, prompt: str, system_prompt: Optional[str] = None) -> str:
-        """
-        Генерирует текстовый ответ, используя сначала OpenAI, затем Gemini в качестве резерва.
-        
-        Args:
-            prompt: Основной запрос пользователя
-            system_prompt: Системный промпт (опционально)
-            
-        Returns:
-            Сгенерированный текстовый ответ
-        """
+        """Генерирует текстовый ответ, используя сначала OpenAI, затем Gemini в качестве резерва."""
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": clip_text(prompt, 8000)})
 
-        # Попытка 1: OpenAI
         if self.oai_client:
             try:
                 result = await self._oai_request(messages, is_json=False)
@@ -195,7 +171,6 @@ class AIContentService:
             except Exception as e:
                 logger.warning(f"⚠️ OpenAI не удалось, переключение на Gemini: {e}")
 
-        # Попытка 2: Gemini (fallback)
         if self.gemini_pro:
             try:
                 full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
@@ -212,16 +187,7 @@ class AIContentService:
         prompt: str, 
         json_schema: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """
-        Генерирует ответ в формате JSON по заданной схеме.
-        
-        Args:
-            prompt: Запрос пользователя
-            json_schema: Ожидаемая структура JSON
-            
-        Returns:
-            Структурированный ответ в виде dict или None при ошибке
-        """
+        """Генерирует ответ в формате JSON по заданной схеме."""
         system_prompt = (
             "Ты должен ответить в формате JSON, который строго соответствует предоставленной схеме. "
             "Не добавляй никаких пояснений, комментариев или markdown-разметки. "
@@ -234,7 +200,6 @@ class AIContentService:
 
         raw_json = ""
         
-        # Попытка 1: OpenAI
         if self.oai_client:
             try:
                 raw_json = await self._oai_request(messages, is_json=True)
@@ -242,7 +207,6 @@ class AIContentService:
             except Exception as e:
                 logger.warning(f"⚠️ OpenAI JSON не удался, переключение на Gemini: {e}")
 
-        # Попытка 2: Gemini Flash (быстрее для JSON)
         if not raw_json and self.gemini_flash:
             try:
                 full_prompt = f"{system_prompt}\n\n{prompt}"
@@ -251,7 +215,6 @@ class AIContentService:
             except Exception as e:
                 logger.error(f"❌ Gemini JSON также не удался: {e}")
 
-        # Парсинг JSON
         if raw_json:
             try:
                 cleaned = clean_json_string(raw_json)
@@ -267,16 +230,7 @@ class AIContentService:
         prompt: str, 
         image_bytes: bytes
     ) -> Optional[Dict[str, Any]]:
-        """
-        Анализирует изображение с помощью Gemini Vision и возвращает структурированный JSON.
-        
-        Args:
-            prompt: Запрос для анализа изображения
-            image_bytes: Байты изображения
-            
-        Returns:
-            Структурированный анализ изображения или None при ошибке
-        """
+        """Анализирует изображение с помощью Gemini Vision и возвращает структурированный JSON."""
         if not GEMINI_AVAILABLE or not self.gemini_flash:
             logger.warning("⚠️ Анализ изображений недоступен: Gemini не инициализирован")
             return None

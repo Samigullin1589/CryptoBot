@@ -100,7 +100,6 @@ class Container(containers.DynamicContainer):
     
     config = providers.Configuration()
     
-    # Redis клиент
     redis_client = providers.Singleton(
         Redis.from_url,
         url=settings.redis_url,
@@ -111,12 +110,10 @@ class Container(containers.DynamicContainer):
         health_check_interval=30,
     )
     
-    # HTTP клиент
     http_client = providers.Resource(
         create_http_client,
     )
     
-    # Instance Lock Manager
     instance_lock_manager = providers.Factory(
         InstanceLockManager,
         redis=redis_client,
@@ -124,19 +121,17 @@ class Container(containers.DynamicContainer):
         ttl=30,
     )
     
-    # Bot - исправлено для aiogram 3.7.0+
     bot = providers.Singleton(
         Bot,
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     
-    # Services - ленивая инициализация с правильными зависимостями
     image_vision_service = providers.Singleton(
         lambda: __import__('bot.services.image_vision_service', fromlist=['ImageVisionService']).ImageVisionService(),
     )
     
-    admin_service = providers.Singleton(
+    admin_service = providers.Factory(
         lambda redis_client, bot_instance: __import__('bot.services.admin_service', fromlist=['AdminService']).AdminService(
             redis_client=redis_client,
             bot=bot_instance
@@ -145,35 +140,37 @@ class Container(containers.DynamicContainer):
         bot_instance=bot,
     )
     
-    user_service = providers.Singleton(
+    user_service = providers.Factory(
         lambda redis_client: __import__('bot.services.user_service', fromlist=['UserService']).UserService(
             redis_client=redis_client
         ),
         redis_client=redis_client,
     )
     
-    market_data_service = providers.Singleton(
-        lambda http_session: __import__('bot.services.market_data_service', fromlist=['MarketDataService']).MarketDataService(
-            http_client=http_session
+    market_data_service = providers.Factory(
+        lambda http_client: __import__('bot.services.market_data_service', fromlist=['MarketDataService']).MarketDataService(
+            http_client=http_client
         ),
-        http_session=http_client,
+        http_client=http_client,
     )
     
-    parser_service = providers.Singleton(
-        lambda http_session: __import__('bot.services.parser_service', fromlist=['ParserService']).ParserService(
-            http_client=http_session
+    parser_service = providers.Factory(
+        lambda http_client: __import__('bot.services.parser_service', fromlist=['ParserService']).ParserService(
+            http_client=http_client
         ),
-        http_session=http_client,
+        http_client=http_client,
     )
     
-    news_service = providers.Singleton(
-        lambda http_session: __import__('bot.services.news_service', fromlist=['NewsService']).NewsService(
-            http_client=http_session
+    news_service = providers.Factory(
+        lambda redis_client, http_client: __import__('bot.services.news_service', fromlist=['NewsService']).NewsService(
+            redis_client=redis_client,
+            http_client=http_client
         ),
-        http_session=http_client,
+        redis_client=redis_client,
+        http_client=http_client,
     )
     
-    moderation_service = providers.Singleton(
+    moderation_service = providers.Factory(
         lambda redis_client, bot_instance: __import__('bot.services.moderation_service', fromlist=['ModerationService']).ModerationService(
             redis_client=redis_client,
             bot=bot_instance
@@ -182,80 +179,88 @@ class Container(containers.DynamicContainer):
         bot_instance=bot,
     )
     
-    coin_list_service = providers.Singleton(
-        lambda http_session, redis_client: __import__('bot.services.coin_list_service', fromlist=['CoinListService']).CoinListService(
-            http_client=http_session,
-            redis_client=redis_client
+    coin_list_service = providers.Factory(
+        lambda redis_client, http_client: __import__('bot.services.coin_list_service', fromlist=['CoinListService']).CoinListService(
+            redis_client=redis_client,
+            http_client=http_client,
+            config=settings.coin_list_service
         ),
-        http_session=http_client,
         redis_client=redis_client,
+        http_client=http_client,
     )
     
-    verification_service = providers.Singleton(
+    verification_service = providers.Factory(
         lambda redis_client: __import__('bot.services.verification_service', fromlist=['VerificationService']).VerificationService(
             redis_client=redis_client
         ),
         redis_client=redis_client,
     )
     
-    price_service = providers.Singleton(
-        lambda http_session: __import__('bot.services.price_service', fromlist=['PriceService']).PriceService(
-            http_client=http_session
+    price_service = providers.Factory(
+        lambda redis_client, market_data_service: __import__('bot.services.price_service', fromlist=['PriceService']).PriceService(
+            redis_client=redis_client,
+            market_data_service=market_data_service,
+            config=settings.price_service
         ),
-        http_session=http_client,
+        redis_client=redis_client,
+        market_data_service=market_data_service,
     )
     
-    achievement_service = providers.Singleton(
-        lambda redis_client: __import__('bot.services.achievement_service', fromlist=['AchievementService']).AchievementService(
+    achievement_service = providers.Factory(
+        lambda market_data_service, redis_client: __import__('bot.services.achievement_service', fromlist=['AchievementService']).AchievementService(
+            market_data_service=market_data_service,
             redis_client=redis_client
         ),
+        market_data_service=market_data_service,
         redis_client=redis_client,
     )
     
-    mining_service = providers.Singleton(
+    mining_service = providers.Factory(
         lambda redis_client: __import__('bot.services.mining_service', fromlist=['MiningService']).MiningService(
             redis_client=redis_client
         ),
         redis_client=redis_client,
     )
     
-    asic_service = providers.Singleton(
-        lambda redis_client: __import__('bot.services.asic_service', fromlist=['AsicService']).AsicService(
+    asic_service = providers.Factory(
+        lambda parser_service, redis_client: __import__('bot.services.asic_service', fromlist=['AsicService']).AsicService(
+            parser_service=parser_service,
             redis_client=redis_client
         ),
+        parser_service=parser_service,
         redis_client=redis_client,
     )
     
-    crypto_center_service = providers.Singleton(
-        lambda news_svc, redis_client: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(
-            news_service=news_svc,
+    crypto_center_service = providers.Factory(
+        lambda news_service, redis_client: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(
+            news_service=news_service,
             redis_client=redis_client
         ),
-        news_svc=news_service,
+        news_service=news_service,
         redis_client=redis_client,
     )
     
-    security_service = providers.Singleton(
-        lambda img_vision, moderation_svc, redis_client, bot_instance: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(
-            image_vision_service=img_vision,
-            moderation_service=moderation_svc,
+    security_service = providers.Factory(
+        lambda image_vision_service, moderation_service, redis_client, bot_instance: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(
+            image_vision_service=image_vision_service,
+            moderation_service=moderation_service,
             redis_client=redis_client,
             bot=bot_instance
         ),
-        img_vision=image_vision_service,
-        moderation_svc=moderation_service,
+        image_vision_service=image_vision_service,
+        moderation_service=moderation_service,
         redis_client=redis_client,
         bot_instance=bot,
     )
     
-    mining_game_service = providers.Singleton(
-        lambda asic_svc, achievement_svc, redis_client: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(
-            asic_service=asic_svc,
-            achievement_service=achievement_svc,
+    mining_game_service = providers.Factory(
+        lambda asic_service, achievement_service, redis_client: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(
+            asic_service=asic_service,
+            achievement_service=achievement_service,
             redis_client=redis_client
         ),
-        asic_svc=asic_service,
-        achievement_svc=achievement_service,
+        asic_service=asic_service,
+        achievement_service=achievement_service,
         redis_client=redis_client,
     )
     
@@ -263,18 +268,17 @@ class Container(containers.DynamicContainer):
         lambda: __import__('bot.services.ai_content_service', fromlist=['AIContentService']).AIContentService(),
     )
     
-    quiz_service = providers.Singleton(
-        lambda ai_svc: __import__('bot.services.quiz_service', fromlist=['QuizService']).QuizService(
-            ai_content_service=ai_svc
+    quiz_service = providers.Factory(
+        lambda ai_content_service: __import__('bot.services.quiz_service', fromlist=['QuizService']).QuizService(
+            ai_content_service=ai_content_service
         ),
-        ai_svc=ai_content_service,
+        ai_content_service=ai_content_service,
     )
     
     async def init_resources(self) -> None:
         """Инициализация ресурсов и получение блокировки"""
         logger.info("🔧 Initializing container resources...")
         
-        # Инициализируем Redis
         try:
             redis = await self.redis_client()
             await redis.ping()
@@ -283,7 +287,6 @@ class Container(containers.DynamicContainer):
             logger.error(f"❌ Redis connection failed: {e}")
             raise
         
-        # Получаем блокировку инстанса
         try:
             lock_manager = self.instance_lock_manager()
             acquired = await lock_manager.acquire_lock()
@@ -294,7 +297,6 @@ class Container(containers.DynamicContainer):
                     "Please stop it before starting a new one."
                 )
             
-            # Сохраняем lock_manager для последующего использования
             self._lock_manager = lock_manager
             
         except RuntimeError:
@@ -303,7 +305,6 @@ class Container(containers.DynamicContainer):
             logger.error(f"❌ Failed to initialize lock manager: {e}")
             raise
         
-        # Инициализируем HTTP клиент
         try:
             await self.http_client.init()
             logger.info("✅ HTTP client initialized")
@@ -315,21 +316,18 @@ class Container(containers.DynamicContainer):
         """Корректное закрытие всех ресурсов"""
         logger.info("🛑 Shutting down container resources...")
         
-        # Освобождаем блокировку
         try:
             if hasattr(self, '_lock_manager'):
                 await self._lock_manager.release_lock()
         except Exception as e:
             logger.error(f"Error releasing lock: {e}")
         
-        # Закрываем HTTP клиент
         try:
             await self.http_client.shutdown()
             logger.info("✅ HTTP client closed")
         except Exception as e:
             logger.error(f"Error closing HTTP client: {e}")
         
-        # Закрываем Bot сессию
         try:
             if hasattr(self, '_singletons') and 'bot' in self._singletons:
                 bot = await self.bot()
@@ -339,7 +337,6 @@ class Container(containers.DynamicContainer):
         except Exception as e:
             logger.error(f"Error closing bot session: {e}")
         
-        # Закрываем Redis
         try:
             if hasattr(self, '_singletons') and 'redis_client' in self._singletons:
                 redis = await self.redis_client()

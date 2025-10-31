@@ -21,6 +21,7 @@ from bot.services.mining_service import MiningService
 from bot.services.security_service import SecurityService
 from bot.services.moderation_service import ModerationService
 from bot.services.coin_list_service import CoinListService
+from bot.services.achievement_service import AchievementService
 from bot.config.settings import Settings
 from bot.utils.keys import KeyFactory
 
@@ -34,20 +35,20 @@ class Deps:
     settings: Settings
     redis: Redis
     keys: type[KeyFactory]
-    admin_service: AdminService
-    user_service: UserService
-    price_service: PriceService
-    asic_service: AsicService
-    news_service: NewsService
-    market_data_service: MarketDataService
-    crypto_center_service: CryptoCenterService
-    mining_game_service: MiningGameService
-    verification_service: VerificationService
-    mining_service: MiningService
-    security_service: SecurityService
-    moderation_service: ModerationService
-    coin_list_service: CoinListService
-    # Опциональные сервисы
+    admin_service: Optional[AdminService] = None
+    user_service: Optional[UserService] = None
+    price_service: Optional[PriceService] = None
+    asic_service: Optional[AsicService] = None
+    news_service: Optional[NewsService] = None
+    market_data_service: Optional[MarketDataService] = None
+    crypto_center_service: Optional[CryptoCenterService] = None
+    mining_game_service: Optional[MiningGameService] = None
+    verification_service: Optional[VerificationService] = None
+    mining_service: Optional[MiningService] = None
+    security_service: Optional[SecurityService] = None
+    moderation_service: Optional[ModerationService] = None
+    coin_list_service: Optional[CoinListService] = None
+    achievement_service: Optional[AchievementService] = None
     quiz_service: Optional[Any] = None
     ai_content_service: Optional[Any] = None
 
@@ -84,13 +85,12 @@ async def dependencies_middleware(
     Returns:
         Результат обработчика
     """
-    # Пытаемся получить опциональные сервисы
     quiz_service = None
     ai_content_service = None
+    achievement_service = None
     
     try:
         from bot.services.quiz_service import QuizService
-        # Попытка получить quiz_service из контейнера, если он существует
         if hasattr(Container, 'quiz_service'):
             quiz_service = await Container.quiz_service()
     except (ImportError, AttributeError):
@@ -98,9 +98,15 @@ async def dependencies_middleware(
     
     try:
         from bot.services.ai_content_service import AIContentService
-        # Попытка получить ai_content_service из контейнера, если он существует
         if hasattr(Container, 'ai_content_service'):
             ai_content_service = await Container.ai_content_service()
+    except (ImportError, AttributeError):
+        pass
+    
+    try:
+        from bot.services.achievement_service import AchievementService
+        if hasattr(Container, 'achievement_service'):
+            achievement_service = await Container.achievement_service()
     except (ImportError, AttributeError):
         pass
     
@@ -121,11 +127,11 @@ async def dependencies_middleware(
         security_service=security_service,
         moderation_service=moderation_service,
         coin_list_service=coin_list_service,
+        achievement_service=achievement_service,
         quiz_service=quiz_service,
         ai_content_service=ai_content_service,
     )
     
-    # Добавляем отдельные сервисы для обратной совместимости
     data["market_data_service"] = market_data_service
     data["price_service"] = price_service
     data["coin_list_service"] = coin_list_service
