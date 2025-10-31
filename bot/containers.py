@@ -300,7 +300,7 @@ class Container(containers.DynamicContainer):
             raise
         
         try:
-            http = await self.http_client()
+            http = self.http_client()
             logger.info("✅ HTTP client initialized")
         except Exception as e:
             logger.error(f"❌ HTTP client initialization failed: {e}")
@@ -318,7 +318,7 @@ class Container(containers.DynamicContainer):
         
         try:
             if hasattr(self, '_singletons') and 'http_client' in self._singletons:
-                http = await self.http_client()
+                http = self.http_client()
                 await http.close()
                 logger.info("✅ HTTP client closed")
         except Exception as e:
