@@ -250,12 +250,14 @@ class Container(containers.DynamicContainer):
     )
     
     security_service = providers.Factory(
-        lambda image_vision_service, moderation_service, redis_client, bot_instance: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(
+        lambda ai_content_service, image_vision_service, moderation_service, redis_client, bot_instance: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(
+            ai_content_service=ai_content_service,
             image_vision_service=image_vision_service,
             moderation_service=moderation_service,
             redis_client=redis_client,
             bot=bot_instance
         ),
+        ai_content_service=ai_content_service,
         image_vision_service=image_vision_service,
         moderation_service=moderation_service,
         redis_client=redis_client,
