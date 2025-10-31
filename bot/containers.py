@@ -127,8 +127,15 @@ class Container(containers.DynamicContainer):
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     
+    ai_content_service = providers.Singleton(
+        lambda: __import__('bot.services.ai_content_service', fromlist=['AIContentService']).AIContentService(),
+    )
+    
     image_vision_service = providers.Singleton(
-        lambda: __import__('bot.services.image_vision_service', fromlist=['ImageVisionService']).ImageVisionService(),
+        lambda ai_service: __import__('bot.services.image_vision_service', fromlist=['ImageVisionService']).ImageVisionService(
+            ai_service=ai_service
+        ),
+        ai_service=ai_content_service,
     )
     
     admin_service = providers.Factory(
@@ -190,10 +197,10 @@ class Container(containers.DynamicContainer):
     )
     
     verification_service = providers.Factory(
-        lambda redis_client: __import__('bot.services.verification_service', fromlist=['VerificationService']).VerificationService(
-            redis_client=redis_client
+        lambda user_service: __import__('bot.services.verification_service', fromlist=['VerificationService']).VerificationService(
+            user_service=user_service
         ),
-        redis_client=redis_client,
+        user_service=user_service,
     )
     
     price_service = providers.Factory(
@@ -216,10 +223,10 @@ class Container(containers.DynamicContainer):
     )
     
     mining_service = providers.Factory(
-        lambda redis_client: __import__('bot.services.mining_service', fromlist=['MiningService']).MiningService(
-            redis_client=redis_client
+        lambda market_data_service: __import__('bot.services.mining_service', fromlist=['MiningService']).MiningService(
+            market_data_service=market_data_service
         ),
-        redis_client=redis_client,
+        market_data_service=market_data_service,
     )
     
     asic_service = providers.Factory(
@@ -232,10 +239,12 @@ class Container(containers.DynamicContainer):
     )
     
     crypto_center_service = providers.Factory(
-        lambda news_service, redis_client: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(
+        lambda ai_service, news_service, redis_client: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(
+            ai_service=ai_service,
             news_service=news_service,
             redis_client=redis_client
         ),
+        ai_service=ai_content_service,
         news_service=news_service,
         redis_client=redis_client,
     )
@@ -254,18 +263,16 @@ class Container(containers.DynamicContainer):
     )
     
     mining_game_service = providers.Factory(
-        lambda asic_service, achievement_service, redis_client: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(
+        lambda asic_service, achievement_service, user_service, redis_client: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(
             asic_service=asic_service,
             achievement_service=achievement_service,
+            user_service=user_service,
             redis_client=redis_client
         ),
         asic_service=asic_service,
         achievement_service=achievement_service,
+        user_service=user_service,
         redis_client=redis_client,
-    )
-    
-    ai_content_service = providers.Singleton(
-        lambda: __import__('bot.services.ai_content_service', fromlist=['AIContentService']).AIContentService(),
     )
     
     quiz_service = providers.Factory(
