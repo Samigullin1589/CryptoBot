@@ -131,84 +131,143 @@ class Container(containers.DynamicContainer):
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     
-    # Services - ленивая инициализация
+    # Services - ленивая инициализация с правильными зависимостями
     image_vision_service = providers.Singleton(
         lambda: __import__('bot.services.image_vision_service', fromlist=['ImageVisionService']).ImageVisionService(),
     )
     
     admin_service = providers.Singleton(
-        lambda redis: __import__('bot.services.admin_service', fromlist=['AdminService']).AdminService(redis),
-        redis=redis_client,
+        lambda redis_client, bot_instance: __import__('bot.services.admin_service', fromlist=['AdminService']).AdminService(
+            redis_client=redis_client,
+            bot=bot_instance
+        ),
+        redis_client=redis_client,
+        bot_instance=bot,
     )
     
     user_service = providers.Singleton(
-        lambda redis: __import__('bot.services.user_service', fromlist=['UserService']).UserService(redis),
-        redis=redis_client,
+        lambda redis_client: __import__('bot.services.user_service', fromlist=['UserService']).UserService(
+            redis_client=redis_client
+        ),
+        redis_client=redis_client,
     )
     
     market_data_service = providers.Singleton(
-        lambda http: __import__('bot.services.market_data_service', fromlist=['MarketDataService']).MarketDataService(http),
-        http_client=http_client,
+        lambda http_session: __import__('bot.services.market_data_service', fromlist=['MarketDataService']).MarketDataService(
+            http_client=http_session
+        ),
+        http_session=http_client,
     )
     
     parser_service = providers.Singleton(
-        lambda http: __import__('bot.services.parser_service', fromlist=['ParserService']).ParserService(http),
-        http_client=http_client,
+        lambda http_session: __import__('bot.services.parser_service', fromlist=['ParserService']).ParserService(
+            http_client=http_session
+        ),
+        http_session=http_client,
     )
     
     news_service = providers.Singleton(
-        lambda http: __import__('bot.services.news_service', fromlist=['NewsService']).NewsService(http),
-        http_client=http_client,
+        lambda http_session: __import__('bot.services.news_service', fromlist=['NewsService']).NewsService(
+            http_client=http_session
+        ),
+        http_session=http_client,
     )
     
     moderation_service = providers.Singleton(
-        lambda: __import__('bot.services.moderation_service', fromlist=['ModerationService']).ModerationService(),
+        lambda redis_client, bot_instance: __import__('bot.services.moderation_service', fromlist=['ModerationService']).ModerationService(
+            redis_client=redis_client,
+            bot=bot_instance
+        ),
+        redis_client=redis_client,
+        bot_instance=bot,
     )
     
     coin_list_service = providers.Singleton(
-        lambda http, redis: __import__('bot.services.coin_list_service', fromlist=['CoinListService']).CoinListService(http, redis),
-        http_client=http_client,
+        lambda http_session, redis_client: __import__('bot.services.coin_list_service', fromlist=['CoinListService']).CoinListService(
+            http_client=http_session,
+            redis_client=redis_client
+        ),
+        http_session=http_client,
         redis_client=redis_client,
     )
     
     verification_service = providers.Singleton(
-        lambda redis: __import__('bot.services.verification_service', fromlist=['VerificationService']).VerificationService(redis),
-        redis=redis_client,
+        lambda redis_client: __import__('bot.services.verification_service', fromlist=['VerificationService']).VerificationService(
+            redis_client=redis_client
+        ),
+        redis_client=redis_client,
     )
     
     price_service = providers.Singleton(
-        lambda http: __import__('bot.services.price_service', fromlist=['PriceService']).PriceService(http),
-        http_client=http_client,
+        lambda http_session: __import__('bot.services.price_service', fromlist=['PriceService']).PriceService(
+            http_client=http_session
+        ),
+        http_session=http_client,
     )
     
     achievement_service = providers.Singleton(
-        lambda redis: __import__('bot.services.achievement_service', fromlist=['AchievementService']).AchievementService(redis),
-        redis=redis_client,
+        lambda redis_client: __import__('bot.services.achievement_service', fromlist=['AchievementService']).AchievementService(
+            redis_client=redis_client
+        ),
+        redis_client=redis_client,
     )
     
     mining_service = providers.Singleton(
-        lambda redis: __import__('bot.services.mining_service', fromlist=['MiningService']).MiningService(redis),
-        redis=redis_client,
+        lambda redis_client: __import__('bot.services.mining_service', fromlist=['MiningService']).MiningService(
+            redis_client=redis_client
+        ),
+        redis_client=redis_client,
     )
     
     asic_service = providers.Singleton(
-        lambda redis: __import__('bot.services.asic_service', fromlist=['AsicService']).AsicService(redis),
-        redis=redis_client,
+        lambda redis_client: __import__('bot.services.asic_service', fromlist=['AsicService']).AsicService(
+            redis_client=redis_client
+        ),
+        redis_client=redis_client,
     )
     
     crypto_center_service = providers.Singleton(
-        lambda redis: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(redis),
-        redis=redis_client,
+        lambda news_svc, redis_client: __import__('bot.services.crypto_center_service', fromlist=['CryptoCenterService']).CryptoCenterService(
+            news_service=news_svc,
+            redis_client=redis_client
+        ),
+        news_svc=news_service,
+        redis_client=redis_client,
     )
     
     security_service = providers.Singleton(
-        lambda redis: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(redis),
-        redis=redis_client,
+        lambda img_vision, moderation_svc, redis_client, bot_instance: __import__('bot.services.security_service', fromlist=['SecurityService']).SecurityService(
+            image_vision_service=img_vision,
+            moderation_service=moderation_svc,
+            redis_client=redis_client,
+            bot=bot_instance
+        ),
+        img_vision=image_vision_service,
+        moderation_svc=moderation_service,
+        redis_client=redis_client,
+        bot_instance=bot,
     )
     
     mining_game_service = providers.Singleton(
-        lambda redis: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(redis),
-        redis=redis_client,
+        lambda asic_svc, achievement_svc, redis_client: __import__('bot.services.mining_game_service', fromlist=['MiningGameService']).MiningGameService(
+            asic_service=asic_svc,
+            achievement_service=achievement_svc,
+            redis_client=redis_client
+        ),
+        asic_svc=asic_service,
+        achievement_svc=achievement_service,
+        redis_client=redis_client,
+    )
+    
+    ai_content_service = providers.Singleton(
+        lambda: __import__('bot.services.ai_content_service', fromlist=['AIContentService']).AIContentService(),
+    )
+    
+    quiz_service = providers.Singleton(
+        lambda ai_svc: __import__('bot.services.quiz_service', fromlist=['QuizService']).QuizService(
+            ai_content_service=ai_svc
+        ),
+        ai_svc=ai_content_service,
     )
     
     async def init_resources(self) -> None:
