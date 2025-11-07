@@ -1,18 +1,17 @@
 services:
-  # Основной Telegram бот
   - type: web
     name: cryptobot
     runtime: python
-    region: frankfurt  # или oregon для США
-    plan: starter  # Бесплатный план
-    branch: main
-    buildCommand: pip install -r requirements.txt
+    region: frankfurt
+    plan: starter
+    branch: master
+    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
     startCommand: python -m bot.main
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: "3.11"
       - key: BOT_TOKEN
-        sync: false  # Нужно будет добавить вручную
+        sync: false
       - key: ADMIN_IDS
         sync: false
       - key: REDIS_URL
@@ -23,15 +22,21 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: ANTHROPIC_API_KEY
-        sync: false  # Для AI функций
+        sync: false
       - key: ENVIRONMENT
         value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
     healthCheckPath: /health
-    
-  # Redis для кеширования и состояний
+    autoDeploy: true
+  
   - type: redis
     name: cryptobot-redis
     region: frankfurt
-    plan: starter  # Бесплатный план (25MB)
+    plan: starter
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []  # Пустой = доступ только из Render
+    ipAllowList: []
