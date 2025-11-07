@@ -1,10 +1,9 @@
-# bot/utils/text_utils.py
+# bot/utils/text/__init__.py
 """
-Обратная совместимость: главный файл текстовых утилит.
-Импортирует все функции из подмодулей.
+Модуль текстовых утилит.
+Предоставляет функции для нормализации, санитизации, парсинга и форматирования текста.
 """
 
-# Импортируем все из новых модулей для обратной совместимости
 from bot.utils.text.normalizer import (
     normalize_text,
     normalize_asic_name,
@@ -16,28 +15,22 @@ from bot.utils.text.sanitizer import (
     sanitize_html,
     escape_html,
     strip_html,
-    safe_html,
-    TELEGRAM_ALLOWED_TAGS as ALLOWED_TAGS  # Алиас для обратной совместимости
+    safe_html
 )
 from bot.utils.text.parser import (
     parse_power,
     parse_hashrate,
     extract_numbers,
-    extract_urls,
-    extract_mentions,
-    extract_hashtags
+    extract_urls
 )
 from bot.utils.text.formatter import (
     clean_json_string,
     clip_text,
     truncate_with_ellipsis,
     format_list,
-    format_dict,
-    format_bytes,
-    format_number
+    format_dict
 )
 
-# Экспорты для внешнего использования
 __all__ = [
     # Normalizer
     "normalize_text",
@@ -50,20 +43,15 @@ __all__ = [
     "escape_html",
     "strip_html",
     "safe_html",
-    "ALLOWED_TAGS",
     # Parser
     "parse_power",
     "parse_hashrate",
     "extract_numbers",
     "extract_urls",
-    "extract_mentions",
-    "extract_hashtags",
     # Formatter
     "clean_json_string",
     "clip_text",
     "truncate_with_ellipsis",
     "format_list",
     "format_dict",
-    "format_bytes",
-    "format_number",
 ]
