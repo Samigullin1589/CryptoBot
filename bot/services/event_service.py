@@ -1,9 +1,4 @@
 # bot/services/event_service.py
-# Дата обновления: 28.10.2025
-# Версия: 2.0.1
-# Описание: ИСПРАВЛЕНО - Правильные имена настроек (строчные буквы)
-
-import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -15,156 +10,287 @@ from pydantic import ValidationError
 from redis.asyncio import Redis
 
 from bot.config.settings import settings
-from bot.utils.dependencies import get_redis_client
 from bot.utils.keys import KeyFactory
-from bot.utils.models import EventItem, parse_datetime
+from bot.utils.models import EventItem
 
 
 class EventService:
     """
-    Управляет жизненным циклом игровых событий.
-    - Загружает базовые события из файла конфигурации.
-    - Позволяет администраторам динамически создавать/удалять события в Redis.
-    - Предоставляет методы для получения активных событий и расчета итоговых множителей.
+    Сервис управления игровыми событиями.
+    
+    Функциональность:
+    - Загрузка статических событий из конфигурационного файла
+    - Управление динамическими событиями в Redis
+    - Расчет итоговых множителей для игровых доменов
+    - Кэширование для оптимизации производительности
     """
 
     _static_events_cache: List[EventItem] = []
-    _static_config_path: Optional[Path] = None
     _static_mtime: float = 0.0
 
-    def __init__(self):
-        """Инициализирует сервис, получая зависимости и конфигурацию."""
-        self.redis: Redis = get_redis_client()
-        # ✅ ИСПРАВЛЕНО: settings.EVENTS → settings.events
+    def __init__(self, redis: Redis):
+        """
+        Инициализирует сервис событий.
+        
+        Args:
+            redis: Клиент Redis для работы с динамическими событиями
+        """
+        self.redis = redis
         self.config = settings.events
         self.keys = KeyFactory
-        # ✅ ИСПРАВЛЕНО: self.config.CONFIG_PATH → self.config.config_path
-        self._static_config_path = Path(__file__).parent.parent.parent / self.config.config_path
-        logger.info("Сервис EventService инициализирован.")
+        
+        self._static_config_path = self._resolve_config_path()
+        
+        logger.info("✅ Сервис EventService инициализирован.")
 
-    async def _load_static_events_if_changed(self):
+    def _resolve_config_path(self) -> Path:
         """
-        Загружает статические события из JSON-файла, если файл изменился.
-        Использует in-memory кэш для предотвращения лишних дисковых операций.
+        Определяет полный путь к файлу конфигурации статических событий.
+        
+        Returns:
+            Path: Абсолютный путь к файлу конфигурации
         """
-        if not self._static_config_path or not self._static_config_path.exists():
+        config_path = self.config.config_path
+        
+        if Path(config_path).is_absolute():
+            return Path(config_path)
+        
+        project_root = Path(__file__).parent.parent.parent
+        return project_root / config_path
+
+    async def _load_static_events_if_changed(self) -> None:
+        """
+        Загружает статические события из JSON-файла при обнаружении изменений.
+        Использует in-memory кэш и проверку mtime для оптимизации.
+        """
+        if not self._static_config_path.exists():
             if not self._static_events_cache:
-                logger.warning(f"Файл конфигурации статических событий не найден: {self._static_config_path}")
+                logger.warning(
+                    f"⚠️ Файл конфигурации событий не найден: {self._static_config_path}"
+                )
             return
 
         try:
             current_mtime = os.path.getmtime(self._static_config_path)
-            if current_mtime == self._static_mtime:
-                return  # Файл не менялся, используем кэш
-
-            logger.info(f"Обнаружены изменения в файле {self._static_config_path}. Перезагрузка статических событий.")
+            
+            if current_mtime == self._static_mtime and self._static_events_cache:
+                return
+            
+            logger.info(
+                f"🔄 Обнаружены изменения в {self._static_config_path.name}. "
+                f"Перезагрузка статических событий."
+            )
             
             with open(self._static_config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             events_data = data.get("events", [])
+            
             if not isinstance(events_data, list):
-                logger.error("Ключ 'events' в конфиге должен быть списком.")
+                logger.error("❌ Ключ 'events' в конфигурации должен быть списком.")
                 return
 
             loaded_events = []
+            skipped_count = 0
+            
             for item in events_data:
                 try:
-                    loaded_events.append(EventItem.model_validate(item))
+                    event = EventItem.model_validate(item)
+                    loaded_events.append(event)
                 except ValidationError as e:
-                    logger.warning(f"Пропущено некорректное статическое событие: {item}. Ошибка: {e}")
+                    skipped_count += 1
+                    logger.warning(
+                        f"⚠️ Пропущено некорректное событие: {item.get('id', 'unknown')}. "
+                        f"Ошибка: {e}"
+                    )
             
             self._static_events_cache = loaded_events
             self._static_mtime = current_mtime
-            logger.success(f"Загружено {len(self._static_events_cache)} статических событий.")
+            
+            logger.success(
+                f"✅ Загружено {len(loaded_events)} статических событий"
+                + (f" (пропущено: {skipped_count})" if skipped_count else "")
+            )
 
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error(f"Не удалось прочитать или обработать файл статических событий: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ Ошибка парсинга JSON в файле событий: {e}")
+        except OSError as e:
+            logger.error(f"❌ Ошибка чтения файла событий: {e}")
+        except Exception as e:
+            logger.error(f"❌ Неожиданная ошибка при загрузке статических событий: {e}")
 
     async def _get_dynamic_events(self) -> List[EventItem]:
-        """Загружает динамические (созданные админом) события из Redis."""
+        """
+        Загружает динамические события из Redis.
+        
+        Returns:
+            List[EventItem]: Список валидных динамических событий
+        """
         try:
             events_raw = await self.redis.hgetall(self.keys.custom_events())
+            
             if not events_raw:
                 return []
             
             dynamic_events = []
-            for event_json in events_raw.values():
+            skipped_count = 0
+            
+            for event_id, event_json in events_raw.items():
                 try:
-                    dynamic_events.append(EventItem.model_validate_json(event_json))
+                    event = EventItem.model_validate_json(event_json)
+                    dynamic_events.append(event)
                 except (ValidationError, json.JSONDecodeError) as e:
-                    logger.warning(f"Пропущено некорректное динамическое событие в Redis: {event_json}. Ошибка: {e}")
+                    skipped_count += 1
+                    logger.warning(
+                        f"⚠️ Пропущено некорректное динамическое событие '{event_id}': {e}"
+                    )
+            
+            if skipped_count:
+                logger.warning(
+                    f"⚠️ Пропущено {skipped_count} некорректных динамических событий"
+                )
+            
             return dynamic_events
+            
         except Exception as e:
-            logger.error(f"Не удалось загрузить динамические события из Redis: {e}")
+            logger.error(f"❌ Ошибка загрузки динамических событий из Redis: {e}")
             return []
 
     async def list_all_events(self) -> List[EventItem]:
         """
-        Возвращает объединенный список всех событий (статических и динамических).
-        Динамические события с тем же ID перезаписывают статические.
+        Возвращает полный список событий (статические + динамические).
+        
+        Динамические события с тем же ID имеют приоритет над статическими.
+        
+        Returns:
+            List[EventItem]: Объединенный список всех событий
         """
         await self._load_static_events_if_changed()
+        
         static_events = self._static_events_cache
         dynamic_events = await self._get_dynamic_events()
 
         merged_events: Dict[str, EventItem] = {e.id: e for e in static_events}
+        
         for event in dynamic_events:
             merged_events[event.id] = event
         
         return list(merged_events.values())
 
     async def get_active_events(self) -> List[EventItem]:
-        """Возвращает список только активных на данный момент событий."""
+        """
+        Возвращает список активных событий на текущий момент.
+        
+        Returns:
+            List[EventItem]: События, активные в данный момент времени
+        """
         now = datetime.now(timezone.utc)
         all_events = await self.list_all_events()
-        return [event for event in all_events if event.is_active(now)]
+        
+        active = [event for event in all_events if event.is_active(now)]
+        
+        return active
 
     async def get_multiplier(self, domain: str) -> float:
         """
-        Рассчитывает итоговый множитель для указанной игровой области (домена).
-        Перемножает множители всех активных событий, подходящих под домен.
+        Рассчитывает итоговый множитель для указанного домена.
+        
+        Перемножает базовый множитель со всеми активными событиями,
+        применимыми к данному домену или ко всем доменам ("all").
+        
+        Args:
+            domain: Название игрового домена (например, "mining", "quiz")
+            
+        Returns:
+            float: Итоговый множитель, округленный до 4 знаков
         """
-        # ✅ ИСПРАВЛЕНО: self.config.DEFAULT_MULTIPLIER → self.config.default_multiplier
         base_multiplier = self.config.default_multiplier
         active_events = await self.get_active_events()
         
         final_multiplier = base_multiplier
         domain_lower = domain.lower()
         
-        for event in active_events:
-            if event.domain == "all" or event.domain == domain_lower:
-                final_multiplier *= event.multiplier
-
+        applicable_events = [
+            event for event in active_events
+            if event.domain == "all" or event.domain == domain_lower
+        ]
+        
+        for event in applicable_events:
+            final_multiplier *= event.multiplier
+        
         return round(final_multiplier, 4)
 
     async def upsert_event(self, event_data: Dict[str, Any]) -> Optional[EventItem]:
-        """Создает или обновляет динамическое событие в Redis."""
+        """
+        Создает или обновляет динамическое событие в Redis.
+        
+        Args:
+            event_data: Данные события для валидации и сохранения
+            
+        Returns:
+            Optional[EventItem]: Созданное/обновленное событие или None при ошибке
+        """
         try:
-            # Валидируем и создаем объект события
             event = EventItem.model_validate(event_data)
+            
             await self.redis.hset(
                 self.keys.custom_events(),
                 event.id,
                 event.model_dump_json()
             )
-            logger.success(f"Динамическое событие '{event.id}' успешно создано/обновлено.")
+            
+            logger.success(f"✅ Событие '{event.id}' успешно создано/обновлено.")
             return event
+            
         except ValidationError as e:
-            logger.error(f"Ошибка валидации данных при создании события: {event_data}. Ошибка: {e}")
+            logger.error(
+                f"❌ Ошибка валидации события '{event_data.get('id', 'unknown')}': {e}"
+            )
+            return None
         except Exception as e:
-            logger.error(f"Ошибка при сохранении события '{event_data.get('id')}' в Redis: {e}")
-        return None
+            logger.error(
+                f"❌ Ошибка сохранения события '{event_data.get('id', 'unknown')}': {e}"
+            )
+            return None
 
     async def cancel_event(self, event_id: str) -> bool:
-        """Удаляет динамическое событие из Redis."""
+        """
+        Удаляет динамическое событие из Redis.
+        
+        Args:
+            event_id: Идентификатор события для удаления
+            
+        Returns:
+            bool: True если событие удалено, False если не найдено или ошибка
+        """
         try:
             result = await self.redis.hdel(self.keys.custom_events(), event_id)
+            
             if result > 0:
-                logger.info(f"Динамическое событие '{event_id}' успешно удалено.")
+                logger.success(f"✅ Событие '{event_id}' успешно удалено.")
                 return True
-            logger.warning(f"Попытка удалить несуществующее событие '{event_id}'.")
+            
+            logger.warning(f"⚠️ Событие '{event_id}' не найдено для удаления.")
             return False
+            
         except Exception as e:
-            logger.error(f"Ошибка при удалении события '{event_id}': {e}")
+            logger.error(f"❌ Ошибка удаления события '{event_id}': {e}")
             return False
+
+    async def get_event_by_id(self, event_id: str) -> Optional[EventItem]:
+        """
+        Получает событие по его идентификатору.
+        
+        Args:
+            event_id: Идентификатор события
+            
+        Returns:
+            Optional[EventItem]: Событие или None если не найдено
+        """
+        all_events = await self.list_all_events()
+        
+        for event in all_events:
+            if event.id == event_id:
+                return event
+        
+        return None
