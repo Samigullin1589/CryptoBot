@@ -1,4 +1,4 @@
-# bot/services/ai_content_service.py
+# bot/services/ai/__init__.py
 from bot.services.ai.service import AIContentService
 
 __all__ = ["AIContentService"]
