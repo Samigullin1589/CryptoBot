@@ -1,3 +1,4 @@
+# render.yaml
 services:
   - type: web
     name: cryptobot
@@ -31,6 +32,8 @@ services:
         value: "1"
       - key: PYTHONDONTWRITEBYTECODE
         value: "1"
+      - key: IS_WEB_PROCESS
+        value: "true"
     healthCheckPath: /health
     autoDeploy: true
   
