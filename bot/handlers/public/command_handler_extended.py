@@ -1,12 +1,12 @@
 # =============================================================================
 # Файл: bot/handlers/public/command_handler_extended.py
-# Версия: Extended FULL (29.10.2025)
-# Описание: ПОЛНАЯ версия с 21 дополнительной командой
+# Версия: Extended FULL with /start (30.10.2025)
+# Описание: ПОЛНАЯ версия с /start и главным меню
 # =============================================================================
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.utils.markdown import hbold, hcode, hlink
 from loguru import logger
@@ -16,6 +16,346 @@ import random
 
 # Важно: имя переменной должно быть "router"
 router = Router(name="command_handler_extended_router")
+
+
+# ========== ГЛАВНЫЕ КОМАНДЫ (START И MENU) ==========
+
+@router.message(Command("start"))
+async def handle_start(message: Message):
+    """
+    Обработчик команды /start - приветствие и главное меню.
+    """
+    user = message.from_user
+    
+    # Создаем главное меню с кнопками
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="💰 Цены"),
+                KeyboardButton(text="⛏ Майнинг")
+            ],
+            [
+                KeyboardButton(text="📊 Рынок"),
+                KeyboardButton(text="🎮 Игра")
+            ],
+            [
+                KeyboardButton(text="🧠 Квиз"),
+                KeyboardButton(text="🏆 Достижения")
+            ],
+            [
+                KeyboardButton(text="👥 Рефералы"),
+                KeyboardButton(text="💎 Премиум")
+            ],
+            [
+                KeyboardButton(text="ℹ️ Помощь"),
+                KeyboardButton(text="⚙️ Настройки")
+            ],
+        ],
+        resize_keyboard=True
+    )
+    
+    # Inline кнопки для быстрого доступа
+    inline_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🚀 Начать игру", callback_data="quick_game"),
+            InlineKeyboardButton(text="📈 Цены", callback_data="quick_prices")
+        ],
+        [
+            InlineKeyboardButton(text="📋 Все команды", callback_data="show_commands"),
+            InlineKeyboardButton(text="❓ Справка", callback_data="show_help")
+        ]
+    ])
+    
+    start_text = (
+        f"👋 Привет, {hbold(user.first_name)}!\n\n"
+        f"🤖 Добро пожаловать в {hbold('Mining AI Bot')} — твой персональный помощник в мире криптовалют и майнинга!\n\n"
+        
+        f"{hbold('🎯 Что я умею:')}\n"
+        f"⛏ {hbold('Майнинг-игра')} — зарабатывай виртуальную криптовалюту\n"
+        f"💰 {hbold('Цены')} — актуальные курсы криптовалют\n"
+        f"📊 {hbold('Аналитика')} — графики и рыночные данные\n"
+        f"🧠 {hbold('Обучение')} — квизы и гайды по крипте\n"
+        f"🏆 {hbold('Достижения')} — выполняй задачи, получай награды\n"
+        f"👥 {hbold('Рефералы')} — приглашай друзей и зарабатывай\n\n"
+        
+        f"{hbold('💡 Быстрый старт:')}\n"
+        f"1️⃣ Нажми на кнопку ниже или выбери действие из меню\n"
+        f"2️⃣ Используй команды для управления ботом\n"
+        f"3️⃣ Изучай крипто-мир и зарабатывай!\n\n"
+        
+        f"📋 {hbold('Основные команды:')}\n"
+        f"/game — Начать майнинг-игру 🎮\n"
+        f"/price — Узнать цены криптовалют 💰\n"
+        f"/quiz — Пройти крипто-квиз 🧠\n"
+        f"/help — Полная справка ℹ️\n"
+        f"/commands — Все команды 📋\n\n"
+        
+        f"✨ {hbold('Готов начать?')} Выбери действие! ⬇️"
+    )
+    
+    await message.answer(
+        start_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Отправляем inline-меню для быстрого доступа
+    await message.answer(
+        "🚀 Или используй быстрые кнопки:",
+        reply_markup=inline_keyboard
+    )
+    
+    logger.info(f"User {user.id} (@{user.username}) started the bot")
+
+
+@router.message(Command("menu"))
+async def handle_menu(message: Message):
+    """
+    Обработчик команды /menu - показать главное меню.
+    """
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="💰 Цены"),
+                KeyboardButton(text="⛏ Майнинг")
+            ],
+            [
+                KeyboardButton(text="📊 Рынок"),
+                KeyboardButton(text="🎮 Игра")
+            ],
+            [
+                KeyboardButton(text="🧠 Квиз"),
+                KeyboardButton(text="🏆 Достижения")
+            ],
+            [
+                KeyboardButton(text="👥 Рефералы"),
+                KeyboardButton(text="💎 Премиум")
+            ],
+            [
+                KeyboardButton(text="ℹ️ Помощь"),
+                KeyboardButton(text="⚙️ Настройки")
+            ],
+        ],
+        resize_keyboard=True
+    )
+    
+    menu_text = (
+        f"{hbold('📱 Главное меню')}\n\n"
+        f"Выбери раздел, который тебя интересует:\n\n"
+        f"💰 {hbold('Цены')} — актуальные курсы криптовалют\n"
+        f"⛏ {hbold('Майнинг')} — майнинг-симулятор\n"
+        f"📊 {hbold('Рынок')} — рыночная информация\n"
+        f"🎮 {hbold('Игра')} — игровой режим\n"
+        f"🧠 {hbold('Квиз')} — тестирование знаний\n"
+        f"🏆 {hbold('Достижения')} — твои награды\n"
+        f"👥 {hbold('Рефералы')} — пригласи друзей\n"
+        f"💎 {hbold('Премиум')} — премиум подписка\n"
+        f"ℹ️ {hbold('Помощь')} — справочная информация\n"
+        f"⚙️ {hbold('Настройки')} — настрой бота\n\n"
+        f"Также доступны команды:\n"
+        f"/commands — полный список команд\n"
+        f"/help — подробная справка"
+    )
+    
+    await message.answer(menu_text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+    logger.info(f"User {message.from_user.id} opened menu")
+
+
+@router.message(Command("help"))
+async def handle_help(message: Message):
+    """
+    Обработчик команды /help - подробная справка.
+    """
+    help_text = (
+        f"{hbold('📚 Справка по боту')}\n\n"
+        
+        f"{hbold('🎮 ОСНОВНЫЕ РАЗДЕЛЫ:')}\n\n"
+        
+        f"⛏ {hbold('МАЙНИНГ')}\n"
+        f"/game — Запустить майнинг-игру\n"
+        f"/achievements — Твои достижения\n"
+        f"/leaderboard — Таблица лидеров\n"
+        f"/profile — Твой профиль\n\n"
+        
+        f"💰 {hbold('РЫНОК И ЦЕНЫ')}\n"
+        f"/price <монета> — Узнать цену криптовалюты\n"
+        f"/news — Последние крипто-новости\n"
+        f"/chart <монета> — График цены\n"
+        f"/calculator — Калькулятор доходности\n\n"
+        
+        f"🧠 {hbold('ОБУЧЕНИЕ')}\n"
+        f"/quiz — Крипто-квиз\n"
+        f"/learn — Образовательные материалы\n"
+        f"/faq — Частые вопросы\n\n"
+        
+        f"👥 {hbold('СОЦИАЛЬНОЕ')}\n"
+        f"/invite — Пригласить друга (бонусы!)\n"
+        f"/community — Наше сообщество\n"
+        f"/events — Актуальные события\n\n"
+        
+        f"💎 {hbold('ПРЕМИУМ')}\n"
+        f"/premium — Премиум подписка\n"
+        f"/donate — Поддержать проект\n\n"
+        
+        f"⚙️ {hbold('НАСТРОЙКИ')}\n"
+        f"/settings — Настройки бота\n"
+        f"/feedback — Оставить отзыв\n"
+        f"/support — Техподдержка\n\n"
+        
+        f"ℹ️ {hbold('ИНФОРМАЦИЯ')}\n"
+        f"/about — О боте\n"
+        f"/commands — Все команды\n"
+        f"/version — Версия бота\n"
+        f"/status — Статус систем\n\n"
+        
+        f"{hbold('💡 ПРИМЕРЫ ИСПОЛЬЗОВАНИЯ:')}\n"
+        f"• {hcode('/price btc')} — цена Bitcoin\n"
+        f"• {hcode('/game')} — начать майнить\n"
+        f"• {hcode('/quiz')} — пройти тест\n"
+        f"• {hcode('/invite')} — пригласить друга\n\n"
+        
+        f"❓ Остались вопросы? Напиши /support"
+    )
+    
+    await message.answer(help_text, parse_mode=ParseMode.HTML)
+    logger.info(f"User {message.from_user.id} requested /help")
+
+
+# ========== ОБРАБОТЧИКИ БЫСТРЫХ КНОПОК ==========
+
+@router.callback_query(F.data == "quick_game")
+async def handle_quick_game(callback):
+    """Быстрый доступ к игре"""
+    await callback.answer("🎮 Запускаем игру...")
+    await callback.message.answer(
+        "🎮 Майнинг-игра запускается!\n\n"
+        "Используй /game для полного функционала"
+    )
+
+
+@router.callback_query(F.data == "quick_prices")
+async def handle_quick_prices(callback):
+    """Быстрый доступ к ценам"""
+    await callback.answer("💰 Загружаем цены...")
+    await callback.message.answer(
+        "💰 Актуальные цены криптовалют\n\n"
+        "Используй /price <монета> для подробной информации"
+    )
+
+
+@router.callback_query(F.data == "show_commands")
+async def handle_show_commands(callback):
+    """Показать все команды"""
+    await callback.message.delete()
+    await handle_commands(callback.message)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "show_help")
+async def handle_show_help(callback):
+    """Показать справку"""
+    await callback.message.delete()
+    await handle_help(callback.message)
+    await callback.answer()
+
+
+# ========== ОБРАБОТЧИКИ ТЕКСТОВЫХ КНОПОК МЕНЮ ==========
+
+@router.message(F.text == "💰 Цены")
+async def handle_prices_button(message: Message):
+    """Обработчик кнопки Цены"""
+    await message.answer(
+        "💰 Раздел цен криптовалют\n\n"
+        "Используй /price <монета> для получения актуальной цены\n\n"
+        "Примеры:\n"
+        "/price btc\n"
+        "/price eth\n"
+        "/price sol"
+    )
+
+
+@router.message(F.text == "⛏ Майнинг")
+async def handle_mining_button(message: Message):
+    """Обработчик кнопки Майнинг"""
+    await message.answer(
+        "⛏ Майнинг-симулятор\n\n"
+        "Используй /game для запуска игры"
+    )
+
+
+@router.message(F.text == "📊 Рынок")
+async def handle_market_button(message: Message):
+    """Обработчик кнопки Рынок"""
+    await message.answer(
+        "📊 Рыночная информация\n\n"
+        "Доступные команды:\n"
+        "/price — цены\n"
+        "/news — новости\n"
+        "/chart — графики"
+    )
+
+
+@router.message(F.text == "🎮 Игра")
+async def handle_game_button(message: Message):
+    """Обработчик кнопки Игра"""
+    await message.answer(
+        "🎮 Игровой раздел\n\n"
+        "Команды:\n"
+        "/game — майнинг-игра\n"
+        "/achievements — достижения\n"
+        "/leaderboard — рейтинг"
+    )
+
+
+@router.message(F.text == "🧠 Квиз")
+async def handle_quiz_button(message: Message):
+    """Обработчик кнопки Квиз"""
+    await message.answer(
+        "🧠 Крипто-квиз\n\n"
+        "Используй /quiz для начала тестирования"
+    )
+
+
+@router.message(F.text == "🏆 Достижения")
+async def handle_achievements_button(message: Message):
+    """Обработчик кнопки Достижения"""
+    await message.answer(
+        "🏆 Твои достижения\n\n"
+        "Используй /achievements для просмотра"
+    )
+
+
+@router.message(F.text == "👥 Рефералы")
+async def handle_referrals_button(message: Message):
+    """Обработчик кнопки Рефералы"""
+    await message.answer(
+        "👥 Реферальная программа\n\n"
+        "Используй /invite для приглашения друзей"
+    )
+
+
+@router.message(F.text == "💎 Премиум")
+async def handle_premium_button(message: Message):
+    """Обработчик кнопки Премиум"""
+    await message.answer(
+        "💎 Премиум подписка\n\n"
+        "Используй /premium для подробностей"
+    )
+
+
+@router.message(F.text == "ℹ️ Помощь")
+async def handle_help_button(message: Message):
+    """Обработчик кнопки Помощь"""
+    await handle_help(message)
+
+
+@router.message(F.text == "⚙️ Настройки")
+async def handle_settings_button(message: Message):
+    """Обработчик кнопки Настройки"""
+    await message.answer(
+        "⚙️ Настройки бота\n\n"
+        "Используй /settings для управления настройками"
+    )
 
 
 # ========== ОСНОВНЫЕ ИНФОРМАЦИОННЫЕ КОМАНДЫ ==========
