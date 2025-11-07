@@ -106,13 +106,8 @@ class Application:
         logger.info("🛑 Stopping application...")
         
         try:
-            # Сигнализируем о завершении
             self._shutdown_event.set()
-            
-            # Отменяем все задачи
             await self._cancel_all_tasks()
-            
-            # Очистка ресурсов
             await self._cleanup()
             
             logger.info("✅ Application stopped successfully")
@@ -142,44 +137,90 @@ class Application:
         Порядок инициализации:
         1. Signal Handler
         2. DI Container
-        3. Instance Lock
+        3. Container Resources (Redis, Lock, HTTP)
         4. Bot & Dispatcher
+        5. Handlers & Middlewares
+        
+        Raises:
+            RuntimeError: Если другой instance уже запущен
+            Exception: Критические ошибки инициализации
+        """
+        logger.info("🔧 Initializing application components...")
+        
+        self._init_signal_handler()
+        self._init_container()
+        await self._init_container_resources()
+        await self._init_bot_and_dispatcher()
+        self._register_handlers_and_middlewares()
+        
+        logger.info("✅ All components initialized successfully")
+    
+    def _init_signal_handler(self) -> None:
+        """Инициализирует обработчик сигналов."""
+        self.signal_handler = SignalHandler(self._shutdown_event)
+        self.signal_handler.setup()
+        logger.debug("✅ Signal handler initialized")
+    
+    def _init_container(self) -> None:
+        """Инициализирует DI контейнер."""
+        self.container = Container()
+        logger.debug("✅ Container created")
+    
+    async def _init_container_resources(self) -> None:
+        """
+        Инициализирует ресурсы контейнера.
         
         Raises:
             RuntimeError: Если другой instance уже запущен
         """
-        logger.info("🔧 Initializing application components...")
-        
-        # 1. Signal Handler
-        self.signal_handler = SignalHandler(self._shutdown_event)
-        self.signal_handler.setup()
-        logger.debug("✅ Signal handler initialized")
-        
-        # 2. Container
-        self.container = Container()
-        logger.debug("✅ Container created")
-        
-        # 3. Instance Lock
         try:
-            await self.container.init_resources()
-            logger.debug("✅ Instance lock acquired")
+            # Явная проверка что метод существует
+            if not hasattr(self.container, 'init_resources'):
+                logger.error("❌ Container doesn't have init_resources method")
+                raise AttributeError("Container.init_resources not found")
+            
+            # Вызов async метода
+            init_result = self.container.init_resources()
+            
+            # Проверка что это корутина
+            if not asyncio.iscoroutine(init_result):
+                logger.error("❌ init_resources() is not a coroutine")
+                raise TypeError("Container.init_resources must be async")
+            
+            await init_result
+            logger.debug("✅ Container resources initialized")
+            
         except RuntimeError as e:
             logger.error(f"❌ Cannot acquire instance lock: {e}")
             logger.info("💡 Another instance is already running")
             raise
-        
-        # 4. Bot & Dispatcher
-        self.bot, self.dp = await setup_bot(self.container)
-        logger.debug("✅ Bot and Dispatcher created")
-        
-        # 5. Handlers & Middlewares
-        register_handlers(self.dp, self.container)
-        logger.debug("✅ Handlers registered")
-        
-        register_middlewares(self.dp, self.container)
-        logger.debug("✅ Middlewares registered")
-        
-        logger.info("✅ All components initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Container initialization failed: {e}", exc_info=True)
+            raise
+    
+    async def _init_bot_and_dispatcher(self) -> None:
+        """Инициализирует Bot и Dispatcher."""
+        try:
+            self.bot, self.dp = await setup_bot(self.container)
+            logger.debug("✅ Bot and Dispatcher created")
+            
+        except Exception as e:
+            logger.error(f"❌ Bot initialization failed: {e}", exc_info=True)
+            raise
+    
+    def _register_handlers_and_middlewares(self) -> None:
+        """Регистрирует handlers и middlewares."""
+        try:
+            register_handlers(self.dp, self.container)
+            logger.debug("✅ Handlers registered")
+            
+            register_middlewares(self.dp, self.container)
+            logger.debug("✅ Middlewares registered")
+            
+        except Exception as e:
+            logger.error(f"❌ Handler registration failed: {e}", exc_info=True)
+            raise
     
     async def _start_components(self) -> None:
         """
@@ -191,33 +232,37 @@ class Application:
         """
         logger.info("🚀 Starting application components...")
         
-        # Всегда запускаем бота
+        self._start_bot_polling()
+        
+        if settings.IS_WEB_PROCESS:
+            self._start_health_server()
+        
+        logger.info(f"✅ Started {len(self._tasks)} component(s)")
+    
+    def _start_bot_polling(self) -> None:
+        """Создает задачу для bot polling."""
         bot_task = asyncio.create_task(
             self._run_bot(),
             name="bot_polling"
         )
         self._tasks.append(bot_task)
         logger.debug("✅ Bot polling task created")
+    
+    def _start_health_server(self) -> None:
+        """Создает задачу для health server."""
+        port = int(os.environ.get("PORT", 10000))
+        self.health_server = HealthServer(port=port)
         
-        # Health server только в WEB режиме
-        if settings.IS_WEB_PROCESS:
-            port = int(os.environ.get("PORT", 10000))
-            self.health_server = HealthServer(port=port)
-            
-            health_task = asyncio.create_task(
-                self.health_server.start(),
-                name="health_server"
-            )
-            self._tasks.append(health_task)
-            logger.debug(f"✅ Health server task created (port {port})")
-        
-        logger.info(f"✅ Started {len(self._tasks)} component(s)")
+        health_task = asyncio.create_task(
+            self.health_server.start(),
+            name="health_server"
+        )
+        self._tasks.append(health_task)
+        logger.debug(f"✅ Health server task created (port {port})")
     
     async def _run_bot(self) -> None:
         """
         Запускает и поддерживает работу бота.
-        
-        Вызывает start_polling который управляет lifecycle бота.
         
         Raises:
             Exception: Критические ошибки бота
@@ -235,7 +280,6 @@ class Application:
             
         except Exception as e:
             logger.error(f"❌ Bot error: {e}", exc_info=True)
-            # Сигнализируем о критической ошибке
             self._shutdown_event.set()
             raise
     
@@ -255,23 +299,17 @@ class Application:
         logger.info("🛑 Shutdown signal received")
     
     async def _cancel_all_tasks(self) -> None:
-        """
-        Отменяет все фоновые задачи gracefully.
-        
-        Ждет завершения задач с timeout.
-        """
+        """Отменяет все фоновые задачи gracefully."""
         if not self._tasks:
             return
         
         logger.info(f"⏹️ Cancelling {len(self._tasks)} task(s)...")
         
-        # Отменяем все задачи
         for task in self._tasks:
             if not task.done():
                 task.cancel()
                 logger.debug(f"⏹️ Cancelled task: {task.get_name()}")
         
-        # Ждем завершения с timeout
         try:
             await asyncio.wait_for(
                 asyncio.gather(*self._tasks, return_exceptions=True),
@@ -295,31 +333,39 @@ class Application:
         """
         logger.info("🧹 Cleaning up resources...")
         
-        # 1. Health Server
+        await self._cleanup_health_server()
+        await self._cleanup_bot_session()
+        await self._cleanup_container()
+        
+        logger.info("✅ Cleanup completed")
+    
+    async def _cleanup_health_server(self) -> None:
+        """Останавливает health server."""
         if self.health_server:
             try:
                 await self.health_server.stop()
                 logger.debug("✅ Health server stopped")
             except Exception as e:
                 logger.error(f"⚠️ Error stopping health server: {e}")
-        
-        # 2. Bot Session
+    
+    async def _cleanup_bot_session(self) -> None:
+        """Закрывает сессию бота."""
         if self.bot:
             try:
                 await self.bot.session.close()
                 logger.debug("✅ Bot session closed")
             except Exception as e:
                 logger.error(f"⚠️ Error closing bot session: {e}")
-        
-        # 3. Container
+    
+    async def _cleanup_container(self) -> None:
+        """Очищает ресурсы контейнера."""
         if self.container:
             try:
-                await self.container.shutdown_resources()
+                if hasattr(self.container, 'shutdown_resources'):
+                    await self.container.shutdown_resources()
                 logger.debug("✅ Container shutdown")
             except Exception as e:
                 logger.error(f"⚠️ Error shutting down container: {e}")
-        
-        logger.info("✅ Cleanup completed")
     
     @property
     def is_running(self) -> bool:
