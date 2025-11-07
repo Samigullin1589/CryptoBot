@@ -1,6 +1,7 @@
 # bot/services/ai/service.py
 """
 Главный сервис для работы с AI провайдерами.
+Версия: 3.0.0 Production (07.11.2025)
 """
 import json
 from typing import Any, Dict, List, Optional
@@ -45,10 +46,8 @@ class AIContentService:
         self.config = settings.ai
         self.providers: List[BaseAIProvider] = []
         
-        # Инициализируем провайдеры
         self._initialize_providers()
         
-        # Логируем результат инициализации
         if not self.providers:
             logger.critical(
                 "❌ No AI providers initialized. "
@@ -62,10 +61,7 @@ class AIContentService:
     
     def _initialize_providers(self) -> None:
         """Инициализирует все доступные AI провайдеры."""
-        # Инициализация OpenAI
         self._init_openai_provider()
-        
-        # Инициализация Gemini
         self._init_gemini_provider()
     
     def _init_openai_provider(self) -> None:
@@ -150,10 +146,8 @@ class AIContentService:
             logger.error("❌ No AI providers available")
             return "AI service is not configured. Please contact administrator."
         
-        # Используем температуру из конфига если не указана
         temp = temperature if temperature is not None else self.config.default_temperature
         
-        # Пробуем каждый провайдер
         for idx, provider in enumerate(self.providers, 1):
             try:
                 logger.debug(
@@ -179,7 +173,6 @@ class AIContentService:
                     f"⚠️ {provider.get_name()} failed (attempt {idx}/{len(self.providers)}): {e}"
                 )
                 
-                # Если это последний провайдер, логируем с уровнем error
                 if idx == len(self.providers):
                     logger.error(
                         f"❌ All AI providers failed for text generation",
@@ -188,7 +181,6 @@ class AIContentService:
                 
                 continue
         
-        # Все провайдеры не сработали
         return "AI service temporarily unavailable. Please try again later."
     
     async def get_structured_response(
@@ -227,7 +219,6 @@ class AIContentService:
                     temperature=temp
                 )
                 
-                # Очищаем и парсим JSON
                 cleaned = clean_json_string(raw_json)
                 result = json.loads(cleaned)
                 
@@ -276,7 +267,6 @@ class AIContentService:
         Returns:
             Результат анализа в виде словаря или None
         """
-        # Фильтруем только Gemini провайдеры (они поддерживают vision)
         vision_providers = [
             p for p in self.providers
             if isinstance(p, GeminiProvider)
@@ -288,13 +278,11 @@ class AIContentService:
             )
             return None
         
-        # Формируем промпт со схемой
         if extract_schema:
             schema_prompt = self._build_image_analysis_prompt(prompt)
         else:
             schema_prompt = prompt
         
-        # Пробуем каждый vision провайдер
         for idx, provider in enumerate(vision_providers, 1):
             try:
                 logger.debug(
@@ -307,7 +295,6 @@ class AIContentService:
                     image_bytes
                 )
                 
-                # Парсим результат
                 cleaned = clean_json_string(raw_json)
                 result = json.loads(cleaned)
                 
@@ -348,12 +335,12 @@ class AIContentService:
         schema_description = (
             "\n\nReturn JSON with the following structure:\n"
             "{\n"
-            '  "is_spam": boolean,  // true if image contains spam/advertising\n'
-            '  "has_qr_code": boolean,  // true if QR code detected\n'
-            '  "has_text_url": boolean,  // true if URLs found in text\n'
-            '  "extracted_text": string,  // OCR text (max 200 chars)\n'
-            '  "description": string,  // brief image description\n'
-            '  "confidence": float  // confidence score 0.0-1.0\n'
+            '  "is_spam": boolean,\n'
+            '  "has_qr_code": boolean,\n'
+            '  "has_text_url": boolean,\n'
+            '  "extracted_text": string,\n'
+            '  "description": string,\n'
+            '  "confidence": float\n'
             "}"
         )
         
@@ -398,3 +385,10 @@ class AIContentService:
                 for p in self.providers
             ]
         }
+
+
+# Алиас для обратной совместимости
+AIService = AIContentService
+
+
+__all__ = ["AIContentService", "AIService"]
