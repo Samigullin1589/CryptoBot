@@ -24,6 +24,10 @@ from loguru import logger
 
 from bot.config.settings import settings
 from bot.containers import Container
+from bot.containers.container import (
+    init_container_resources,
+    shutdown_container_resources,
+)
 from bot.core.health import HealthServer
 from bot.core.signals import SignalHandler
 from bot.startup import start_polling
@@ -170,24 +174,14 @@ class Application:
         """
         Инициализирует ресурсы контейнера.
         
+        Вызывает внешнюю async функцию init_container_resources().
+        
         Raises:
             RuntimeError: Если другой instance уже запущен
+            Exception: Критические ошибки инициализации
         """
         try:
-            # Явная проверка что метод существует
-            if not hasattr(self.container, 'init_resources'):
-                logger.error("❌ Container doesn't have init_resources method")
-                raise AttributeError("Container.init_resources not found")
-            
-            # Вызов async метода
-            init_result = self.container.init_resources()
-            
-            # Проверка что это корутина
-            if not asyncio.iscoroutine(init_result):
-                logger.error("❌ init_resources() is not a coroutine")
-                raise TypeError("Container.init_resources must be async")
-            
-            await init_result
+            await init_container_resources(self.container)
             logger.debug("✅ Container resources initialized")
             
         except RuntimeError as e:
@@ -358,11 +352,14 @@ class Application:
                 logger.error(f"⚠️ Error closing bot session: {e}")
     
     async def _cleanup_container(self) -> None:
-        """Очищает ресурсы контейнера."""
+        """
+        Очищает ресурсы контейнера.
+        
+        Вызывает внешнюю async функцию shutdown_container_resources().
+        """
         if self.container:
             try:
-                if hasattr(self.container, 'shutdown_resources'):
-                    await self.container.shutdown_resources()
+                await shutdown_container_resources(self.container)
                 logger.debug("✅ Container shutdown")
             except Exception as e:
                 logger.error(f"⚠️ Error shutting down container: {e}")

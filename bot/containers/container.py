@@ -252,150 +252,183 @@ class Container(containers.DeclarativeContainer):
     ai_service = providers.Singleton(
         AIService,
     )
+
+
+async def init_container_resources(container: Container) -> None:
+    """
+    Инициализирует все ресурсы контейнера.
     
-    async def init_resources(self) -> None:
-        """
-        Инициализирует все ресурсы контейнера.
-        
-        Порядок инициализации:
-        1. Redis подключение
-        2. Instance Lock (проверка единственности)
-        3. HTTP Client
-        
-        Raises:
-            RuntimeError: Если другой instance уже запущен
-            Exception: Ошибки инициализации ресурсов
-        """
-        logger.info("🔧 Initializing container resources...")
-        
-        await self._init_redis()
-        await self._init_lock_manager()
-        await self._init_http_client()
-        
-        logger.info("✅ All container resources initialized")
+    Вызывается ВНЕ класса контейнера для правильной async работы.
     
-    async def _init_redis(self) -> None:
-        """
-        Инициализирует Redis соединение.
-        
-        Raises:
-            Exception: Ошибки подключения к Redis
-        """
-        try:
-            redis = self.redis_client()
-            await redis.ping()
-            logger.info("✅ Redis connected successfully")
-            
-        except Exception as e:
-            logger.error(f"❌ Redis connection failed: {e}", exc_info=True)
-            raise
+    Args:
+        container: Экземпляр Container
     
-    async def _init_lock_manager(self) -> None:
-        """
-        Инициализирует и получает Instance Lock.
+    Порядок инициализации:
+    1. Redis подключение
+    2. Instance Lock (проверка единственности)
+    3. HTTP Client
+    
+    Raises:
+        RuntimeError: Если другой instance уже запущен
+        Exception: Ошибки инициализации ресурсов
+    """
+    logger.info("🔧 Initializing container resources...")
+    
+    await _init_redis(container)
+    await _init_lock_manager(container)
+    await _init_http_client(container)
+    
+    logger.info("✅ All container resources initialized")
+
+
+async def _init_redis(container: Container) -> None:
+    """
+    Инициализирует Redis соединение.
+    
+    Args:
+        container: Экземпляр Container
+    
+    Raises:
+        Exception: Ошибки подключения к Redis
+    """
+    try:
+        redis = container.redis_client()
+        await redis.ping()
+        logger.info("✅ Redis connected successfully")
         
-        Гарантирует, что запущен только один instance бота.
+    except Exception as e:
+        logger.error(f"❌ Redis connection failed: {e}", exc_info=True)
+        raise
+
+
+async def _init_lock_manager(container: Container) -> None:
+    """
+    Инициализирует и получает Instance Lock.
+    
+    Args:
+        container: Экземпляр Container
+    
+    Гарантирует, что запущен только один instance бота.
+    
+    Raises:
+        RuntimeError: Если другой instance уже запущен
+    """
+    try:
+        lock_manager = container.instance_lock_manager()
+        acquired = await lock_manager.acquire_lock()
         
-        Raises:
-            RuntimeError: Если другой instance уже запущен
-        """
-        try:
-            lock_manager = self.instance_lock_manager()
-            acquired = await lock_manager.acquire_lock()
-            
-            if not acquired:
-                raise RuntimeError(
-                    "Another bot instance is already running. "
-                    "Please stop it before starting a new one."
-                )
-            
-            self._lock_manager = lock_manager
-            logger.info("✅ Instance lock acquired")
-            
-        except RuntimeError:
-            raise
-            
-        except Exception as e:
-            logger.error(
-                f"❌ Failed to initialize lock manager: {e}",
-                exc_info=True
+        if not acquired:
+            raise RuntimeError(
+                "Another bot instance is already running. "
+                "Please stop it before starting a new one."
             )
-            raise
-    
-    async def _init_http_client(self) -> None:
-        """
-        Инициализирует HTTP Client.
         
-        Raises:
-            Exception: Ошибки инициализации HTTP клиента
-        """
-        try:
-            http = self.http_client()
-            logger.info("✅ HTTP client initialized")
-            
-        except Exception as e:
-            logger.error(
-                f"❌ HTTP client initialization failed: {e}",
-                exc_info=True
-            )
-            raise
-    
-    async def shutdown_resources(self) -> None:
-        """
-        Освобождает все ресурсы контейнера.
+        container._lock_manager = lock_manager
+        logger.info("✅ Instance lock acquired")
         
-        Порядок освобождения (обратный инициализации):
-        1. Instance Lock
-        2. HTTP Client
-        3. Bot Session
-        4. Redis Connection
-        """
-        logger.info("🛑 Shutting down container resources...")
+    except RuntimeError:
+        raise
         
-        await self._release_lock()
-        await self._close_http_client()
-        await self._close_bot_session()
-        await self._close_redis()
+    except Exception as e:
+        logger.error(
+            f"❌ Failed to initialize lock manager: {e}",
+            exc_info=True
+        )
+        raise
+
+
+async def _init_http_client(container: Container) -> None:
+    """
+    Инициализирует HTTP Client.
+    
+    Args:
+        container: Экземпляр Container
+    
+    Raises:
+        Exception: Ошибки инициализации HTTP клиента
+    """
+    try:
+        http = container.http_client()
+        logger.info("✅ HTTP client initialized")
         
-        logger.info("✅ All container resources shutdown")
+    except Exception as e:
+        logger.error(
+            f"❌ HTTP client initialization failed: {e}",
+            exc_info=True
+        )
+        raise
+
+
+async def shutdown_container_resources(container: Container) -> None:
+    """
+    Освобождает все ресурсы контейнера.
     
-    async def _release_lock(self) -> None:
-        """Освобождает Instance Lock."""
-        try:
-            if hasattr(self, '_lock_manager'):
-                await self._lock_manager.release_lock()
-                logger.info("✅ Instance lock released")
-                
-        except Exception as e:
-            logger.error(f"⚠️ Error releasing lock: {e}")
+    Args:
+        container: Экземпляр Container
     
-    async def _close_http_client(self) -> None:
-        """Закрывает HTTP Client."""
-        try:
-            http = self.http_client()
-            await http.close()
-            logger.info("✅ HTTP client closed")
+    Порядок освобождения (обратный инициализации):
+    1. Instance Lock
+    2. HTTP Client
+    3. Bot Session
+    4. Redis Connection
+    """
+    logger.info("🛑 Shutting down container resources...")
+    
+    await _release_lock(container)
+    await _close_http_client(container)
+    await _close_bot_session(container)
+    await _close_redis(container)
+    
+    logger.info("✅ All container resources shutdown")
+
+
+async def _release_lock(container: Container) -> None:
+    """Освобождает Instance Lock."""
+    try:
+        if hasattr(container, '_lock_manager'):
+            await container._lock_manager.release_lock()
+            logger.info("✅ Instance lock released")
             
-        except Exception as e:
-            logger.error(f"⚠️ Error closing HTTP client: {e}")
-    
-    async def _close_bot_session(self) -> None:
-        """Закрывает Bot Session."""
-        try:
-            bot_instance = self.bot()
-            if hasattr(bot_instance, 'session') and bot_instance.session:
-                await bot_instance.session.close()
-            logger.info("✅ Bot session closed")
-            
-        except Exception as e:
-            logger.error(f"⚠️ Error closing bot session: {e}")
-    
-    async def _close_redis(self) -> None:
-        """Закрывает Redis соединение."""
-        try:
-            redis = self.redis_client()
-            await redis.aclose()
-            logger.info("✅ Redis client closed")
-            
-        except Exception as e:
-            logger.error(f"⚠️ Error closing Redis: {e}")
+    except Exception as e:
+        logger.error(f"⚠️ Error releasing lock: {e}")
+
+
+async def _close_http_client(container: Container) -> None:
+    """Закрывает HTTP Client."""
+    try:
+        http = container.http_client()
+        await http.close()
+        logger.info("✅ HTTP client closed")
+        
+    except Exception as e:
+        logger.error(f"⚠️ Error closing HTTP client: {e}")
+
+
+async def _close_bot_session(container: Container) -> None:
+    """Закрывает Bot Session."""
+    try:
+        bot_instance = container.bot()
+        if hasattr(bot_instance, 'session') and bot_instance.session:
+            await bot_instance.session.close()
+        logger.info("✅ Bot session closed")
+        
+    except Exception as e:
+        logger.error(f"⚠️ Error closing bot session: {e}")
+
+
+async def _close_redis(container: Container) -> None:
+    """Закрывает Redis соединение."""
+    try:
+        redis = container.redis_client()
+        await redis.aclose()
+        logger.info("✅ Redis client closed")
+        
+    except Exception as e:
+        logger.error(f"⚠️ Error closing Redis: {e}")
+
+
+__all__ = [
+    "Container",
+    "init_container_resources",
+    "shutdown_container_resources",
+]
