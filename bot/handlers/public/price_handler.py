@@ -205,11 +205,60 @@ def get_price_keyboard() -> InlineKeyboardMarkup:
 
 @router.message(Command("price"))
 async def cmd_price(message: Message, deps: Deps) -> None:
-    """Обработчик команды /price"""
+    """Обработчик команды /price [symbol] - показывает цену указанной монеты или общее меню"""
     try:
-        text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
-        await message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
-        logger.info(f"User {message.from_user.id} opened price menu via /price")
+        # Парсим аргументы команды
+        args = message.text.split(maxsplit=1)
+
+        # Если есть аргумент - показываем цену конкретной монеты
+        if len(args) > 1:
+            symbol_input = args[1].strip().upper()
+
+            logger.info(f"User {message.from_user.id} requested /price {symbol_input}")
+
+            # Получаем coin_id по символу
+            coin_id = await get_coin_id_by_symbol(deps, symbol_input)
+
+            if not coin_id:
+                # Пробуем использовать как coin_id напрямую
+                coin_id = symbol_input.lower()
+                resolved_symbol = await get_symbol_by_coin_id(deps, coin_id)
+                if resolved_symbol:
+                    symbol_input = resolved_symbol.upper()
+
+            # Получаем цену
+            price = await get_price_cached(deps, symbol_input, coin_id)
+
+            if price is None:
+                text = (
+                    f"⚠️ <b>Не удалось получить цену для {symbol_input}</b>\n\n"
+                    f"Возможные причины:\n"
+                    f"• Монета не найдена или неверный символ\n"
+                    f"• Превышен лимит запросов к API\n"
+                    f"• Временные проблемы с сервисом\n\n"
+                    f"💡 <b>Примеры использования:</b>\n"
+                    f"<code>/price BTC</code> — Bitcoin\n"
+                    f"<code>/price ETH</code> — Ethereum\n"
+                    f"<code>/price SOL</code> — Solana\n\n"
+                    f"Или используйте /price без аргументов для выбора из меню"
+                )
+            else:
+                text = (
+                    f"💰 <b>{symbol_input}/USD</b>\n\n"
+                    f"<code>${_fmt_price(price)}</code>\n\n"
+                    f"<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>\n\n"
+                    f"💡 Для других монет используйте:\n"
+                    f"<code>/price SYMBOL</code> или /price для меню"
+                )
+
+            await message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+
+        # Без аргумента - показываем меню
+        else:
+            text = "💰 <b>Цены криптовалют</b>\n\nВыберите монету для просмотра цены:"
+            await message.answer(text, parse_mode="HTML", reply_markup=get_price_keyboard())
+            logger.info(f"User {message.from_user.id} opened price menu via /price")
+
     except Exception as e:
         logger.error(f"Error in cmd_price: {e}", exc_info=True)
         await message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
