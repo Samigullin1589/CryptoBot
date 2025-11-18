@@ -304,32 +304,45 @@ async def _init_redis(container: Container) -> None:
 async def _init_lock_manager(container: Container) -> None:
     """
     Инициализирует и получает Instance Lock.
-    
+
     Args:
         container: Экземпляр Container
-    
+
     Гарантирует, что запущен только один instance бота.
-    
+
     Raises:
         RuntimeError: Если другой instance уже запущен
     """
+    lock_manager = None
     try:
         lock_manager = container.instance_lock_manager()
         acquired = await lock_manager.acquire_lock()
-        
+
         if not acquired:
             raise RuntimeError(
                 "Another bot instance is already running. "
                 "Please stop it before starting a new one."
             )
-        
+
         container._lock_manager = lock_manager
-        logger.info("✅ Instance lock acquired")
-        
+        logger.info(f"✅ Instance lock acquired (instance: {lock_manager.get_instance_id()[:8]}...)")
+
     except RuntimeError:
+        # Если не удалось получить lock - освобождаем то, что было
+        if lock_manager:
+            try:
+                await lock_manager.release_lock(force=True)
+            except Exception:
+                pass
         raise
-        
+
     except Exception as e:
+        # Критическая ошибка - освобождаем lock
+        if lock_manager:
+            try:
+                await lock_manager.release_lock(force=True)
+            except Exception:
+                pass
         logger.error(
             f"❌ Failed to initialize lock manager: {e}",
             exc_info=True
@@ -383,14 +396,32 @@ async def shutdown_container_resources(container: Container) -> None:
 
 
 async def _release_lock(container: Container) -> None:
-    """Освобождает Instance Lock."""
+    """
+    Освобождает Instance Lock.
+
+    КРИТИЧЕСКИ ВАЖНО: Эта функция ВСЕГДА должна выполняться при shutdown.
+    """
     try:
         if hasattr(container, '_lock_manager'):
-            await container._lock_manager.release_lock()
-            logger.info("✅ Instance lock released")
-            
+            lock_manager = container._lock_manager
+            instance_id = lock_manager.get_instance_id()[:8]
+            logger.info(f"🔓 Releasing instance lock (instance: {instance_id}...)...")
+
+            await lock_manager.release_lock(force=False)
+
+            logger.info(f"✅ Instance lock released successfully (instance: {instance_id}...)")
+        else:
+            logger.debug("⚠️ Lock manager not found - nothing to release")
+
     except Exception as e:
-        logger.error(f"⚠️ Error releasing lock: {e}")
+        logger.error(f"❌ Error releasing lock: {e}", exc_info=True)
+        # Критично: пытаемся принудительно удалить lock
+        try:
+            if hasattr(container, '_lock_manager'):
+                await container._lock_manager.release_lock(force=True)
+                logger.warning("⚠️ Lock forcefully released after error")
+        except Exception as force_err:
+            logger.critical(f"💥 FATAL: Cannot release lock even with force: {force_err}")
 
 
 async def _close_http_client(container: Container) -> None:

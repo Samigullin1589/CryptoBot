@@ -24,9 +24,9 @@ class InstanceLockManager:
     
     # Константы
     DEFAULT_LOCK_KEY = "bot:instance_lock"
-    DEFAULT_TTL = 30  # секунды
+    DEFAULT_TTL = 15  # секунды (уменьшено с 30 для быстрого истечения при сбое)
     STALE_LOCK_MULTIPLIER = 2  # Блокировка считается устаревшей после TTL * 2
-    REFRESH_INTERVAL_DIVISOR = 2  # Обновляем каждые TTL / 2
+    REFRESH_INTERVAL_DIVISOR = 3  # Обновляем каждые TTL / 3 (каждые 5 сек)
     
     def __init__(
         self,
@@ -52,8 +52,10 @@ class InstanceLockManager:
         # Состояние блокировки
         self._lock_acquired = False
         self._refresh_task: Optional[asyncio.Task] = None
-        
+        self._cleanup_registered = False
+
         logger.debug(f"🔧 InstanceLockManager initialized with instance_id: {self._instance_id}")
+        logger.debug(f"🔧 Lock TTL: {self.ttl}s, Refresh interval: {self.ttl / self.REFRESH_INTERVAL_DIVISOR:.1f}s")
     
     @staticmethod
     def _generate_instance_id() -> str:
@@ -172,16 +174,21 @@ class InstanceLockManager:
             logger.error(f"❌ Error in lock refresh loop: {e}", exc_info=True)
             self._lock_acquired = False
     
-    async def release_lock(self) -> None:
-        """Освобождение блокировки."""
-        if not self._lock_acquired:
+    async def release_lock(self, force: bool = False) -> None:
+        """
+        Освобождение блокировки.
+
+        Args:
+            force: Принудительное освобождение (игнорирует проверки)
+        """
+        if not self._lock_acquired and not force:
             logger.debug("Lock not acquired, nothing to release")
             return
-        
+
         try:
             # Останавливаем флаг
             self._lock_acquired = False
-            
+
             # Отменяем задачу обновления
             if self._refresh_task and not self._refresh_task.done():
                 self._refresh_task.cancel()
@@ -189,7 +196,9 @@ class InstanceLockManager:
                     await self._refresh_task
                 except asyncio.CancelledError:
                     pass
-            
+                except Exception as e:
+                    logger.warning(f"⚠️ Error waiting for refresh task: {e}")
+
             # Безопасно удаляем блокировку только если она наша
             # Используем Lua скрипт для атомарности
             lua_script = """
@@ -199,24 +208,35 @@ class InstanceLockManager:
                 return 0
             end
             """
-            
+
             result = await self.redis.eval(
                 lua_script,
                 1,
                 self.lock_key,
                 self._instance_id
             )
-            
+
             if result == 1:
-                logger.info(f"✅ Instance lock released: {self.lock_key}")
+                logger.info(f"✅ Instance lock released: {self.lock_key} (instance: {self._instance_id[:8]}...)")
             else:
                 logger.warning(
-                    "⚠️ Lock was already taken by another process or expired"
+                    f"⚠️ Lock was already taken by another process or expired (instance: {self._instance_id[:8]}...)"
                 )
-            
+
         except Exception as e:
             logger.error(f"❌ Error releasing lock: {e}", exc_info=True)
+            # В случае ошибки, пытаемся удалить lock принудительно (без проверки владельца)
+            if force:
+                try:
+                    await self.redis.delete(self.lock_key)
+                    logger.warning(f"⚠️ Forcefully deleted lock: {self.lock_key}")
+                except Exception as force_err:
+                    logger.error(f"❌ Failed to force delete lock: {force_err}")
     
     def is_acquired(self) -> bool:
         """Проверка, получена ли блокировка."""
         return self._lock_acquired
+
+    def get_instance_id(self) -> str:
+        """Возвращает instance ID."""
+        return self._instance_id
